@@ -1,99 +1,167 @@
 import os
+from typing import Literal
 
 from dotenv import load_dotenv
-from langchain_community.agent_toolkits import create_sql_agent
+from langchain.messages import AIMessage
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-)
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
-# 載入 .env 檔案中的環境變數
+# Load environment variables from .env file
 load_dotenv()
 
 
 def main():
-    # 檢查 OPENAI_API_KEY 是否已設定
+    # Check if OPENAI_API_KEY is set
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
-        print("錯誤：請在 .env 檔案中設定 OPENAI_API_KEY。")
+        print("Error: Please set OPENAI_API_KEY in your .env file.")
         return
 
-    # 建立資料庫連線 URI，使用 mysql-connector-python
+    # Create database connection URI using mysql-connector-python
     try:
         db_uri = (
-            f"mysql+mysqlconnector://\
-                {os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-            f"@{os.getenv('DB_HOST')}:\
-                {os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+            f"mysql+mysqlconnector://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+            f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
         )
     except Exception as e:
-        print("錯誤：無法從 .env 檔案中讀取完整的資料庫連線資訊。\
-              請檢查 DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME 是否都已設定。")
-        print(f"詳細錯誤：{e}")
+        print(
+            "Error: Could not read full database connection info from .env file. "
+            "Please check if DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME are set."
+        )
+        print(f"Detailed error: {e}")
         return
-    # 1. 建立 LangChain SQLDatabase 物件
-    db = SQLDatabase.from_uri(db_uri, include_tables=['test_cue_list'])
 
-    # 2. 定義 LLM
-    llm = ChatOpenAI(model="gpt-4-turbo",
-                     temperature=0,
-                     openai_api_key=openai_api_key)
+    # 1. Create LangChain SQLDatabase object
+    db = SQLDatabase.from_uri(db_uri, include_tables=["test_cue_list"])
 
-    # 3. 定義繁體中文的自訂提示
-    system_prefix_chinese = """
-    你是一個旨在與 SQL 資料庫互動的代理。
-    根據輸入問題，建立一個語法正確的 {dialect} 查詢來執行，
-    然後查看查詢結果並返回答案。
-    你可以根據相關欄位對結果進行排序，以返回資料庫中最有趣的範例。
-    永遠不要查詢特定表格的所有欄位，只查詢與問題相關的欄位。
-    你可以使用工具與資料庫互動。
-    只使用以下工具。
-    只使用以下工具返回的資訊來建構你的最終答案。
-    在執行查詢之前，你必須驗證你的查詢。
-    如果在執行查詢時遇到錯誤，請重新編寫查詢並再次嘗試。
-    不要在資料庫上執行任何 DML 語句（INSERT、UPDATE、DELETE、DROP 等）。
-    首先，你應該始終查看資料庫中的表格以了解可以查詢的內容。
-    不要跳過此步驟。然後，你應該查詢最相關表格的 schema。
+    # 2. Define the LLM
+    llm = ChatOpenAI(model="gpt-4-turbo", temperature=0, openai_api_key=openai_api_key)
+
+    # 3. Create the SQL toolkit and tools
+    toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+    tools = toolkit.get_tools()
+
+    # 4. Define the graph's nodes
+
+    # Get schema tool and create a ToolNode for it
+    get_schema_tool = next(tool for tool in tools if tool.name == "sql_db_schema")
+    get_schema_node = ToolNode([get_schema_tool], name="get_schema")
+
+    # Run query tool and create a ToolNode for it
+    run_query_tool = next(tool for tool in tools if tool.name == "sql_db_query")
+    run_query_node = ToolNode([run_query_tool], name="run_query")
+
+    # Node to list tables
+    def list_tables(state: MessagesState):
+        list_tables_tool = next(tool for tool in tools if tool.name == "sql_db_list_tables")
+        tool_call = {
+            "name": "sql_db_list_tables",
+            "args": {},
+            "id": "tool_call_list_tables",
+            "type": "tool_call",
+        }
+        tool_call_message = AIMessage(content="", tool_calls=[tool_call])
+        tool_message = list_tables_tool.invoke(tool_call)
+        response = AIMessage(f"Available tables: {tool_message.content}")
+        return {"messages": [tool_call_message, tool_message, response]}
+
+    # Node to force the model to call the get_schema tool
+    def call_get_schema(state: MessagesState):
+        llm_with_tools = llm.bind_tools([get_schema_tool], tool_choice="any")
+        response = llm_with_tools.invoke(state["messages"])
+        return {"messages": [response]}
+
+    # System prompt for query generation
+    generate_query_system_prompt = f"""
+    You are an agent designed to interact with a SQL database.
+    Given an input question, create a syntactically correct {db.dialect} query to run,
+    then look at the results of the query and return the answer.
+    Unless the user specifies a specific number of examples they wish to obtain,
+    always limit your query to at most 5 results.
+
+    You can order the results by a relevant column to return the most interesting
+    examples in the database.
+    Never query for all the columns from a specific table, only ask for the relevant columns given the question.
+
+    DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
     """
 
-    custom_prompt = ChatPromptTemplate.from_messages(
-        [
-            SystemMessagePromptTemplate.from_template(system_prefix_chinese),
-            MessagesPlaceholder(variable_name="chat_history"),
-            HumanMessagePromptTemplate.from_template("{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
+    # Node to generate the SQL query
+    def generate_query(state: MessagesState):
+        system_message = {"role": "system", "content": generate_query_system_prompt}
+        llm_with_tools = llm.bind_tools([run_query_tool])
+        response = llm_with_tools.invoke([system_message] + state["messages"])
+        return {"messages": [response]}
 
-    # 4. 建立 SQL Agent，並傳入自訂提示
-    agent_executor = create_sql_agent(
-        llm, db=db,
-        agent_type="tool-calling",
-        verbose=True,
-        prompt=custom_prompt  # 傳入自訂提示
-    )
+    # System prompt for query checking
+    check_query_system_prompt = f"""
+    You are a SQL expert with a strong attention to detail.
+    Double check the {db.dialect} query for common mistakes.
+    If there are any mistakes, rewrite the query. If there are no mistakes,
+    just reproduce the original query.
+    You will call the appropriate tool to execute the query after running this check.
+    """
 
-    # 5. 命令列互動迴圈
-    print("歡迎使用 Text-to-SQL 助手 (SQL Agent 版本)！")
-    print("輸入 'exit' 結束程式。")
+    # Node to check the query
+    def check_query(state: MessagesState):
+        system_message = {"role": "system", "content": check_query_system_prompt}
+        tool_call = state["messages"][-1].tool_calls[0]
+        user_message = {"role": "user", "content": tool_call["args"]["query"]}
+        llm_with_tools = llm.bind_tools([run_query_tool], tool_choice="any")
+        response = llm_with_tools.invoke([system_message, user_message])
+        response.id = state["messages"][-1].id
+        return {"messages": [response]}
+
+    # 5. Define the graph's conditional logic
+    def should_continue(state: MessagesState) -> Literal[END, "check_query"]:
+        last_message = state["messages"][-1]
+        if not last_message.tool_calls:
+            return END
+        else:
+            return "check_query"
+
+    # 6. Build the graph
+    builder = StateGraph(MessagesState)
+    builder.add_node("list_tables", list_tables)
+    builder.add_node("call_get_schema", call_get_schema)
+    builder.add_node("get_schema", get_schema_node)
+    builder.add_node("generate_query", generate_query)
+    builder.add_node("check_query", check_query)
+    builder.add_node("run_query", run_query_node)
+
+    builder.add_edge(START, "list_tables")
+    builder.add_edge("list_tables", "call_get_schema")
+    builder.add_edge("call_get_schema", "get_schema")
+    builder.add_edge("get_schema", "generate_query")
+    builder.add_conditional_edges("generate_query", should_continue)
+    builder.add_edge("check_query", "run_query")
+    builder.add_edge("run_query", "generate_query")
+
+    agent = builder.compile()
+
+    # 7. Interactive command-line loop
+    print("Welcome to the Text-to-SQL Assistant (LangGraph Version)!")
+    print("Type 'exit' to end the program.")
 
     while True:
-        user_input = input("\n您的問題：")
+        user_input = input("\nYour question: ")
         if user_input.lower() == "exit":
             break
         try:
-            # 使用 agent executor 來處理使用者輸入
-            response = agent_executor.invoke(
-                {"input": user_input, "chat_history": []}
+            # Use the agent to process user input
+            events = agent.stream(
+                {"messages": [("user", user_input)]},
+                stream_mode="values",
             )
-            print("\n助手回應：")
-            print(response["output"])
+            for event in events:
+                if "messages" in event:
+                    event["messages"][-1].pretty_print()
+
         except Exception as e:
-            print(f"\n發生錯誤：{e}")
+            print(f"\nAn error occurred: {e}")
 
 
 if __name__ == "__main__":
