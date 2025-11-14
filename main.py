@@ -65,7 +65,7 @@ def main():
         }
         tool_call_message = AIMessage(content="", tool_calls=[tool_call])
         tool_message = list_tables_tool.invoke(tool_call)
-        response = AIMessage(f"Available tables: {tool_message.content}")
+        response = AIMessage(f"可用的資料表: {tool_message.content}")
         return {"messages": [tool_call_message, tool_message, response]}
 
     # Node to force the model to call the get_schema tool
@@ -76,17 +76,16 @@ def main():
 
     # System prompt for query generation
     generate_query_system_prompt = f"""
-    You are an agent designed to interact with a SQL database.
-    Given an input question, create a syntactically correct {db.dialect} query to run,
-    then look at the results of the query and return the answer.
-    Unless the user specifies a specific number of examples they wish to obtain,
-    always limit your query to at most 5 results.
+    你是一個旨在與 SQL 資料庫互動的代理。
+    根據輸入問題，建立一個語法正確的 {db.dialect} 查詢來執行，
+    然後查看查詢結果並返回答案。
+    除非使用者指定了希望獲得的範例數量，否則請始終將查詢限制為最多 5 個結果。
+    最終答案請務必使用繁體中文回答。
 
-    You can order the results by a relevant column to return the most interesting
-    examples in the database.
-    Never query for all the columns from a specific table, only ask for the relevant columns given the question.
+    你可以根據相關欄位對結果進行排序，以返回資料庫中最有趣的範例。
+    永遠不要查詢特定表格的所有欄位，只查詢與問題相關的欄位。
 
-    DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
+    請勿對資料庫執行任何 DML 陳述式（INSERT、UPDATE、DELETE、DROP 等）。
     """
 
     # Node to generate the SQL query
@@ -98,11 +97,11 @@ def main():
 
     # System prompt for query checking
     check_query_system_prompt = f"""
-    You are a SQL expert with a strong attention to detail.
-    Double check the {db.dialect} query for common mistakes.
-    If there are any mistakes, rewrite the query. If there are no mistakes,
-    just reproduce the original query.
-    You will call the appropriate tool to execute the query after running this check.
+    你是一位注重細節的 SQL 專家。
+    請仔細檢查 {db.dialect} 查詢是否有常見錯誤。
+    如果發現任何錯誤，請重寫查詢。如果沒有錯誤，
+    只需重現原始查詢即可。
+    檢查完畢後，你將呼叫適當的工具來執行查詢。
     """
 
     # Node to check the query
@@ -143,11 +142,11 @@ def main():
     agent = builder.compile()
 
     # 7. Interactive command-line loop
-    print("Welcome to the Text-to-SQL Assistant (LangGraph Version)!")
-    print("Type 'exit' to end the program.")
+    print("歡迎使用 Text-to-SQL 助理 ！")
+    print("輸入 'exit' 結束程式。")
 
     while True:
-        user_input = input("\nYour question: ")
+        user_input = input("\n您的問題：")
         if user_input.lower() == "exit":
             break
         try:
