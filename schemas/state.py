@@ -23,6 +23,8 @@ class GraphState(MessagesState):
     analysis_result: Dict[str, Any] = Field(default_factory=dict)
     clarified_query: str = ""
     sql_query: str = ""
+    generated_sql: str = ""
+    sql_is_correct: bool = False
     sql_result: str = ""
     formatted_response: str = ""
     date_filter: str | None = None
@@ -31,7 +33,9 @@ class GraphState(MessagesState):
     current_stage: Literal[
         "query_analyzer",
         "ambiguity_resolver",
-        "query_executor",
+        "sql_generator",
+        "sql_checker",
+        "sql_executor",
         "response_formatter",
         "human_in_the_loop",
         "end",

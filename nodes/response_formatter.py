@@ -10,7 +10,7 @@ def response_formatter_node(state: GraphState) -> GraphState:
     Formats the SQL query result into a natural language response.
     """
     print("---RESPONSE FORMATTER---")
-    original_query = state["query"]
+    clarified_query = state["clarified_query"]
     sql_result = state["sql_result"]
     messages = state["messages"]
 
@@ -18,14 +18,14 @@ def response_formatter_node(state: GraphState) -> GraphState:
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", response_formatter_prompt),
-            ("human", "請根據以下資訊生成回覆：\n原始問題：{original_query}\nSQL 查詢結果：{sql_result}"),
+            ("human", "請根據以下資訊生成回覆：\n使用者最終問題：{clarified_query}\nSQL 查詢結果：{sql_result}"),
         ]
     )
     llm_chain = prompt | llm
 
     formatted_response = llm_chain.invoke(
         {
-            "original_query": original_query,
+            "clarified_query": clarified_query,
             "sql_result": sql_result,
         }
     ).content
