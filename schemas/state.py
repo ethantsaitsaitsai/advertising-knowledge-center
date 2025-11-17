@@ -28,5 +28,6 @@ class GraphState(MessagesState):
         "ambiguity_resolver",
         "query_executor",
         "response_formatter",
+        "human_in_the_loop",
         "end",
     ] = "query_analyzer"  # 提供預設值

@@ -1,4 +1,4 @@
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from schemas.state import GraphState
 from tools.tool_registry import all_tools
 
@@ -15,11 +15,11 @@ def ambiguity_resolver_node(state: GraphState) -> GraphState:
     if not ambiguous_terms:
         print("No ambiguous terms found, skipping ambiguity resolution.")
         return {
-            "clarified_query": original_query,
+            "clarified_query": state["clarified_query"],
             "current_stage": "ambiguity_resolver",
         }
 
-    clarified_query = original_query
+    clarified_query = state["clarified_query"]
     messages = state["messages"]
     date_filter = None
 
@@ -73,22 +73,18 @@ def ambiguity_resolver_node(state: GraphState) -> GraphState:
         tool_response = search_tool.invoke({"search_term": term, "column_names": column_names})
 
         if tool_response:
-            # If matches found, ask user for clarification
+            # If matches found, ask user for clarification and wait for input
             clarification_message = f"關於 '{term}'，我找到了以下可能的匹配項：{', '.join(tool_response)}。請問您指的是哪一個？"
-            messages.append(HumanMessage(content=clarification_message))
-            # For now, we'll just add the clarification message and assume the user will respond
-            # In a real interactive system, this would pause and wait for user input.
-            # For this refactoring, we'll simulate a direct update for now.
-            # A more advanced graph would have a "human_in_the_loop" node.
-
-            # For demonstration, let's assume the first match is chosen if available
-            if tool_response:
-                clarified_query = clarified_query.replace(term, tool_response[0])
-                messages.append(ToolMessage(tool_call_id="simulated_clarification",
-                                            content=f"使用者確認將 '{term}' 替換為 '{tool_response[0]}'"))
+            messages.append(AIMessage(content=clarification_message))
+            return {
+                "messages": messages,
+                "current_stage": "human_in_the_loop",
+            }
         else:
-            messages.append(HumanMessage(content=f"關於 '{term}'，我找不到任何匹配項。請提供更明確的資訊。 "))
+            # If no matches, inform the user. The graph will continue.
+            messages.append(AIMessage(content=f"關於 '{term}'，我找不到任何匹配項。請提供更明確的資訊。"))
 
+    # If loop finishes without needing clarification for any term
     return {
         "clarified_query": clarified_query,
         "date_filter": date_filter,

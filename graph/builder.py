@@ -5,7 +5,7 @@ from nodes.ambiguity_resolver import ambiguity_resolver_node
 from nodes.query_executor import query_executor_node
 from nodes.response_formatter import response_formatter_node
 from nodes.general_responder import general_responder_node
-from routers.routing_logic import route_query_analyzer
+from routers.routing_logic import route_query_analyzer, route_ambiguity_resolver
 
 
 def build_graph():
@@ -34,7 +34,14 @@ def build_graph():
             "general_responder": "general_responder",
         },
     )
-    builder.add_edge("ambiguity_resolver", "query_executor")
+    builder.add_conditional_edges(
+        "ambiguity_resolver",
+        route_ambiguity_resolver,
+        {
+            "query_executor": "query_executor",
+            "__end__": END,
+        },
+    )
     builder.add_edge("query_executor", "response_formatter")
     builder.add_edge("response_formatter", END)
     builder.add_edge("general_responder", END)

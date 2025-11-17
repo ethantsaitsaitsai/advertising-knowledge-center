@@ -2,11 +2,12 @@ from typing import List
 from pydantic import BaseModel, Field
 from schemas.state import GraphState
 from config.llm import llm
-from prompts.analyzer_prompts import query_analyzer_prompt
+from prompts.analyzer_prompts import query_analyzer_prompt_template
 
 
 class QueryAnalysis(BaseModel):
     """Represents the analysis of a user query."""
+    new_query: str = Field(description="The synthesized query after analyzing the conversation history.")
     intent: str = Field(description="The user's intent, either 'database_query' or 'general_question'.")
     ambiguous_terms: List[str] = Field(description="A list of terms in the query that are ambiguous.")
 
@@ -16,30 +17,28 @@ def query_analyzer_node(state: GraphState) -> GraphState:
     Analyzes the user's query to identify intent and ambiguous terms.
     """
     print("---QUERY ANALYZER---")
-    # The user's query is the last message in the list.
-    # It can be a string or a list of content blocks.
-    raw_content = state["messages"][-1].content
-    if isinstance(raw_content, list) and raw_content and "text" in raw_content[0]:
-        query = raw_content[0]["text"]
-    else:
-        query = raw_content
 
     # Use LLM to analyze the query
     llm_chain = llm.with_structured_output(QueryAnalysis, method="function_calling")
     analysis_result_obj = llm_chain.invoke(
         [
-            ("system", query_analyzer_prompt),
-            ("human", query),
+            ("system", query_analyzer_prompt_template),
+            *state["messages"],  # Pass the entire message history
         ]
     )
 
     # Convert the Pydantic object to a dict for the state
     analysis_result = analysis_result_obj.dict()
 
+    # Determine the original query. If state['query'] is already set, keep it.
+    # Otherwise, this is the first run, so we set it from the first message.
+    original_query = state.get("query") or state["messages"][0].content
+
     # Update state
     return {
-        "query": query,
-        "clarified_query": query,
+        "query": original_query,
+        "clarified_query": analysis_result["new_query"],
         "analysis_result": analysis_result,
         "current_stage": "query_analyzer",
     }
+
