@@ -116,8 +116,11 @@ def ambiguity_resolver_node(state: GraphState) -> GraphState:
 
     if tool_response:
         # Ask user for clarification
-        options_str = ", ".join([f"{i+1}. {opt['column']}: {opt['value']}" for i, opt in enumerate(tool_response)])
-        clarification_message = f"關於 '{term}'，我找到了以下可能的匹配項，請問您指的是哪一個？請回覆數字或完整名稱。\n{options_str}"
+        options_str = "\n".join([f"{i+1}. {opt['column']}: {opt['value']}" for i, opt in enumerate(tool_response)])
+        clarification_message = (
+            f"關於 '{term}'，我找到了以下可能的匹配項，請問您指的是哪一個？請回覆數字或完整名稱。\n"
+            f"{options_str}"
+        )
         messages.append(AIMessage(content=clarification_message))
         
         # Set pending state and wait for human input
