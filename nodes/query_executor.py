@@ -46,7 +46,7 @@ def query_executor_node(state: GraphState) -> GraphState:
     sql_query_tool = [tool for tool in all_tools if tool.name == "sql_db_query"][0]
     sql_result = sql_query_tool.invoke({"query": clean_sql_query})
 
-    messages.append(AIMessage(content=f"生成的 SQL 查詢：{clean_sql_query}"))
+    messages.append(ToolMessage(content=clean_sql_query, tool_call_id="sql_query_generation"))
     messages.append(ToolMessage(tool_call_id="sql_execution", content=sql_result))
 
     return {

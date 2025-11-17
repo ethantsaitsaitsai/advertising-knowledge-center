@@ -1,24 +1,23 @@
 import ast
-from typing import List
+from typing import List, Dict
 from langchain_core.tools import tool
 from config.database import db
 
 
 @tool
-def search_ambiguous_term(search_term: str, column_names: List[str]) -> List[str]:
+def search_ambiguous_term(search_term: str, column_names: List[str]) -> List[Dict[str, str]]:
     """
     Searches for an ambiguous term across multiple specified table columns using a LIKE query.
-    Use this tool when a user's query contains a potential abbreviation, typo, or partial name
-    for a value in the database (e.g., a company or brand name).
+    Returns a list of dictionaries, each containing the column and the matched value.
 
     Args:
         search_term: The ambiguous term provided by the user to search for.
         column_names: A list of column names to search within.
 
     Returns:
-        A de-duplicated list of potential matching values found in the database.
+        A de-duplicated list of dictionaries, where each dictionary has 'column' and 'value' keys.
     """
-    all_matches = set()
+    all_matches = set()  # Use a set of tuples to store (column, value) to avoid duplicates
     table_name = "test_cue_list"  # Assuming a single table for now
     for column in column_names:
         try:
@@ -32,9 +31,11 @@ def search_ambiguous_term(search_term: str, column_names: List[str]) -> List[str
             matches = ast.literal_eval(results_str)
             for match_tuple in matches:
                 if match_tuple and isinstance(match_tuple, tuple):
-                    all_matches.add(match_tuple[0])
+                    all_matches.add((column, match_tuple[0]))  # Add a tuple to the set
         except Exception as e:
             # May fail if column doesn't exist or other SQL errors
             print(f"Error searching in column {column}: {e}")
             continue
-    return list(all_matches)
+
+    # Convert the set of tuples to a list of dictionaries
+    return [{"column": col, "value": val} for col, val in all_matches]

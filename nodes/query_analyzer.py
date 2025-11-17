@@ -18,11 +18,18 @@ def query_analyzer_node(state: GraphState) -> GraphState:
     """
     print("---QUERY ANALYZER---")
 
+    term_clarifications = state.get("term_clarifications", [])
+    
+    system_prompt = (
+        query_analyzer_prompt_template +
+        f"\n\n已確認的澄清資訊: {term_clarifications}"
+    )
+
     # Use LLM to analyze the query
     llm_chain = llm.with_structured_output(QueryAnalysis, method="function_calling")
     analysis_result_obj = llm_chain.invoke(
         [
-            ("system", query_analyzer_prompt_template),
+            ("system", system_prompt),
             *state["messages"],  # Pass the entire message history
         ]
     )

@@ -1,4 +1,5 @@
-from typing import Literal
+from typing import Literal, List, Dict, Any
+from pydantic import Field
 from langgraph.graph import MessagesState
 
 
@@ -14,15 +15,19 @@ class GraphState(MessagesState):
         sql_result: The result from executing the SQL query.
         formatted_response: The final natural language response.
         date_filter: An optional SQL condition string for date filtering.
+        term_clarifications: A list of confirmed term clarifications.
+        pending_clarification: Information about a term currently pending user clarification.
         current_stage: Tracks the current stage of processing.
     """
-    query: str = ""  # 提供預設值
-    analysis_result: dict = {}  # 提供預設值
+    query: str = ""
+    analysis_result: Dict[str, Any] = Field(default_factory=dict)
     clarified_query: str = ""
     sql_query: str = ""
     sql_result: str = ""
     formatted_response: str = ""
     date_filter: str | None = None
+    term_clarifications: List[Dict[str, str]] = Field(default_factory=list)
+    pending_clarification: Dict[str, Any] = Field(default_factory=dict)
     current_stage: Literal[
         "query_analyzer",
         "ambiguity_resolver",
@@ -30,4 +35,4 @@ class GraphState(MessagesState):
         "response_formatter",
         "human_in_the_loop",
         "end",
-    ] = "query_analyzer"  # 提供預設值
+    ] = "query_analyzer"
