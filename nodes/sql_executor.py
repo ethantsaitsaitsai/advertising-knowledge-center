@@ -20,7 +20,6 @@ def sql_executor_node(state: GraphState) -> GraphState:
     messages.append(ToolMessage(content=sql_result, tool_call_id="sql_execution"))
 
     return {
-        "sql_query": sql_query,
         "sql_result": sql_result,
         "current_stage": "sql_executor",
         "messages": messages,

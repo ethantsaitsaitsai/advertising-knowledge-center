@@ -24,9 +24,9 @@ def sql_checker_node(state: GraphState) -> GraphState:
             # This is a simplified check and might need to be more robust
             expected_condition = f"`{column}` = '{value}'"
             if expected_condition not in where_clause:
-                print(f"ERROR: SQL query is missing or has incorrect condition for '{value}'. Expected: {expected_condition}")
+                print(f"ERROR: SQL query is missing or has incorrect condition for '{value}'. \
+                      Expected: {expected_condition}")
                 sql_is_correct = False
-        
         # Check for unresolved terms that were rejected by the user
         elif item.get("type") == "unresolved":
             term = item["term"]

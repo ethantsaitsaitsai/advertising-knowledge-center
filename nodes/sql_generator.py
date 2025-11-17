@@ -23,7 +23,8 @@ def sql_generator_node(state: GraphState) -> GraphState:
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", query_executor_prompt),
-            ("human", "請根據以下資訊生成 SQL 查詢：\n資料庫結構：{schema}\n使用者問題：{query}\n已確認的澄清資訊：{term_clarifications}\n額外的日期過濾條件：{date_filter}\n資料庫類型：{dialect}"),
+            ("human", "請根據以下資訊生成 SQL 查詢：\n \
+             資料庫結構：{schema}\n使用者問題：{query}\n已確認的澄清資訊：{term_clarifications}\n額外的日期過濾條件：{date_filter}\n資料庫類型：{dialect}"),
         ]
     )
     llm_chain = prompt | llm
