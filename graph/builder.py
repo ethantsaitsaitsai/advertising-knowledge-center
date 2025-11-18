@@ -1,137 +1,114 @@
-from langchain.agents import create_agent
-from langchain_core.prompts import PromptTemplate
-from tools.tool_registry import all_tools
-from config.llm import llm
-from config.database import db
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
+from langgraph.graph import StateGraph, END, START
 from schemas.state import GraphState
+from nodes.intent_analyzer import intent_analyzer_node
+from nodes.general_responder import general_responder_node
+from nodes.ambiguity_detector import ambiguity_detector_node
+from nodes.ambiguity_resolver import ambiguity_resolver_node
+from nodes.sql_generator import sql_generator_node
 from nodes.sql_constraint_checker import sql_constraint_checker_node
 from nodes.sql_executor import sql_executor_node
 from nodes.response_formatter import response_formatter_node
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from typing import Literal
-
-
-# Define the system prompt for the agent
-# Its final output should be the raw SQL query string
-system_prompt = PromptTemplate.from_template("""
-你是一個專業的 SQL 資料庫查詢助理。你的目標是透過與使用者對話和使用工具，最終生成一個語法正確的 SQL 查詢來回答使用者的問題。
-
-**你的思考與行動流程應該如下:**
-
-1.  **分析問題**: 首先，仔細分析使用者最新的問題。
-2.  **了解資料庫結構**:
-    -   你**必須**先使用 `sql_db_list_tables` 工具來查看資料庫中有哪些可用的資料表。
-    -   然後，使用 `sql_db_schema` 工具來獲取相關資料表的欄位資訊。
-3.  **檢查模糊點**: 判斷問題中是否有任何模糊不清的詞彙（例如，不明確的品牌、案件名稱等）。
-4.  **解決模糊點 (如果有的話)**:
-    a.  如果你發現一個模糊的詞彙，你**必須**使用 `find_ambiguous_term_options` 工具來尋找可能的選項。
-    b.  在獲得選項後，你**必須**使用 `ask_user_for_clarification` 工具來向使用者提問，並獲取他的回覆。
-    c.  根據使用者的回覆，更新你對問題的理解。如果使用者轉換了話題，那就以他的新問題為準。
-5.  **生成 SQL 查詢**:
-    -   當你確信所有詞彙都已清晰、不再有模糊點時，基於你對資料庫結構的理解，建構一個語法完全正確的 {dialect} SQL 查詢。
-    -   **你的最終輸出必須是這個原始的 SQL 查詢字串，而不是自然語言回覆，也不是呼叫任何執行 SQL 的工具。**
-    -   永遠只查詢問題相關的欄位，禁止使用 `SELECT *`。
-    -   你可以根據相關欄位對結果進行排序，以返回資料庫中最有趣的範例。
-    -   **嚴禁**生成任何 DML 陳述式 (INSERT, UPDATE, DELETE, DROP 等) 到資料庫。
-
-**可用的工具有**:
-{tools}
-
-**對話歷史**:
-{chat_history}
-
-**使用者的問題**:
-{input}
-
-**你的思考過程 (請逐步思考，並決定下一步的行動)**:
-{agent_scratchpad}
-""").partial(dialect=db.dialect)
-
-# Create the agent (LLM with tools)
-# This agent's job is to produce SQL or call clarification tools
-agent_runnable = create_agent(
-    llm,
-    all_tools,  # all_tools now only includes clarification/schema tools
-    system_prompt=system_prompt.template,
-    checkpointer=InMemorySaver(),
-)
-
-
-# Define the agent node for the graph
-def agent_node(state: GraphState) -> GraphState:
-    """
-    Invokes the ReAct agent to decide the next action (tool call or SQL generation).
-    """
-    result = agent_runnable.invoke(state)
-    # The agent's output is either a tool call or a final SQL string
-    return {"messages": result["messages"]}
-
-
-# The tool node executes the tools called by the agent
-tool_node = ToolNode(all_tools)
-
+from langchain_core.messages import ToolMessage
 
 # --- Router Functions ---
-def route_agent_output(state: GraphState) -> Literal["tools", "sql_constraint_checker"]:
-    """
-    Routes the agent's output.
-    If it's a tool call, go to tools.
-    If it's a final answer (SQL string), go to sql_constraint_checker.
-    """
-    last_message: BaseMessage = state["messages"][-1]
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
-        return "tools"
-    # Assuming if it's not a tool call, it's the proposed SQL
-    return "sql_constraint_checker"
 
+def route_intent(state: GraphState) -> Literal["chitchat", "query"]:
+    """Routes based on the user's intent."""
+    if state.get("intent") == "chitchat":
+        return "chitchat"
+    return "query"
 
-def route_sql_checker_output(state: GraphState) -> Literal["sql_executor", "agent"]:
-    """
-    Routes based on the SQL constraint checker's output.
-    If SQL is safe, go to executor.
-    If not safe, go back to agent.
-    """
+def route_ambiguity(state: GraphState) -> Literal["clarify", "generate_sql"]:
+    """Routes based on whether ambiguity needs clarification."""
+    last_message = state["messages"][-1]
+    if "clarification_request" in last_message.additional_kwargs:
+        return "clarify"
+    return "generate_sql"
+
+def route_sql_checker(state: GraphState) -> Literal["execute", "regenerate"]:
+    """Routes based on the SQL constraint checker's output."""
     if state.get("sql_is_safe"):
-        return "sql_executor"
-    return "agent"  # Loop back to agent for correction
+        return "execute"
+    return "regenerate"
 
+def route_sql_result(state: GraphState) -> Literal["format_response", "recheck_ambiguity", "regenerate_sql"]:
+    """
+    Routes based on the SQL execution result.
+    If data is found, format the response.
+    If the result is empty, loop back to re-check for ambiguity.
+    If there was an execution error, loop back to regenerate the SQL.
+    """
+    sql_result = state.get("sql_result", "")
+    
+    if "Execution Error:" in sql_result:
+        # Add error message to history and loop back to SQL generator
+        error_message = ToolMessage(content=f"System Note: The last query failed with a database error: {sql_result}. Please regenerate the query, paying close attention to syntax and column names.", tool_call_id="sql_executor")
+        state["messages"].append(error_message)
+        return "regenerate_sql"
+        
+    # Check for empty result (e.g., '[]', '()', or just whitespace)
+    if not sql_result or sql_result.strip() in ["[]", "()"]:
+        # Add system note to history and loop back to ambiguity detector
+        system_note = ToolMessage(content="System Note: The last query returned no results. The search terms may be too specific or incorrect. Please re-evaluate the user's query for ambiguity.", tool_call_id="sql_executor")
+        state["messages"].append(system_note)
+        return "recheck_ambiguity"
+        
+    # If we have a valid, non-empty result
+    return "format_response"
 
 # --- Build the Graph ---
+
 builder = StateGraph(GraphState)
 
 # Add nodes
-builder.add_node("agent", agent_node)
-builder.add_node("tools", tool_node)
+builder.add_node("intent_analyzer", intent_analyzer_node)
+builder.add_node("general_responder", general_responder_node)
+builder.add_node("ambiguity_detector", ambiguity_detector_node)
+builder.add_node("ambiguity_resolver", ambiguity_resolver_node)
+builder.add_node("sql_generator", sql_generator_node)
 builder.add_node("sql_constraint_checker", sql_constraint_checker_node)
 builder.add_node("sql_executor", sql_executor_node)
 builder.add_node("response_formatter", response_formatter_node)
 
 # Set entry point
-builder.set_entry_point("agent")
+builder.set_entry_point("intent_analyzer")
 
 # Define edges
 builder.add_conditional_edges(
-    "agent",
-    route_agent_output,
-    {
-        "tools": "tools",
-        "sql_constraint_checker": "sql_constraint_checker",
-    },
+    "intent_analyzer",
+    route_intent,
+    {"chitchat": "general_responder", "query": "ambiguity_detector"},
 )
-builder.add_edge("tools", "agent")  # After tool execution, go back to agent
+builder.add_edge("general_responder", END)
+
+builder.add_edge("ambiguity_detector", "ambiguity_resolver")
+
+builder.add_conditional_edges(
+    "ambiguity_resolver",
+    route_ambiguity,
+    {"clarify": END, "generate_sql": "sql_generator"},
+)
+
+builder.add_edge("sql_generator", "sql_constraint_checker")
 
 builder.add_conditional_edges(
     "sql_constraint_checker",
-    route_sql_checker_output,
+    route_sql_checker,
+    {"execute": "sql_executor", "regenerate": "sql_generator"},
+)
+
+# New conditional edge after SQL execution
+builder.add_conditional_edges(
+    "sql_executor",
+    route_sql_result,
     {
-        "sql_executor": "sql_executor",
-        "agent": "agent",  # If SQL is not safe, go back to agent
+        "format_response": "response_formatter",
+        "recheck_ambiguity": "ambiguity_detector",
+        "regenerate_sql": "sql_generator",
     },
 )
-builder.add_edge("sql_executor", "response_formatter")
+
 builder.add_edge("response_formatter", END)
 
 # Compile the graph
