@@ -5,17 +5,18 @@ from config.database import db
 
 
 @tool
-def search_ambiguous_term(search_term: str, column_names: List[str]) -> List[Dict[str, str]]:
+def find_ambiguous_term_options(search_term: str, column_names: List[str]) -> List[Dict[str, str]]:
     """
-    Searches for an ambiguous term across multiple specified table columns using a LIKE query.
-    Returns a list of dictionaries, each containing the column and the matched value.
+    Searches for possible matches for an ambiguous term across specified database columns.
+    Use this tool to find clarification options for a term you have identified as ambiguous.
 
     Args:
-        search_term: The ambiguous term provided by the user to search for.
+        search_term: The ambiguous term to search for.
         column_names: A list of column names to search within.
 
     Returns:
-        A de-duplicated list of dictionaries, where each dictionary has 'column' and 'value' keys.
+        A list of dictionaries, where each dictionary represents a potential match
+        and contains the 'column' and 'value' of that match.
     """
     all_matches = set()  # Use a set of tuples to store (column, value) to avoid duplicates
     table_name = "test_cue_list"  # Assuming a single table for now

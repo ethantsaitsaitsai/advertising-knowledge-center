@@ -1,64 +1,54 @@
-from langchain_core.messages import HumanMessage
-from graph.builder import build_graph
-from schemas.state import GraphState
-
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.types import Command
+from graph.builder import graph
+import os
 
 def main():
     """
-    Main entry point for the SQL agent.
+    Main entry point for the ReAct-based SQL agent with Human-in-the-Loop.
     """
-    # Build the graph
-    graph = build_graph()
-
-    # Initial query
-    query = "查詢昨天統一的廣告數據"
-    config = {"configurable": {"thread_id": "1"}}
-    state = {
-        "messages": [HumanMessage(content=query)],
-        "query": query, # Ensure the original query is in the initial state
-    }
+    thread_id = "user_123"
+    config = {"configurable": {"thread_id": thread_id}}
 
     while True:
-        # Stream events from the graph
-        events = graph.stream(state, config)
-        final_state = None
-        for event in events:
-            # Print node outputs
-            for key, value in event.items():
-                print(f"Node: {key}")
-                print("---")
-                print(value)
-            print("\n---\n")
-            # The last event is the final state of the graph run
-            final_state = event
-
-        # The final state is the output of the last node that ran
-        # It's the value of the single key in the event dictionary
-        last_node_name = list(final_state.keys())[0]
-        final_state_data = final_state[last_node_name]
-
-        # Check if the graph is waiting for human input
-        if final_state_data.get("current_stage") == "human_in_the_loop":
-            # Get the last message from the agent, which should be the question
-            last_message = final_state_data["messages"][-1]
-            print("Agent:", last_message.content)
-
-            # Prompt user for input
-            user_input = input("Your response: ")
-            
-            # Append user's response to the messages and carry over the original query
-            current_messages = final_state_data["messages"]
-            current_messages.append(HumanMessage(content=user_input))
-            state = {
-                "messages": current_messages,
-                "query": state["query"], # Carry over the original query
-            }
-
-        else:
-            # If not waiting for input, the graph has finished
-            print("Graph execution finished.")
+        user_input = input("You: ")
+        if user_input.lower() in ["exit", "quit"]:
+            print("Exiting...")
             break
 
+        inputs = {"messages": [HumanMessage(content=user_input)]}
+
+        print("Agent: ", end="", flush=True)
+        
+        # Stream events from the graph
+        for event in graph.stream(inputs, config, stream_mode="values"):
+            if "__interrupt__" in event:
+                # Handle the interruption for human approval
+                interrupt = event["__interrupt__"][0]
+                print("\nINTERRUPTED: SQL Query execution pending approval")
+                for request in interrupt.value["action_requests"]:
+                    print("Tool:", request["tool"])
+                    print("Args:", request["args"])
+                
+                approval = input("Approve? (y/n): ").strip().lower()
+                
+                # Create a command to resume the graph
+                resume_command = Command(resume={"decisions": [{"type": "approve" if approval == 'y' else "reject"}]})
+                
+                # Stream the resumed execution
+                for resume_event in graph.stream(resume_command, config, stream_mode="values"):
+                    if "messages" in resume_event:
+                        new_message = resume_event["messages"][-1]
+                        if isinstance(new_message, AIMessage) and new_message.content:
+                            print(new_message.content, end="", flush=True)
+                break # Exit the inner loop after handling the interrupt
+            
+            elif "messages" in event:
+                new_message = event["messages"][-1]
+                if isinstance(new_message, AIMessage) and new_message.content:
+                    print(new_message.content, end="", flush=True)
+        
+        print() # Newline after agent's full response
 
 if __name__ == "__main__":
     main()

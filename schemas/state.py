@@ -1,42 +1,15 @@
-from typing import Literal, List, Dict, Any
-from pydantic import Field
+from typing import TypedDict, List, Union, Optional
 from langgraph.graph import MessagesState
-
+from langchain_core.messages import BaseMessage
 
 class GraphState(MessagesState):
     """
     Represents the state of our graph.
-    Attributes:
-        messages: Conversation history (inherited from MessagesState).
-        query: The original user query.
-        analysis_result: Result of query analysis.
-        clarified_query: The query after ambiguity resolution.
-        sql_query: The generated SQL query.
-        sql_result: The result from executing the SQL query.
-        formatted_response: The final natural language response.
-        date_filter: An optional SQL condition string for date filtering.
-        term_clarifications: A list of confirmed term clarifications.
-        pending_clarification: Information about a term currently pending user clarification.
-        current_stage: Tracks the current stage of processing.
+    The primary attribute is `messages`, which is a list of messages in the conversation.
+    This state is managed by inheriting from MessagesState.
     """
-    query: str = ""
-    analysis_result: Dict[str, Any] = Field(default_factory=dict)
-    clarified_query: str = ""
-    sql_query: str = ""
-    generated_sql: str = ""
-    sql_is_correct: bool = False
-    sql_result: str = ""
-    formatted_response: str = ""
-    date_filter: str | None = None
-    term_clarifications: List[Dict[str, str]] = Field(default_factory=list)
-    pending_clarification: Dict[str, Any] = Field(default_factory=dict)
-    current_stage: Literal[
-        "query_analyzer",
-        "ambiguity_resolver",
-        "sql_generator",
-        "sql_checker",
-        "sql_executor",
-        "response_formatter",
-        "human_in_the_loop",
-        "end",
-    ] = "query_analyzer"
+    # Inherits 'messages: List[BaseMessage]' from MessagesState
+    sql_is_safe: Optional[bool]
+    safe_sql: Optional[str]
+    error_message: Optional[str]
+    sql_result: Optional[str]

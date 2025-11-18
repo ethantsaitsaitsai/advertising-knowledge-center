@@ -1,39 +1,46 @@
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import AIMessage
 from schemas.state import GraphState
 from config.llm import llm
-from prompts.formatter_prompts import response_formatter_prompt
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage
 
 
 def response_formatter_node(state: GraphState) -> GraphState:
     """
-    Formats the SQL query result into a natural language response.
+    Formats the SQL query result into a natural language response using an LLM.
     """
     print("---RESPONSE FORMATTER---")
-    clarified_query = state["clarified_query"]
-    sql_result = state["sql_result"]
+    sql_result = state.get("sql_result", "No result available.")
     messages = state["messages"]
 
-    # Use LLM to format the response
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", response_formatter_prompt),
-            ("human", "請根據以下資訊生成回覆：\n使用者最終問題：{clarified_query}\nSQL 查詢結果：{sql_result}"),
-        ]
-    )
-    llm_chain = prompt | llm
+    # Define a prompt for the LLM to format the response
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant. Based on the SQL query result, provide a concise and clear natural language answer to the user's original question. If the result is empty or an error, state that clearly."),
+        ("user", "Original question: {original_question}\nSQL Result: {sql_result}")
+    ])
 
-    formatted_response = llm_chain.invoke(
-        {
-            "clarified_query": clarified_query,
-            "sql_result": sql_result,
-        }
-    ).content
+    # Extract the original question from the messages
+    original_question = ""
+    for msg in messages:
+        if msg.type == "human":
+            original_question = msg.content
+            break
+    
+    if not original_question:
+        original_question = "The user's question is not available in the history."
 
-    messages.append(AIMessage(content=formatted_response))
+    # Create a chain to format the response
+    response_chain = prompt | llm
 
-    return {
-        "formatted_response": formatted_response,
-        "current_stage": "response_formatter",
-        "messages": messages,
-    }
+    try:
+        formatted_response = response_chain.invoke({
+            "original_question": original_question,
+            "sql_result": sql_result
+        }).content
+        print(f"Formatted Response: {formatted_response}")
+        messages.append(AIMessage(content=formatted_response))
+        return {"messages": messages}
+    except Exception as e:
+        error_message = f"Error formatting response: {e}"
+        print(error_message)
+        messages.append(AIMessage(content=f"Error: {error_message}"))
+        return {"messages": messages}
