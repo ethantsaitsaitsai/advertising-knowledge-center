@@ -1,7 +1,7 @@
 from schemas.state import GraphState
-from config.database import db
 from langchain_core.messages import AIMessage
-from tools.database_tools import sql_db_query_tool # Import the specific tool
+from tools.database_tools import sql_db_query_tool  # Import the specific tool
+
 
 def sql_executor_node(state: GraphState) -> GraphState:
     """
@@ -22,7 +22,6 @@ def sql_executor_node(state: GraphState) -> GraphState:
         # Use the sql_db_query_tool to execute the safe SQL
         # The tool expects a dictionary with a 'query' key
         tool_result = sql_db_query_tool.invoke({"query": safe_sql})
-        
         print(f"SQL Result: {tool_result}")
         return {"sql_result": str(tool_result), "messages": messages}
     except Exception as e:

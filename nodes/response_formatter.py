@@ -24,7 +24,7 @@ def response_formatter_node(state: GraphState) -> GraphState:
         if msg.type == "human":
             original_question = msg.content
             break
-    
+
     if not original_question:
         original_question = "The user's question is not available in the history."
 
