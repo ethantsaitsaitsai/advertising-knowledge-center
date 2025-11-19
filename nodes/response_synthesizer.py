@@ -5,7 +5,12 @@ def response_synthesizer(state: AgentState) -> dict:
     """
     Synthesizes a final response from the SQL result.
     """
-    user_question = state["messages"][-1].content
+    last_message = state['messages'][-1]
+    if isinstance(last_message, dict):
+        user_question = last_message['content']
+    else:
+        user_question = last_message.content
+
     sql_result = state.get("sql_result")
 
     if not sql_result:

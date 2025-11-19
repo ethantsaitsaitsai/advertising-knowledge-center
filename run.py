@@ -1,7 +1,6 @@
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from graph.graph import app
 from dotenv import load_dotenv
-import operator
 from schemas.state import AgentState
 
 def main():
@@ -10,7 +9,19 @@ def main():
     """
     load_dotenv()
     
-    messages = []
+    state: AgentState = {
+        "messages": [],
+        "extracted_filters": {},
+        "analysis_needs": {},
+        "missing_slots": [],
+        "ambiguous_terms": [],
+        "candidate_values": [],
+        "confirmed_entities": [],
+        "generated_sql": None,
+        "sql_result": None,
+        "error_message": None,
+        "expecting_user_clarification": False, # Initialize the flag
+    }
     
     while True:
         user_input = input("您: ")
@@ -18,22 +29,27 @@ def main():
             print("正在離開...")
             break
 
-        messages.append(HumanMessage(content=user_input))
+        state["messages"].append(HumanMessage(content=user_input))
         
-        inputs: AgentState = {
-            "messages": messages,
-            "extracted_slots": {},
-            "missing_slots": [],
-            "generated_sql": None,
-            "sql_result": None,
-            "error_message": None,
-        }
+        # Determine the entry point dynamically
+        entry_point = "slot_manager"
+        if state.get("expecting_user_clarification"):
+            entry_point = "state_updater"
+
+        # Invoke the graph with the determined entry point
+        final_state = app.invoke(state, {"configurable": {"thread_id": "1"}, "recursion_limit": 50, "start": entry_point})
         
-        final_state = app.invoke(inputs)
+        state = final_state
 
         print("--- Agent Response ---")
-        # The final response is always the last message added to the state
-        print(final_state["messages"][-1].content)
+        last_message = state["messages"][-1]
+        
+        # Check if it's a dict or an object
+        if isinstance(last_message, dict):
+            print(last_message.get("content", ""))
+        elif isinstance(last_message, (AIMessage, HumanMessage, BaseMessage)):
+            print(last_message.content)
 
 if __name__ == "__main__":
     main()
+

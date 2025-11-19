@@ -1,55 +1,68 @@
-from typing import Optional, Dict, Any, List
-from datetime import date
-from pydantic import BaseModel, Field
 from schemas.state import AgentState
 from config.llm import llm
+from schemas.search_intent import SearchIntent
 
-# Pydantic model for slot filling
-class Slots(BaseModel):
+SLOT_MANAGER_PROMPT = """
+# 角色
+你是一位精通 SQL 的廣告數據分析師。
+你唯一的任務是將使用者的自然語言查詢轉換為結構化的過濾參數 (SearchIntent)。
+
+# 領域術語表 (Domain Glossary) - 關鍵解釋規則
+當使用者提到以下詞彙時，必須依照此規則映射：
+- **"格式"**: 指 **廣告格式 (Ad Format)** (如 Video, Banner)，對應 `ad_formats` 欄位。絕非檔案格式。
+- **"數據鎖定" / "鎖定"**: 指 **受眾鎖定 (Targeting/Segments)**，對應 `target_segments` 欄位。絕非資料庫鎖。
+- **"投資金額" / "預算"**: 映射至 `metrics` 中的 "Budget"。
+- **"成效" / "表現"**: 映射至 `metrics` 中的 "Performance"。
+
+# 提取規則
+1. **日期處理**: 
+   - 若未提及具體時間，務必將 `date_range` 留空，並將 "date_range" 加入 `missing_info`。
+   - 支援相對時間轉換 (如 "上個月" -> 計算出具體的 YYYY-MM-DD)。
+2. **實體識別**: 
+   - 若不確定某個詞是品牌還是產品線，放入 `ambiguous_terms`。
+3. **嚴格輸出**: 
+   - 僅輸出 JSON，嚴禁廢話。
+
+# 輸入
+使用者輸入: {user_input}
+"""
+
+def slot_manager_node(state: AgentState):
     """
-    Represents the slots to be filled from the user's query.
+    Fills slots from the user's query and updates the state with a more structured format.
     """
-    industry: Optional[str] = Field(None, description="客戶產業類別")
-    brand: Optional[str] = Field(None, description="品牌")
-    date_range: Optional[Dict[str, Optional[date]]] = Field(None, description="一個包含 'start_date' 和 'end_date' 的字典")
-
-def slot_manager(state: AgentState) -> dict:
-    """
-    Fills slots from the user's query and updates the state.
-
-    Args:
-        state (AgentState): The current state of the agent.
-
-    Returns:
-        dict: A dictionary containing the updated state fields.
-    """
-    # Create a structured LLM from the Pydantic model
-    structured_llm = llm.with_structured_output(Slots)
-
-    # Get the whole conversation
-    messages = state["messages"]
-
-    # Extract slots from the user message
-    slots = structured_llm.invoke(messages)
-
-    # Update the extracted_slots in the state
-    extracted_slots = {
-        "industry": slots.industry,
-        "brand": slots.brand,
-        "date_range": slots.date_range,
-    }
+    last_message = state['messages'][-1]
+    user_input = last_message.content if hasattr(last_message, 'content') else last_message['content']
     
-    # Remove None values from extracted_slots
-    extracted_slots = {k: v for k, v in extracted_slots.items() if v is not None}
-
-    # Check for critical missing information
-    missing_slots = []
-    if not extracted_slots.get("date_range") or not extracted_slots.get("date_range", {}).get("start_date") or not extracted_slots.get("date_range", {}).get("end_date"):
-        missing_slots.append("date_range")
-
+    # 綁定新的 Schema
+    structured_llm = llm.with_structured_output(SearchIntent)
+    
+    # 執行提取
+    result: SearchIntent = structured_llm.invoke(
+        SLOT_MANAGER_PROMPT.format(user_input=user_input)
+    )
+    
+    # 構建更結構化的 State 更新
+    # 這裡將 "Raw Slots" 轉換為 "SQL Ready Context"
     return {
-        "extracted_slots": extracted_slots,
-        "missing_slots": missing_slots,
+        # 將過濾條件集中，方便 SQLGenerator 生成 WHERE 子句
+        "extracted_filters": {
+            "brands": result.brands,
+            "industries": result.industries,
+            "ad_formats": result.ad_formats,
+            "target_segments": result.target_segments,
+            "date_start": result.date_range.start,
+            "date_end": result.date_range.end
+        },
+        
+        # 分析需求，方便決定 SELECT 欄位或 Python 分析邏輯
+        "analysis_needs": {
+            "metrics": result.metrics
+        },
+        
+        # 流程控制用
+        "missing_slots": result.missing_info,
+        "ambiguous_terms": result.ambiguous_terms
     }
 
 
