@@ -8,4 +8,4 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     raise ValueError("Error: Please set OPENAI_API_KEY in your .env file.")
 
-llm = ChatOpenAI(model="gpt-4-turbo", temperature=0, openai_api_key=openai_api_key)
+llm = ChatOpenAI(model="gpt-5-mini", temperature=0, openai_api_key=openai_api_key)

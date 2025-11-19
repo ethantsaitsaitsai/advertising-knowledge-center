@@ -1,24 +1,22 @@
-from typing import TypedDict, List, Optional, Dict
-from langgraph.graph import MessagesState
+from typing import TypedDict, List, Optional, Annotated, Any, Dict
+import operator
+from langchain_core.messages import BaseMessage
 
-class GraphState(MessagesState):
+class AgentState(TypedDict):
     """
-    Represents the state of our graph.
+    Represents the state of our graph for the data retrieval subgraph.
     
     Attributes:
         messages: The list of messages in the conversation.
-        intent: The user's intent ('query' or 'chitchat').
-        terms_to_check: A list of potentially ambiguous terms extracted from the query.
-        clarified_terms: A dictionary mapping original terms to their clarified values.
-        sql_is_safe: A boolean indicating if the generated SQL passed safety checks.
-        safe_sql: The validated and potentially modified SQL query.
-        error_message: Any error message generated during the process.
-        sql_result: The result from the executed SQL query.
+        extracted_slots: e.g., {'industry': '金融', 'start_date': '2024-01-01'}
+        missing_slots: e.g., ['start_date']
+        generated_sql: LLM 產生的 SQL
+        sql_result: DB 回傳的 Raw Data (List of tuples)
+        error_message: 如果執行失敗的報錯
     """
-    intent: Optional[str]
-    terms_to_check: Optional[List[str]]
-    clarified_terms: Optional[Dict[str, str]]
-    sql_is_safe: Optional[bool]
-    safe_sql: Optional[str]
-    error_message: Optional[str]
+    messages: Annotated[List[BaseMessage], operator.add]
+    extracted_slots: Dict[str, Any]
+    missing_slots: List[str]
+    generated_sql: Optional[str]
     sql_result: Optional[str]
+    error_message: Optional[str]

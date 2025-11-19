@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "sql_agent": "./graph/builder.py:graph"
+    "sql_agent": "./graph/graph.py:app"
   },
   "env": ".env",
   "image_distro": "wolfi"
