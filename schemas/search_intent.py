@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 class DateRange(BaseModel):
     """明確的時間區間物件，避免 List 索引錯誤"""
@@ -10,6 +10,11 @@ class SearchIntent(BaseModel):
     """
     使用者查詢意圖的結構化表示
     """
+    intent_type: Literal["data_query", "greeting", "other"] = Field(
+        ...,
+        description="判斷使用者的意圖：'data_query' (查數據), 'greeting' (打招呼/閒聊), 'other' (無關問題)"
+    )
+
     # 1. 過濾條件 (對應 SQL WHERE)
     brands: List[str] = Field(default_factory=list, description="品牌名稱列表，如 ['悠遊卡', 'Nike']")
     industries: List[str] = Field(default_factory=list, description="產業類別，如 ['金融', 'FMCG']")

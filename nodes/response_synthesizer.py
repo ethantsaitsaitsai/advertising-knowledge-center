@@ -1,5 +1,5 @@
 from schemas.state import AgentState
-from langchain.messages import AIMessage
+from langchain_core.messages import AIMessage
 
 def response_synthesizer(state: AgentState) -> dict:
     """

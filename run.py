@@ -2,6 +2,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from graph.graph import app
 from dotenv import load_dotenv
 from schemas.state import AgentState
+from langsmith import uuid7 # Import uuid7
 
 def main():
     """
@@ -21,8 +22,11 @@ def main():
         "sql_result": None,
         "error_message": None,
         "expecting_user_clarification": False, # Initialize the flag
+        "intent_type": None, # Initialize intent_type
     }
     
+    thread_id = str(uuid7()) # Generate a single thread_id for the conversation
+
     while True:
         user_input = input("您: ")
         if user_input.lower() in ["exit", "quit"]:
@@ -37,7 +41,7 @@ def main():
             entry_point = "state_updater"
 
         # Invoke the graph with the determined entry point
-        final_state = app.invoke(state, {"configurable": {"thread_id": "1"}, "recursion_limit": 50, "start": entry_point})
+        final_state = app.invoke(state, {"configurable": {"thread_id": thread_id}, "recursion_limit": 50, "start": entry_point}) # Use the same thread_id
         
         state = final_state
 

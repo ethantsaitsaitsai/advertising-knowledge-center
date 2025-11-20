@@ -9,11 +9,18 @@ from nodes.response_synthesizer import response_synthesizer
 from nodes.error_handler import error_handler
 from nodes.entity_search import entity_search_node
 from nodes.state_updater import state_updater_node
+from nodes.chitchat import chitchat_node
 
-def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification", "sql_generator"]:
+def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification", "sql_generator", "chitchat"]:
     """
-    Determines the next node to visit after slot_manager based on missing slots and ambiguous terms.
+    Determines the next node to visit after slot_manager based on the intent,
+    missing slots, and ambiguous terms.
     """
+    intent = state.get("intent_type", "data_query")
+
+    if intent in ["greeting", "other"]:
+        return "chitchat"
+
     if state.get("ambiguous_terms"):
         return "entity_search"
     if state.get("missing_slots"):
@@ -48,6 +55,7 @@ workflow.add_node("sql_generator", sql_generator)
 workflow.add_node("sql_executor", sql_executor)
 workflow.add_node("error_handler", error_handler)
 workflow.add_node("response_synthesizer", response_synthesizer)
+workflow.add_node("chitchat", chitchat_node)
 
 
 # Set the entry point
@@ -61,6 +69,7 @@ workflow.add_conditional_edges(
         "entity_search": "entity_search",
         "ask_for_clarification": "ask_for_clarification",
         "sql_generator": "sql_generator",
+        "chitchat": "chitchat",
     },
 )
 workflow.add_conditional_edges(
@@ -86,6 +95,7 @@ workflow.add_edge("state_updater", "sql_generator")
 workflow.add_edge("sql_generator", "sql_executor")
 workflow.add_edge("error_handler", "sql_generator") # Retry loop
 workflow.add_edge("response_synthesizer", END)
+workflow.add_edge("chitchat", END)
 
 
 # Compile the graph

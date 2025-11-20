@@ -1,11 +1,11 @@
-from typing import TypedDict, List, Optional, Annotated, Any, Dict
+from typing_extensions import TypedDict, List, Optional, Annotated
 import operator
 from langchain_core.messages import BaseMessage
+
 
 class AgentState(TypedDict):
     """
     Represents the state of our graph for the data retrieval subgraph.
-    
     Attributes:
         messages: The list of messages in the conversation.
         extracted_filters: Clean filtering conditions for the SQL WHERE clause.
@@ -20,17 +20,15 @@ class AgentState(TypedDict):
         expecting_user_clarification: Whether the agent is currently expecting a clarification response from the user.
     """
     messages: Annotated[List[BaseMessage], operator.add]
-    
     # Improved structure
     extracted_filters: dict  # Stores clean filtering conditions
     analysis_needs: dict     # Stores metrics
-    
     missing_slots: List[str]
     ambiguous_terms: List[str]
     candidate_values: List[str]
     confirmed_entities: List[str]
-    
     generated_sql: Optional[str]
     sql_result: Optional[str]
     error_message: Optional[str]
     expecting_user_clarification: Optional[bool]
+    intent_type: Optional[str]
