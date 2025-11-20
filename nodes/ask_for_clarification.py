@@ -1,70 +1,94 @@
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import Runnable
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import AIMessage
 from schemas.state import AgentState
 from config.llm import llm
-from typing import Dict, Any, List
+from typing import Dict, Any
+from collections import defaultdict
 
-# Define the prompt for asking for clarification
-ask_for_clarification_prompt_template = PromptTemplate.from_template(
-    """
-# ROLE
-You are a friendly database assistant. Your current task is to get clarification from the user to ensure the database query is accurate.
+# Define the new, more powerful prompt for asking for clarification
+ASK_FOR_CLARIFICATION_PROMPT = """
+# 角色
+你是一位友善且精確的數據助理。你的任務是透過與使用者對話，來澄清他模糊的查詢，確保最終的 SQL 查詢是百分之百正確的。
 
-# CONTEXT
-The user's request is either missing some crucial information or contains ambiguous terms.
-- The user's original ambiguous term was: '{ambiguous_term}'
-- We have found a list of potential candidates from the database: {candidate_values}
-- We are also missing the following information: {missing_slots}
+# 情境
+使用者的查詢 "{ambiguous_terms}" 比較模糊。經過資料庫搜尋，我們在不同的欄位中找到了以下幾個相關的可能項目：
 
-# INSTRUCTIONS
-1.  **Be Clear and Direct**: Your goal is to get a precise answer from the user.
-2.  **Handle Candidates**: If there is a list of `candidate_values`, present them clearly to the user. Ask them to select the ones they want to include. You can number them for easy selection.
-3.  **Handle Missing Info**: If there is `missing_slots`, ask the user to provide the missing information.
-4.  **Combine if Necessary**: If both situations occur, combine the questions into a single, polite message.
-5.  **Example (Candidates only)**: "我找到了幾個與「{ambiguous_term}」相關的項目，請確認您需要哪幾個？\n1. 候選一\n2. 候選二\n您可以回覆編號 (例如: 1, 2)，或告訴我「全部」或「排除 X」。"
-6.  **Example (Missing Info only)**: "為了提供更精確的數據，請問您想查詢的 {missing_slots} 是？"
-7.  **Example (Combined)**: "好的，關於「{ambiguous_term}」，我找到了幾個相關項目，請確認您需要哪幾個？\n1. 候選一\n2. 候選二\n另外，也想請問您想查詢的 {missing_slots} 是？"
+{formatted_candidates}
 
-Based on the context, generate the most appropriate question for the user.
+同時，我們可能還缺少以下必要的查詢資訊：
+{missing_slots}
+
+# 任務
+根據以上資訊，生成一個自然、簡潔、且有禮貌的問句，引導使用者完成選擇。
+
+# 指示
+1.  **優先處理候選項目**：如果 `formatted_candidates` 有內容，請務必清晰地展示給使用者看，並詢問他們想要查詢的是哪一個或哪幾個。
+2.  **引導式提問**：你的問題應該是引導式的，例如：「請問您是指特定專案，還是所有與該品牌相關的資料？」
+3.  **處理缺少資訊**：如果 `missing_slots` 也有內容，請在同一個問句中一併提出。
+4.  **語言**：請務必使用繁體中文。
+
+# 範例
+"根據您提到的「悠遊卡」，我在資料庫中找到了幾個相關項目：
+- 在「品牌廣告主」中，找到了：悠遊卡公司
+- 在「廣告案件」中，找到了：2024悠遊卡專案
+
+請問您是想查詢「2024悠遊卡專案」的數據，還是所有「悠遊卡公司」的資料呢？"
 """
-)
 
-def get_ask_for_clarification_chain() -> Runnable:
-    """
-    Get the chain for asking for clarification.
-    """
-    return ask_for_clarification_prompt_template | llm | StrOutputParser()
 
 def ask_for_clarification_node(state: AgentState) -> Dict[str, Any]:
     """
-    When the user's query is incomplete or ambiguous, this node generates follow-up questions.
-    If there are candidate values, it asks the user to confirm them.
+    When the user's query is incomplete or ambiguous, this node generates follow-up questions
+    by formatting structured candidates and presenting them to the user.
     """
-    ask_for_clarification_chain = get_ask_for_clarification_chain()
-    
     missing_slots = state.get("missing_slots", [])
     ambiguous_terms = state.get("ambiguous_terms", [])
     candidate_values = state.get("candidate_values", [])
-    
-    # If there are candidates, we prioritize asking for entity resolution
-    if candidate_values:
-        ambiguous_term = ambiguous_terms[0] if ambiguous_terms else ""
-        response = ask_for_clarification_chain.invoke({
-            "missing_slots": ", ".join(missing_slots),
-            "ambiguous_term": ambiguous_term,
-            "candidate_values": "\n".join([f"{i+1}. {c}" for i, c in enumerate(candidate_values)]),
-        })
-    # If no candidates, but missing info, ask for the missing info
-    elif missing_slots:
+
+    # If no candidates or missing slots, something is wrong, but have a fallback.
+    if not candidate_values and not missing_slots:
+        return {
+            "messages": [AIMessage(content="我需要更多資訊，但無法確定要問什麼。可以請您提供更多細節嗎？")],
+            "expecting_user_clarification": True,
+        }
+
+    # Use a simple prompt for missing slots only if no candidates were found
+    if not candidate_values and missing_slots:
         response = f"為了提供準確的數據，請問您想查詢的『{', '.join(missing_slots)}』是？（例如：2024年全年度、上個月、或是具體日期）"
     else:
-        # This case should ideally not be reached if the router is configured correctly
-        response = "我需要更多資訊，但無法確定要問什麼。可以請您提供更多細節嗎？"
+        # This is the main path for handling structured, ambiguous candidates
+        formatted_candidates_str = "暫無相關候選項目。"
+        if candidate_values:
+            # Group candidates by their source
+            grouped_candidates = defaultdict(list)
+            for cand in candidate_values:
+                # Use a mapping for better display names
+                source_display_map = {
+                    "brand": "品牌",
+                    "advertiser": "品牌廣告主",
+                    "campaign": "廣告案件名稱",
+                    "agency": "代理商",
+                }
+                source_display = source_display_map.get(cand['source'], cand['source'].replace("_", " ").title())
+                grouped_candidates[source_display].append(cand['value'])
 
-    
-    # Return the generated message and set the flag to expect clarification response
+            # Format the grouped candidates into a readable string for the prompt
+            parts = []
+            for source, values in grouped_candidates.items():
+                values_str = ", ".join(f"「{v}」" for v in values)
+                parts.append(f"- 在「{source}」中，找到了：{values_str}")
+            formatted_candidates_str = "\n".join(parts)
+
+        # Use the powerful LLM prompt for the main clarification task
+        prompt = PromptTemplate.from_template(ASK_FOR_CLARIFICATION_PROMPT)
+        chain = prompt | llm | StrOutputParser()
+        response = chain.invoke({
+            "ambiguous_terms": ", ".join(f"「{t}」" for t in ambiguous_terms),
+            "formatted_candidates": formatted_candidates_str,
+            "missing_slots": ", ".join(missing_slots) if missing_slots else "無",
+        })
+
     return {
         "messages": [AIMessage(content=response)],
         "expecting_user_clarification": True,

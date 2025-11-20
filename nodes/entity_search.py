@@ -4,28 +4,34 @@ from typing import Dict, Any
 
 def entity_search_node(state: AgentState) -> Dict[str, Any]:
     """
-    Searches the database for ambiguous terms to find potential candidates for clarification.
+    Searches for each ambiguous term across multiple predefined columns in the database
+    and aggregates the unique candidates for clarification.
     """
     ambiguous_terms = state.get("ambiguous_terms", [])
     if not ambiguous_terms:
         return {}
 
-    # For simplicity, we handle one ambiguous term at a time.
-    term_to_search = ambiguous_terms[0]
-    
-    # TODO: In a real-world scenario, the column and table could be determined dynamically.
-    column_to_search = "廣告案件名稱"
-    table_to_search = "cuelist"
-    
-    print(f"Searching for ambiguous term '{term_to_search}' in {table_to_search}.{column_to_search}...")
-    
-    candidates = search_ambiguous_term.invoke({
-        "keyword": term_to_search,
-        "column_name": column_to_search,
-        "table_name": table_to_search,
-    })
-    
-    print(f"Found candidates: {candidates}")
+    all_candidates = []
+    # Use a set to keep track of seen candidates to avoid duplicates
+    seen_candidates = set()
 
-    # Update the state with the found candidates
-    return {"candidate_values": candidates}
+    # Iterate over all ambiguous terms provided by the slot_manager
+    for term in ambiguous_terms:
+        print(f"Searching for ambiguous term '{term}' across multiple columns...")
+        
+        # The new search_ambiguous_term tool doesn't need column_name
+        # It returns a list of dicts: [{'value': 'FoundTerm', 'source': 'column_name'}, ...]
+        results = search_ambiguous_term.invoke({"keyword": term})
+        
+        for candidate in results:
+            # Create a unique identifier for the candidate (e.g., a tuple of its values)
+            # This prevents adding the exact same item from different searches
+            candidate_tuple = (candidate.get('value'), candidate.get('source'))
+            if candidate_tuple not in seen_candidates:
+                all_candidates.append(candidate)
+                seen_candidates.add(candidate_tuple)
+
+    print(f"Found unique candidates: {all_candidates}")
+
+    # Update the state with the aggregated, unique candidates
+    return {"candidate_values": all_candidates}

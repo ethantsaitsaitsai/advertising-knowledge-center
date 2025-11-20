@@ -1,68 +1,62 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import Runnable
-from langchain_core.output_parsers import PydanticOutputParser
 from schemas.state import AgentState
 from config.llm import llm
 from typing import Dict, Any, List
 
-class ConfirmedEntities(BaseModel):
-    """Data model for the confirmed entities from the user's selection."""
-    confirmed_list: List[str] = Field(description="The final list of entities confirmed by the user.")
-
-# Create a parser for the ConfirmedEntities model
-parser = PydanticOutputParser(pydantic_object=ConfirmedEntities)
-
-# Define the prompt for updating the state
-state_updater_prompt_template = PromptTemplate(
-    template="""
-# 角色
-你是一個狀態更新器。你的任務是理解使用者從候選清單中做出的選擇，並輸出最終、已確認的實體清單。
-
-# 背景
-- 系統向使用者展示了這個候選清單: {candidate_values}
-- 使用者的回覆是: "{user_response}"
-
-# 指示
-1.  分析使用者的回覆，確定他們選擇了哪些候選項目。
-2.  使用者可能透過編號、名稱選擇，或者說「全部」或「除了...之外」。
-3.  你唯一的輸出應該是符合以下格式的 JSON 物件。請勿添加任何其他文字。
-
-{format_instructions}
-""",
-    input_variables=["candidate_values", "user_response"],
-    partial_variables={"format_instructions": parser.get_format_instructions()},
-)
-
-def get_state_updater_chain() -> Runnable:
+class StateUpdate(BaseModel):
     """
-    Get the chain for updating the state with confirmed entities.
+    用於解析使用者澄清回覆並擷取所有狀態更新的資料模型，
+    包含確認的實體和新提供的過濾條件值。
     """
-    return state_updater_prompt_template | llm | parser
+    model_config = ConfigDict(extra="forbid")
+
+    confirmed_entities: List[str] = Field(
+        default=[],
+        description="使用者從候選清單中確認的完整、正確的實體名稱列表。"
+    )
+    updated_filters: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="一個字典，包含使用者在其回覆中提供的任何新的或更新的過濾器值，例如 'date_start'、'date_end' 或其他缺失的資訊。"
+    )
+
+from prompts.state_updater_prompt import STATE_UPDATER_PROMPT
 
 def state_updater_node(state: AgentState) -> Dict[str, Any]:
     """
-    Processes the user's response to a clarification question, updates the state with
-    confirmed entities, and clears temporary fields.
+    處理使用者對澄清問題的回應，使用已確認的實體和任何新提供的過濾條件值來更新狀態，並清除臨時欄位。
     """
-    state_updater_chain = get_state_updater_chain()
+    # Bind the LLM to the new Pydantic model for structured output
+    structured_llm = llm.with_structured_output(StateUpdate)
     
-    candidate_values = state.get("candidate_values", [])
-    user_response = state["messages"][-1].content if state["messages"] else ""
+    prompt = PromptTemplate.from_template(STATE_UPDATER_PROMPT)
     
-    if not candidate_values or not user_response:
-        return {}
+    chain = prompt | structured_llm
 
-    # Invoke the chain to get the confirmed entities
-    result: ConfirmedEntities = state_updater_chain.invoke({
+    # Gather context for the prompt
+    candidate_values = state.get("candidate_values", [])
+    current_filters = state.get("extracted_filters", {})
+    user_input = state["messages"][-1]["content"] if state["messages"] else ""
+
+    # Invoke the chain
+    result: StateUpdate = chain.invoke({
         "candidate_values": candidate_values,
-        "user_response": user_response,
+        "current_filters": current_filters,
+        "user_input": user_input,
     })
-    
-    # Update state: set confirmed_entities and clear temporary fields
+
+    # Merge the updated filters into the existing filters
+    # The new values from the user's clarification take precedence
+    final_filters = current_filters.copy()
+    if result.updated_filters:
+        final_filters.update(result.updated_filters)
+
+    # Return the complete state update
     return {
-        "confirmed_entities": result.confirmed_list,
-        "ambiguous_terms": [], # Clear the ambiguous term that has been resolved
-        "candidate_values": [],  # Clear the candidates list
-        "expecting_user_clarification": False, # No longer expecting clarification
+        "extracted_filters": final_filters,
+        "confirmed_entities": result.confirmed_entities,
+        "ambiguous_terms": [],  # Clear resolved ambiguous terms
+        "candidate_values": [],   # Clear candidates
+        "missing_slots": [], # Assume missing slots are now filled if provided
+        "expecting_user_clarification": False, # Reset the flag
     }

@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from typing import Literal
 from schemas.state import AgentState
 from nodes.slot_manager import slot_manager_node
@@ -10,6 +10,16 @@ from nodes.error_handler import error_handler
 from nodes.entity_search import entity_search_node
 from nodes.state_updater import state_updater_node
 from nodes.chitchat import chitchat_node
+
+
+def route_user_input(state: AgentState) -> Literal["state_updater", "slot_manager"]:
+    """
+    Determines the starting point for the user's input based on whether the agent
+    is expecting a clarification from the user.
+    """
+    if state.get("expecting_user_clarification", False):
+        return "state_updater"
+    return "slot_manager"
 
 
 def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification",
@@ -62,9 +72,15 @@ workflow.add_node("error_handler", error_handler)
 workflow.add_node("response_synthesizer", response_synthesizer)
 workflow.add_node("chitchat", chitchat_node)
 
-
-# Set the entry point
-workflow.set_entry_point("slot_manager")
+# Set the conditional entry point
+workflow.add_conditional_edges(
+    START,
+    route_user_input,
+    {
+        "slot_manager": "slot_manager",
+        "state_updater": "state_updater",
+    },
+)
 
 # Add the conditional edges
 workflow.add_conditional_edges(
