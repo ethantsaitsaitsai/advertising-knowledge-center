@@ -24,6 +24,7 @@ RESPONSE_SYNTHESIZER_PROMPT = """
 {formatted_table_string}
 """
 
+
 def response_synthesizer(state: AgentState) -> Dict[str, Any]:
     """
     Synthesizes a final response from the SQL result, formatting it into a Markdown table
@@ -31,11 +32,10 @@ def response_synthesizer(state: AgentState) -> Dict[str, Any]:
     """
     sql_result = state.get("sql_result")
     sql_result_columns = state.get("sql_result_columns")
-    
+
     # Handle cases where SQL execution failed or returned no data
     if state.get("error_message"):
         return {"messages": [AIMessage(content=f"抱歉，執行查詢時發生錯誤：{state['error_message']}")]}
-    
     if not sql_result or not sql_result_columns:
         return {"messages": [AIMessage(content="查無資料，請嘗試調整您的查詢條件。")]}
 
@@ -47,5 +47,4 @@ def response_synthesizer(state: AgentState) -> Dict[str, Any]:
     chain = prompt | llm | StrOutputParser()
 
     response_content = chain.invoke({"formatted_table_string": formatted_table_string})
-    
     return {"messages": [AIMessage(content=response_content)]}
