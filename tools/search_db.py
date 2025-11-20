@@ -2,6 +2,7 @@ import ast
 from langchain.tools import tool
 from config.database import db
 
+
 def parse_db_result_to_list(result: str) -> list:
     """
     Parses the string representation of a list from a database query result into a Python list.
@@ -13,6 +14,7 @@ def parse_db_result_to_list(result: str) -> list:
     except (ValueError, SyntaxError):
         # If the result is not a string representation of a list, return it as a single-item list
         return [result]
+
 
 @tool
 def search_ambiguous_term(keyword: str, column_name: str, table_name: str = "cuelist") -> list:
@@ -26,14 +28,14 @@ def search_ambiguous_term(keyword: str, column_name: str, table_name: str = "cue
     # Here, we compose the string directly for demonstration of logic.
     # Limit to 10 results to avoid excessive token usage.
     query = f"""
-    SELECT DISTINCT `{column_name}` 
-    FROM `{table_name}` 
-    WHERE `{column_name}` LIKE '%%{keyword}%%' 
+    SELECT DISTINCT `{column_name}`
+    FROM `{table_name}`
+    WHERE `{column_name}` LIKE '%%{keyword}%%'
     LIMIT 10;
     """
     try:
         result = db.run(query)
         # The result from db.run is often a string representation of a list
-        return parse_db_result_to_list(result) 
+        return parse_db_result_to_list(result)
     except Exception as e:
         return [f"Search failed: {e}"]

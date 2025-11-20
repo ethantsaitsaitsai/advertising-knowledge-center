@@ -11,7 +11,9 @@ from nodes.entity_search import entity_search_node
 from nodes.state_updater import state_updater_node
 from nodes.chitchat import chitchat_node
 
-def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification", "sql_generator", "chitchat"]:
+
+def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification",
+                                                           "sql_generator", "chitchat"]:
     """
     Determines the next node to visit after slot_manager based on the intent,
     missing slots, and ambiguous terms.
@@ -27,13 +29,15 @@ def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask
         return "ask_for_clarification"
     return "sql_generator"
 
+
 def route_after_entity_search(state: AgentState) -> Literal["ask_for_clarification", "sql_generator"]:
     """
     Determines the next node to visit after entity_search based on whether candidate values were found.
     """
     if state.get("candidate_values"):
         return "ask_for_clarification"
-    return "sql_generator" # If no candidates found, proceed as if no ambiguity
+    return "sql_generator"  # If no candidates found, proceed as if no ambiguity
+
 
 def check_sql_error(state: AgentState) -> Literal["error_handler", "response_synthesizer"]:
     """
@@ -42,6 +46,7 @@ def check_sql_error(state: AgentState) -> Literal["error_handler", "response_syn
     if state.get("error_message"):
         return "error_handler"
     return "response_synthesizer"
+
 
 # Create a new state graph
 workflow = StateGraph(AgentState)
@@ -90,10 +95,10 @@ workflow.add_conditional_edges(
 )
 
 # Add the regular edges
-workflow.add_edge("ask_for_clarification", END) # Awaiting user response
+workflow.add_edge("ask_for_clarification", END)  # Awaiting user response
 workflow.add_edge("state_updater", "sql_generator")
 workflow.add_edge("sql_generator", "sql_executor")
-workflow.add_edge("error_handler", "sql_generator") # Retry loop
+workflow.add_edge("error_handler", "sql_generator")  # Retry loop
 workflow.add_edge("response_synthesizer", END)
 workflow.add_edge("chitchat", END)
 
