@@ -1,6 +1,7 @@
 from schemas.state import AgentState
 from config.database import db
 
+
 def sql_executor(state: AgentState) -> dict:
     """
     Executes the SQL query from the state and stores the result or an error.

@@ -15,4 +15,8 @@ except Exception as e:
         "Please check if DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME are set."
     ) from e
 
-db = SQLDatabase.from_uri(db_uri, include_tables=["cuelist", "one_campaigns", "pre_campaign", "campaign_target_pids", "target_segments"])
+db = SQLDatabase.from_uri(db_uri, include_tables=["cuelist",
+                                                  "one_campaigns",
+                                                  "pre_campaign",
+                                                  "campaign_target_pids",
+                                                  "target_segments"])

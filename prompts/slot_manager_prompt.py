@@ -21,7 +21,7 @@ Output:
 {{
     "intent_type": "data_query",
     "brands": ["悠遊卡"],
-    "ad_formats": ["All Formats"], 
+    "ad_formats": ["All Formats"],
     "metrics": ["Performance"],
     "ambiguous_terms": [],
     "missing_info": []

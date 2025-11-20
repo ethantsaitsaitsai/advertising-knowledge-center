@@ -68,12 +68,13 @@ SQL_GENERATOR_PROMPT = """
 ### 情境 B：查詢受眾鎖定 (Audience Targeting)
 * **觸發條件**: `extracted_filters.target_segments` **有值** (例如 ['麥卡倫', '高消費'])。
 * **行為**: 執行 5 層 JOIN。
-* **標準路徑**: 
+* **標準路徑**:
   ```sql
   FROM `cuelist`
   JOIN `one_campaigns` ON `cuelist`.`cmpid` = `one_campaigns`.`cue_list_id`
   JOIN `pre_campaign` ON `one_campaigns`.`id` = `pre_campaign`.`one_campaign_id`
-  JOIN `campaign_target_pids` ON `pre_campaign`.`id` = `campaign_target_pids`.`source_id` AND `campaign_target_pids`.`source_type` = 'PreCampaign'
+  JOIN `campaign_target_pids` ON `pre_campaign`.`id` = `campaign_target_pids`.`source_id`
+    AND `campaign_target_pids`.`source_type` = 'PreCampaign'
   JOIN `target_segments` ON `campaign_target_pids`.`selection_id` = `target_segments`.`id`
   ```
 * **受眾搜尋規則 (Target Search Logic)**: 由於受眾資訊分散在不同欄位，你必須同時搜尋 description 和 data_value。

@@ -1,6 +1,7 @@
 from schemas.state import AgentState
 from langchain_core.messages import AIMessage
 
+
 def response_synthesizer(state: AgentState) -> dict:
     """
     Synthesizes a final response from the SQL result.
@@ -18,6 +19,4 @@ def response_synthesizer(state: AgentState) -> dict:
 
     # This is a placeholder. A real implementation would use an LLM to generate a natural language response.
     response = f"根據您的問題 '{user_question}', 查詢結果如下：\n\n{sql_result}"
-    
     return {"messages": [AIMessage(content=response)]}
-

@@ -30,6 +30,6 @@ class AgentState(TypedDict):
     generated_sql: Optional[str]
     sql_result: Optional[str]
     error_message: Optional[str]
-    is_valid_sql: bool # 新增：SQL 語句是否通過驗證
+    is_valid_sql: bool
     expecting_user_clarification: Optional[bool]
     intent_type: Optional[str]

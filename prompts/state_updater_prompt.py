@@ -9,8 +9,10 @@ STATE_UPDATER_PROMPT = """
 
 # 任務
 你必須分析使用者的回覆以執行兩個動作：
-1.  **實體解析 (Entity Resolution)**: 識別使用者從 `candidate_values` 中選擇了哪幾個。將這些選擇填充到 `confirmed_entities` 列表中。名稱必須是來自候選清單的完整、原始名稱。
-2.  **資訊填充 (Slot Filling)**: 檢查使用者的回覆是否包含先前缺失的新資訊（例如，日期範圍、特定指標）。如果是，則用這個新資訊填充 `updated_filters` 字典（例如："date_start": "YYYY-MM-DD"）。
+1.  **實體解析 (Entity Resolution)**: 識別使用者從 `candidate_values` 中選擇了哪幾個。\
+    將這些選擇填充到 `confirmed_entities` 列表中。名稱必須是來自候選清單的完整、原始名稱。
+2.  **資訊填充 (Slot Filling)**: 檢查使用者的回覆是否包含先前缺失的新資訊（例如，日期範圍、特定指標）。\
+    如果是，則用這個新資訊填充 `updated_filters` 字典（例如："date_start": "YYYY-MM-DD"）。
 
 # 輸出格式
 你必須輸出一個符合 `StateUpdate` 模型的單一、有效的 JSON 物件。不要添加任何對話性文字或解釋。
