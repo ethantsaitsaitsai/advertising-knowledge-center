@@ -28,8 +28,7 @@ def chitchat_node(state: AgentState):
                 last_user_message = msg.content
                 break
     elif state['messages']:
-        last_user_message = state['messages'][-1]["content"]
-    else:
+        last_user_message = state['messages'][-1].content
         # Should not happen, but as a fallback
         last_user_message = "Hello"
 
