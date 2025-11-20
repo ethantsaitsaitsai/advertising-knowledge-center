@@ -10,6 +10,7 @@ from nodes.error_handler import error_handler
 from nodes.entity_search import entity_search_node
 from nodes.state_updater import state_updater_node
 from nodes.chitchat import chitchat_node
+from nodes.sql_validator import sql_validator_node
 
 
 def route_user_input(state: AgentState) -> Literal["state_updater", "slot_manager"]:
@@ -49,6 +50,16 @@ def route_after_entity_search(state: AgentState) -> Literal["ask_for_clarificati
     return "sql_generator"  # If no candidates found, proceed as if no ambiguity
 
 
+def route_after_validation(state: AgentState) -> Literal["sql_executor", "sql_generator"]:
+    """
+    Routes to the executor if SQL is valid, otherwise returns to the generator for a rewrite.
+    """
+    if state.get("is_valid_sql"):
+        return "sql_executor"
+    else:
+        return "sql_generator"
+
+
 def check_sql_error(state: AgentState) -> Literal["error_handler", "response_synthesizer"]:
     """
     Determines the next node to visit based on whether a SQL execution error occurred.
@@ -67,6 +78,7 @@ workflow.add_node("entity_search", entity_search_node)
 workflow.add_node("ask_for_clarification", ask_for_clarification_node)
 workflow.add_node("state_updater", state_updater_node)
 workflow.add_node("sql_generator", sql_generator)
+workflow.add_node("sql_validator", sql_validator_node)
 workflow.add_node("sql_executor", sql_executor)
 workflow.add_node("error_handler", error_handler)
 workflow.add_node("response_synthesizer", response_synthesizer)
@@ -102,6 +114,14 @@ workflow.add_conditional_edges(
     },
 )
 workflow.add_conditional_edges(
+    "sql_validator",
+    route_after_validation,
+    {
+        "sql_executor": "sql_executor",
+        "sql_generator": "sql_generator",
+    },
+)
+workflow.add_conditional_edges(
     "sql_executor",
     check_sql_error,
     {
@@ -113,7 +133,7 @@ workflow.add_conditional_edges(
 # Add the regular edges
 workflow.add_edge("ask_for_clarification", END)  # Awaiting user response
 workflow.add_edge("state_updater", "sql_generator")
-workflow.add_edge("sql_generator", "sql_executor")
+workflow.add_edge("sql_generator", "sql_validator")
 workflow.add_edge("error_handler", "sql_generator")  # Retry loop
 workflow.add_edge("response_synthesizer", END)
 workflow.add_edge("chitchat", END)

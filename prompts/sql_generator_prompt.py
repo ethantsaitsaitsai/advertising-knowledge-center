@@ -78,4 +78,11 @@ SQL_GENERATOR_PROMPT = """
     * 只輸出 SQL 字串。
     * 若非聚合函數 (SUM/COUNT)，請加上 `LIMIT 100`。
     * 若查詢受眾，建議 `SELECT DISTINCT target_segments.name` 以避免重複。
+
+### 安全與格式限制
+1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
+2. **欄位引用**：所有欄位名稱與表名稱 **必須** 使用 Backticks 包覆 (例如: `cuelist`.`project_name`)，以防止保留字衝突。
+
+### 錯誤修正模式
+如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。
 """
