@@ -1,4 +1,4 @@
-from typing_extensions import TypedDict, List, Optional, Annotated
+from typing_extensions import TypedDict, List, Optional, Annotated, Any
 import operator
 from langchain_core.messages import BaseMessage
 
@@ -28,7 +28,7 @@ class AgentState(TypedDict):
     candidate_values: List[str]
     confirmed_entities: List[str]
     generated_sql: Optional[str]
-    sql_result: Optional[List[any]]
+    sql_result: Optional[List[Any]]
     sql_result_columns: Optional[List[str]]
     error_message: Optional[str]
     is_valid_sql: bool

@@ -15,6 +15,15 @@ SLOT_MANAGER_PROMPT = """
 - **"成效" / "CTR" / "ROAS"**：映射至 `metrics` 中的 "Performance"。
 - **"預算" / "花費"**：映射至 `metrics` 中的 "Budget"。
 
+# 領域術語表 (Domain Glossary)
+- **"代理商" (Agency)**: 這是一個 **分組維度 (Grouping Dimension)**，對應 `cuelist.代理商`。
+  - **禁止**: 絕對不要將「代理商」這個詞本身放入 `target_segments` 列表。
+  - **操作**: 應將其視為分析維度。只有當使用者指定了「某一家」具體的代理商名稱（如：「奧美廣告」）時，才將該具體名稱視為過濾條件。
+
+# 提取規則修正
+- 若使用者提及「各代理商」、「每個格式」、「依產品線」，這代表 **Group By** 意圖。請確保 `target_segments` 保持為空，不要把這些維度名稱當成關鍵字提取出來。
+
+
 # 範例 (Few-Shot Learning)
 User: "幫我查悠遊卡投遞的格式和成效"
 Output:
