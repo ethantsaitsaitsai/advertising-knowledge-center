@@ -16,6 +16,14 @@ class ConfirmedFilters(BaseModel):
         default_factory=list,
         description="List of confirmed brand names."
     )
+    advertisers: List[str] = Field(
+        default_factory=list,
+        description="List of confirmed advertiser names."
+    )
+    agencies: List[str] = Field(
+        default_factory=list,
+        description="List of confirmed agency names."
+    )
     campaign_names: List[str] = Field(
         default_factory=list,
         description="List of confirmed campaign names."
@@ -84,6 +92,14 @@ def state_updater_node(state: AgentState):
     if confirmed.campaign_names:
         updated_campaigns = list(set(updated_filters.get('campaign_names', []) + confirmed.campaign_names))
         updated_filters['campaign_names'] = updated_campaigns
+
+    if confirmed.advertisers:
+        updated_advertisers = list(set(updated_filters.get('advertisers', []) + confirmed.advertisers))
+        updated_filters['advertisers'] = updated_advertisers
+
+    if confirmed.agencies:
+        updated_agencies = list(set(updated_filters.get('agencies', []) + confirmed.agencies))
+        updated_filters['agencies'] = updated_agencies
     # Update date_range if provided
     if result.date_range and (result.date_range.start or result.date_range.end):
         updated_filters['date_start'] = result.date_range.start

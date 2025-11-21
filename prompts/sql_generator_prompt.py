@@ -63,6 +63,8 @@ SQL_GENERATOR_PROMPT = """
 請檢查 `extracted_filters` 與 `analysis_needs`：
 1. **Explicit Filter Visibility**: 
    - 如果 `extracted_filters` 中有包含多個具體項目 (例如 `brands` 有 ['A', 'B', 'C'])，**務必**將該欄位 (e.g., `cuelist.品牌`) 加入 `SELECT` 與 `GROUP BY` 列表中。
+   - 如果 `extracted_filters.advertisers` 中有值，**務必**將 `cuelist.品牌廣告主` 加入 `SELECT` 與 `GROUP BY` 列表中。
+   - 如果 `extracted_filters.agencies` 中有值，**務必**將 `cuelist.代理商` 加入 `SELECT` 與 `GROUP BY` 列表中。
    - *原因*：避免使用者篩選了 A, B, C，但結果只顯示總數，導致無法區分細節。
 
 2. **Dimension Mapping**:

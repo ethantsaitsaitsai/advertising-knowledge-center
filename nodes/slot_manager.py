@@ -44,6 +44,8 @@ def slot_manager_node(state: AgentState):
         "intent_type": result.intent_type,
         "extracted_filters": {
             "brands": result.brands,
+            "advertisers": result.advertisers,
+            "agencies": result.agencies,
             "campaign_names": result.campaign_names,
             "industries": result.industries,
             "ad_formats": result.ad_formats,

@@ -13,14 +13,15 @@ def search_ambiguous_term(keyword: str) -> List[dict]:
     # 定義要搜的目標欄位
     search_targets = [
         {"col": "品牌", "table": "cuelist", "type": "brands"},
-        {"col": "品牌廣告主", "table": "cuelist", "type": "brands"}, # 歸類為 Brand
-        {"col": "廣告案件名稱(campaign_name)", "table": "cuelist", "type": "campaign_names"} # 歸類為 Campaign Name
+        {"col": "品牌廣告主", "table": "cuelist", "type": "advertisers"},
+        {"col": "廣告案件名稱(campaign_name)", "table": "cuelist", "type": "campaign_names"},
+        {"col": "代理商", "table": "cuelist", "type": "agencies"}
     ]
-
     for target in search_targets:
         try:
             # 執行 SQL LIKE 搜尋
-            query = f"SELECT DISTINCT `{target['col']}` FROM `{target['table']}` WHERE `{target['col']}` LIKE '%%{keyword}%%' LIMIT 3"
+            query = f"SELECT DISTINCT `{target['col']}` FROM `{target['table']}` WHERE \
+                `{target['col']}` LIKE '%%{keyword}%%' LIMIT 3"
             # 假設 db.run 直接回傳 list of strings
             results = db.run(query)
 
@@ -42,13 +43,11 @@ def search_ambiguous_term(keyword: str) -> List[dict]:
 
             if not isinstance(results, list):
                 results = [str(results)]
-
-
             for val in results:
                 candidates.append({
                     "value": val,           # e.g., "3D造型悠遊卡FB貼文廣宣"
-                    "source_col": target['col'], # e.g., "廣告案件名稱(campaign_name)"
-                    "filter_type": target['type'] # 告訴 Agent 這是屬於哪種 filter (brands 或 campaign_names)
+                    "source_col": target['col'],  # e.g., "廣告案件名稱(campaign_name)"
+                    "filter_type": target['type']  # 告訴 Agent 這是屬於哪種 filter (brands 或 campaign_names)
                 })
         except Exception:
             # 如果查詢失敗，跳過這個 target

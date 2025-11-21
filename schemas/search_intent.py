@@ -46,6 +46,8 @@ class SearchIntent(BaseModel):
 
     # 1. 過濾條件 (對應 SQL WHERE)
     brands: List[str] = Field(default_factory=list, description="品牌名稱列表，如 ['悠遊卡', 'Nike']")
+    advertisers: List[str] = Field(default_factory=list, description="廣告主名稱列表")
+    agencies: List[str] = Field(default_factory=list, description="代理商名稱列表")
     campaign_names: List[str] = Field(default_factory=list, description="廣告案件名稱列表")
     industries: List[str] = Field(default_factory=list, description="產業類別，如 ['金融', 'FMCG']")
     ad_formats: List[str] = Field(default_factory=list, description="廣告格式，如 ['Video', 'Banner']。對應使用者的「格式」")
