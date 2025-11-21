@@ -20,8 +20,8 @@ SLOT_MANAGER_PROMPT = """
    - "總覽"、"Total" -> `dimensions: []` (不分組)
 
 #### b. 指標映射 (metrics -> SELECT):
-   - "預算" -> `metrics: ["Budget_Sum"]`
-   - "花費"、"認列金額" -> `metrics: ["AdPrice_Sum"]`
+   - "預算"、"投資金額"、"認列金額" -> `metrics: ["Budget_Sum"]` (統一映射到媒體預算)
+   - "實際賣價"、"成交價" -> `metrics: ["AdPrice_Sum"]` (對應廣告賣價)
    - "案量"、"幾檔活動" -> `metrics: ["Campaign_Count"]`
    - "委刊單量" -> `metrics: ["Insertion_Count"]`
    - **注意**: 若 DB 無 CTR/Impression，使用者問「成效」時，請映射為 `AdPrice_Sum` (視為營收) 或 `Campaign_Count`，並在回應中備註。
