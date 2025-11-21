@@ -93,6 +93,23 @@ SQL_GENERATOR_PROMPT = """
 1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
 2. **欄位引用**：所有欄位名稱與表名稱 **必須** 使用 Backticks 包覆 (例如: `cuelist`.`project_name`)，以防止保留字衝突。
 
+### 輸出規則 (Output Rules)
+1. **Ignore Empty**: 避免在 WHERE 條件中加入空值判斷 (e.g., `WHERE column = ''` 或 `WHERE column IS NULL`)，除非使用者明確要求。
+2. **Date Handling**:
+   - `cuelist.刊登日期(起)` 欄位為字串，比較時請務必使用 `STR_TO_DATE(刊登日期(起), '%Y-%m-%d')`。
+   - `one_campaigns.start_date` 欄位為日期格式，可以直接比較。
+3. **預設限制 (Default Limit) - CRITICAL**:
+   - 若 SQL 為聚合查詢 (如 `SUM`, `COUNT`, `AVG`) 且只回傳單行結果，**不需要** LIMIT。
+   - 若 SQL 為列表查詢 (如 `SELECT *` 或 `GROUP BY` 後的多行列表)：
+     - 如果使用者**明確指定**數量 (如 "前 10 名", "Top 5")，請使用使用者指定的數字 (e.g., `LIMIT 10`)。
+     - 如果使用者**未指定**數量，務必強制加上 **`LIMIT 20`**。
+
+### SQL 最佳實務 (Best Practices) - CRITICAL
+1. **時間範圍可視化 (Visualize Time Range)**:
+   - 當使用者查詢涉及 **YTD, MTD, 或一段時間的聚合 (Aggregation)** 時，務必在 SELECT 子句中加入該時間欄位的 `MIN()` 和 `MAX()`。
+   - 目的：讓使用者知道數據的具體覆蓋範圍。
+   - 範例：`SELECT 代理商, MIN(date_col) as start_date, MAX(date_col) as end_date, SUM(budget)...`
+
 ### 錯誤修正模式
 如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。
 """

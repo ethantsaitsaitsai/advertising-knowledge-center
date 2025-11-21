@@ -27,24 +27,32 @@ RESPONSE_SYNTHESIZER_PROMPT = """
 
 def response_synthesizer(state: AgentState) -> Dict[str, Any]:
     """
-    Synthesizes a final response from the SQL result, formatting it into a Markdown table
-    and adding data insights using an LLM.
+    將 SQL 結果轉換為自然語言，並動態添加 Limit 提示。
     """
     sql_result = state.get("sql_result")
     sql_result_columns = state.get("sql_result_columns")
-
+    
     # Handle cases where SQL execution failed or returned no data
     if state.get("error_message"):
         return {"messages": [AIMessage(content=f"抱歉，執行查詢時發生錯誤：{state['error_message']}")]}
     if not sql_result or not sql_result_columns:
         return {"messages": [AIMessage(content="查無資料，請嘗試調整您的查詢條件。")]}
-
-    # Format the SQL result into a Markdown table
-    formatted_table_string = format_sql_result_to_markdown(sql_result, sql_result_columns)
-
-    # Use LLM to generate insights based on the formatted table
-    prompt = PromptTemplate.from_template(RESPONSE_SYNTHESIZER_PROMPT)
-    chain = prompt | llm | StrOutputParser()
-
-    response_content = chain.invoke({"formatted_table_string": formatted_table_string})
-    return {"messages": [AIMessage(content=response_content)]}
+    
+    # 1. 基本的回答生成 (這裡呼叫 LLM 或 Formatter)
+    response_text = format_sql_result_to_markdown(sql_result, sql_result_columns)
+    
+    # 2. 【關鍵邏輯】動態添加 Limit 提示 (Smart Footer)
+    # 判斷條件：如果回傳筆數剛好等於我們設定的預設上限 (例如 20)
+    # 這代表資料庫裡可能還有更多資料被截斷了
+    DEFAULT_LIMIT = 20 # 與 SQLGenerator 的預設限制保持一致
+    
+    if len(sql_result) == DEFAULT_LIMIT:
+        footer_note = (
+            f"\n\n---\n"
+            f"💡 **顯示提示**：目前預設顯示前 **{DEFAULT_LIMIT}** 筆數據。\n"
+            f"如果您需要更多資料（例如「看前 50 筆」或「全部」），請直接回覆告知，我會為您調整。"
+        )
+        response_text += footer_note
+        
+    # 3. 回傳最終訊息
+    return {"messages": [AIMessage(content=response_text)]}
