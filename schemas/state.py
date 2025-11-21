@@ -25,7 +25,7 @@ class AgentState(TypedDict):
     analysis_needs: dict     # Stores metrics
     missing_slots: List[str]
     ambiguous_terms: List[str]
-    candidate_values: List[str]
+    candidate_values: List[dict]
     confirmed_entities: List[str]
     generated_sql: Optional[str]
     sql_result: Optional[List[Any]]

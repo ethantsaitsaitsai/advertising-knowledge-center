@@ -9,11 +9,33 @@ SLOT_MANAGER_PROMPT = """
 - **品牌/產品/專案名稱**：如 "悠遊卡", "Nike", "PS5"。
 - **規則**：凡是專有名詞，一律提取至 `brands` 欄位。**不要**放入 ambiguous_terms，除非你完全無法分類它是什麼。
 
-### 2. 維度與指標 (Dimensions & Metrics) -> 對應到 ad_formats, metrics, target_segments
-- **"格式" / "形式"**：映射至 `ad_formats` (如 Banner, Video)。**絕對不是** ambiguous_terms。
-- **"鎖定" / "受眾" / "TA"**：映射至 `target_segments`。**絕對不是** ambiguous_terms。
-- **"成效" / "CTR" / "ROAS"**：映射至 `metrics` 中的 "Performance"。
-- **"預算" / "花費"**：映射至 `metrics` 中的 "Budget"。
+### 2. 分析需求提取規則 (Analysis Needs Extraction)
+
+請根據使用者的語意，提取 `metrics` (算什麼)、`dimensions` (怎麼分) 與 `calculation_type` (如何呈現)。
+
+#### a. 維度識別 (dimensions -> GROUP BY):
+   - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]`
+   - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
+   - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
+   - "總覽"、"Total" -> `dimensions: []` (不分組)
+
+#### b. 指標映射 (metrics -> SELECT):
+   - "預算" -> `metrics: ["Budget_Sum"]`
+   - "花費"、"認列金額" -> `metrics: ["AdPrice_Sum"]`
+   - "案量"、"幾檔活動" -> `metrics: ["Campaign_Count"]`
+   - "委刊單量" -> `metrics: ["Insertion_Count"]`
+   - **注意**: 若 DB 無 CTR/Impression，使用者問「成效」時，請映射為 `AdPrice_Sum` (視為營收) 或 `Campaign_Count`，並在回應中備註。
+
+#### c. 計算模式 (calculation_type):
+   - "排名"、"前幾名" -> `Ranking`
+   - "比較" -> `Comparison`
+   - "趨勢" -> `Trend`
+   - 若無特別指定，默認為 `Total`。
+
+### 3. 過濾條件提取 (Filter Extraction)
+- **品牌/產品/專案名稱**：如 "悠遊卡", "Nike", "PS5"。凡是專有名詞，一律提取至 `brands` 欄位。
+- **廣告格式**: 提及 "格式" / "形式"，對應 `ad_formats`。
+- **受眾**: 提及 "鎖定" / "受眾" / "TA"，對應 `target_segments`。
 
 # 領域術語表 (Domain Glossary)
 - **"代理商" (Agency)**: 這是一個 **分組維度 (Grouping Dimension)**，對應 `cuelist.代理商`。

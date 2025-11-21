@@ -1,83 +1,57 @@
-import ast
+from typing import List
 from langchain.tools import tool
 from config.database import db
 
 
-def parse_union_result(result: str) -> list[dict]:
-    """
-    Parses the string representation of a list of tuples from a UNION query.
-    Expected input format example: "[('悠遊卡', 'brand'), ('悠遊卡2024', 'campaign_name')]"
-    Returns: [{'value': '悠遊卡', 'source': 'brand'}, ...]
-    """
-    try:
-        # 安全地將字串轉換為 Python list of tuples
-        raw_list = ast.literal_eval(result)
-
-        parsed_list = []
-        # 處理 DB 回傳可能是單個 tuple 或 list of tuples 的情況
-        if isinstance(raw_list, tuple):
-            parsed_list.append({"value": raw_list[0], "source": raw_list[1]})
-        elif isinstance(raw_list, list):
-            for item in raw_list:
-                if isinstance(item, tuple) and len(item) >= 2:
-                    parsed_list.append({"value": item[0], "source": item[1]})
-
-        return parsed_list
-    except (ValueError, SyntaxError, IndexError):
-        # Fallback: 如果解析失敗，回傳原始字串以便除錯
-        return [{"value": result, "source": "unknown"}]
-
-
 @tool
-def search_ambiguous_term(keyword: str, table_name: str = "cuelist") -> list[dict]:
+def search_ambiguous_term(keyword: str) -> List[dict]:
     """
-    Searches for the keyword across multiple predefined columns (brand, agency, campaign, etc.)
-    and returns the matches along with their source column.
-
-    Args:
-        keyword: The term to search for (e.g., "悠遊卡").
-        table_name: The table to search in (default: "cuelist").
-
-    Returns:
-        A list of dictionaries: [{'value': 'FoundTerm', 'source': 'column_name'}, ...]
+    跨欄位搜尋模糊詞，並回傳 [值, 來源欄位, 過濾器類型] 的對照表。
     """
+    candidates = []
 
-    # 定義要搜尋的目標欄位映射 (Display Name -> Actual DB Column Name)
-    # 根據您的需求設定這幾個欄位
-    search_targets = {
-        "brand": "品牌",
-        "advertiser": "品牌廣告主",
-        "campaign": "廣告案件名稱(campaign_name)",
-        "agency": "代理商"
-    }
+    # 定義要搜的目標欄位
+    search_targets = [
+        {"col": "品牌", "table": "cuelist", "type": "brands"},
+        {"col": "品牌廣告主", "table": "cuelist", "type": "brands"}, # 歸類為 Brand
+        {"col": "廣告案件名稱(campaign_name)", "table": "cuelist", "type": "campaign_names"} # 歸類為 Campaign Name
+    ]
 
-    queries = []
+    for target in search_targets:
+        try:
+            # 執行 SQL LIKE 搜尋
+            query = f"SELECT DISTINCT `{target['col']}` FROM `{target['table']}` WHERE `{target['col']}` LIKE '%%{keyword}%%' LIMIT 3"
+            # 假設 db.run 直接回傳 list of strings
+            results = db.run(query)
 
-    # 建構 UNION 查詢
-    for source_tag, column_col in search_targets.items():
-        # 使用 SELECT DISTINCT 避免重複
-        # 並選取第二個欄位作為 source_tag (例如 'brand')
-        sub_query = f"""
-        SELECT DISTINCT `{column_col}`, '{source_tag}'
-        FROM `{table_name}`
-        WHERE `{column_col}` LIKE '%%{keyword}%%'
-        """
-        queries.append(sub_query)
+            # db.run 可能回傳一個表示 list 的字串，例如 "['val1', 'val2']"
+            # 我們需要安全地解析它
+            if isinstance(results, str):
+                try:
+                    # 使用 ast.literal_eval 安全解析字串
+                    import ast
+                    parsed_results = ast.literal_eval(results)
+                    if isinstance(parsed_results, list):
+                        results = parsed_results
+                    else:
+                        # 如果解析出來不是 list，當作單一元素的 list
+                        results = [str(parsed_results)]
+                except (ValueError, SyntaxError):
+                    # 如果解析失敗，當作單一元素的 list
+                    results = [results]
 
-    # 合併所有查詢
-    final_query = " UNION ".join(queries)
+            if not isinstance(results, list):
+                results = [str(results)]
 
-    # 加上總體限制，避免 Token 爆炸 (每個欄位都可能有結果，這裡限制總回傳數)
-    final_query += " LIMIT 20;"
 
-    try:
-        # 執行 SQL
-        result_str = db.run(final_query)
-        # 解析結果
-        candidates = parse_union_result(result_str)
-        if not candidates:
-            return []
-        return candidates
+            for val in results:
+                candidates.append({
+                    "value": val,           # e.g., "3D造型悠遊卡FB貼文廣宣"
+                    "source_col": target['col'], # e.g., "廣告案件名稱(campaign_name)"
+                    "filter_type": target['type'] # 告訴 Agent 這是屬於哪種 filter (brands 或 campaign_names)
+                })
+        except Exception:
+            # 如果查詢失敗，跳過這個 target
+            continue
 
-    except Exception as e:
-        return [{"value": f"Search Error: {str(e)}", "source": "error"}]
+    return candidates

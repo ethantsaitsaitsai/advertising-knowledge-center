@@ -70,7 +70,8 @@ def ask_for_clarification_node(state: AgentState) -> Dict[str, Any]:
                     "campaign": "廣告案件名稱",
                     "agency": "代理商",
                 }
-                source_display = source_display_map.get(cand['source'], cand['source'].replace("_", " ").title())
+                source_display = source_display_map.get(cand['filter_type'],
+                                                        cand['filter_type'].replace("_", " ").title())
                 grouped_candidates[source_display].append(cand['value'])
 
             # Format the grouped candidates into a readable string for the prompt

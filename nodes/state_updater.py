@@ -1,86 +1,94 @@
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
-from langchain_core.prompts import PromptTemplate
+from typing import List
+from pydantic import BaseModel, Field
 from schemas.state import AgentState
 from config.llm import llm
 from prompts.state_updater_prompt import STATE_UPDATER_PROMPT
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
 
-# --- 1. 新增：定義明確的 Filter 結構 ---
-class UpdatedFilters(BaseModel):
+class ConfirmedFilters(BaseModel):
     """
-    定義使用者可能想要更新的具體欄位。
-    必須與 SlotManager 的 extracted_filters 結構保持一致。
-    所有欄位皆為 Optional，因為使用者可能只更新其中一項。
+    The filters that have been confirmed by the user.
     """
-    model_config = ConfigDict(extra="forbid")  # 關鍵：禁止額外屬性
+    brands: List[str] = Field(
+        default_factory=list,
+        description="List of confirmed brand names."
+    )
+    campaign_names: List[str] = Field(
+        default_factory=list,
+        description="List of confirmed campaign names."
+    )
 
-    brands: Optional[List[str]] = Field(default=None, description="品牌列表")
-    industries: Optional[List[str]] = Field(default=None, description="產業列表")
-    ad_formats: Optional[List[str]] = Field(default=None, description="廣告格式列表")
-    target_segments: Optional[List[str]] = Field(default=None, description="受眾/鎖定條件列表")
-    date_start: Optional[str] = Field(default=None, description="開始日期 (YYYY-MM-DD)")
-    date_end: Optional[str] = Field(default=None, description="結束日期 (YYYY-MM-DD)")
-    # 若有其他 metric 相關過濾條件也可加在此
 
-
-# --- 2. 修改：主 Update 模型 ---
 class StateUpdate(BaseModel):
     """
-    用於解析使用者澄清回覆並擷取所有狀態更新的資料模型。
+    The structured output from the StateUpdater node.
     """
-    model_config = ConfigDict(extra="forbid")  # 關鍵：禁止額外屬性
-
-    confirmed_entities: List[str] = Field(
-        default_factory=list,  # 修正：list 預設應為 list
-        description="使用者從候選清單中確認的完整、正確的實體名稱列表。"
+    confirmed_filters: ConfirmedFilters = Field(
+        ...,
+        description="The filters that have been confirmed by the user."
     )
-    # 修正：不再使用 Dict，改用強型別物件
-    updated_filters: Optional[UpdatedFilters] = Field(
-        default=None,
-        description="包含使用者在其回覆中提供的任何新的或更新的過濾器值。"
+    ambiguous_terms: List[str] = Field(
+        default_factory=list,
+        description="The list of ambiguous terms should be cleared after confirmation."
     )
 
 
-def state_updater_node(state: AgentState) -> Dict[str, Any]:
+def state_updater_node(state: AgentState):
     """
-    處理使用者對澄清問題的回應，使用已確認的實體和任何新提供的過濾條件值來更新狀態。
+    Updates the agent's state based on user's clarification.
     """
-    # Bind the LLM to the new Pydantic model
-    structured_llm = llm.with_structured_output(StateUpdate)
-    prompt = PromptTemplate.from_template(STATE_UPDATER_PROMPT)
-    chain = prompt | structured_llm
+    # 1. Get the user's latest message and the candidate values from the state
+    last_message = state['messages'][-1]
+    # Check if last_message is a dict or a BaseMessage object
+    user_input = last_message.get('content') if isinstance(last_message, dict) else last_message.content
 
-    # Gather context
-    candidate_values = state.get("candidate_values", [])
-    current_filters = state.get("extracted_filters", {})
-    # 防禦性編程：確保 messages 存在
-    if state.get("messages"):
-        last_message = state["messages"][-1]
-        user_input = last_message.content if hasattr(last_message, 'content') else last_message['content']
-    else:
-        user_input = ""
+    candidate_values = state.get('candidate_values', [])
 
-    # Invoke the chain
+    if not candidate_values:
+        # If there are no candidates, there's nothing to confirm.
+        # We can just clear the ambiguous terms and proceed.
+        return {
+            "ambiguous_terms": [],
+            "candidate_values": [],
+            "expecting_user_clarification": False
+        }
+
+    # 2. Setup PydanticOutputParser
+    parser = PydanticOutputParser(pydantic_object=StateUpdate)
+
+    # 3. Create the chain with the prompt, LLM, and parser
+    chain = RunnablePassthrough.assign(
+        format_instructions=lambda _: parser.get_format_instructions(),
+        candidate_values=lambda x: x['candidate_values'],
+        user_input=lambda x: x['user_input']
+    ) | STATE_UPDATER_PROMPT | llm | parser
+
+    # 4. Invoke the chain
     result: StateUpdate = chain.invoke({
         "candidate_values": candidate_values,
-        "current_filters": current_filters,
-        "user_input": user_input,
+        "user_input": user_input
     })
 
-    # Merge logic
-    final_filters = current_filters.copy()
-    # --- 3. 修改：Pydantic Merge 邏輯 ---
-    if result.updated_filters:
-        # 只取出非 None 的值進行更新 (exclude_none=True)
-        updates = result.updated_filters.model_dump(exclude_none=True)
-        final_filters.update(updates)
+    # 5. Update the extracted_filters in the state
+    # Create a copy to avoid modifying the original state directly
+    updated_filters = state.get('extracted_filters', {}).copy()
 
+    confirmed = result.confirmed_filters
+    if confirmed.brands:
+        # Use a set to avoid duplicates, then convert back to a list
+        updated_brands = list(set(updated_filters.get('brands', []) + confirmed.brands))
+        updated_filters['brands'] = updated_brands
+
+    if confirmed.campaign_names:
+        updated_campaigns = list(set(updated_filters.get('campaign_names', []) + confirmed.campaign_names))
+        updated_filters['campaign_names'] = updated_campaigns
+
+    # 6. Return the updated state
     return {
-        "extracted_filters": final_filters,
-        "confirmed_entities": result.confirmed_entities,
-        "ambiguous_terms": [],   # Clear resolved terms
-        "candidate_values": [],  # Clear candidates
-        "missing_slots": [],     # Assume filled
-        "expecting_user_clarification": False,  # Reset flag
+        "extracted_filters": updated_filters,
+        "ambiguous_terms": [],  # Clear ambiguous terms after confirmation
+        "candidate_values": [],  # Clear candidates after confirmation
+        "expecting_user_clarification": False  # No longer waiting for user
     }
