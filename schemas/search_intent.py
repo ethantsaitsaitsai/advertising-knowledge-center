@@ -35,3 +35,4 @@ class SearchIntent(BaseModel):
     # 4. 狀態控制
     missing_info: List[str] = Field(default_factory=list, description="缺少且必須追問的欄位，例如 ['date_range']")
     ambiguous_terms: List[str] = Field(default_factory=list, description="模糊不清、需要由 User 確認的詞彙")
+    limit: Optional[int] = Field(None, description="資料筆數限制 (e.g. 50)")

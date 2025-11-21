@@ -49,4 +49,14 @@ Output:
 
 # 當前輸入
 使用者輸入: {user_input}
+
+# 狀態繼承與更新規則 (Context Inheritance) - CRITICAL
+你將接收「當前已鎖定的過濾條件 (Current Context)」。
+1. **繼承 (Inherit)**: 如果使用者的新指令（如「改成 50 筆」）沒有提到品牌或日期，**必須保留** Context 中的舊值。
+2. **僅更新 (Update)**: 只更新使用者明確提到的欄位 (如 `limit`)。
+3. **不要重置**: 嚴禁因為使用者沒提品牌就將 `brands` 設為空列表，除非使用者明確說「清除條件」。
+
+# 輸入
+Current Context: {current_filters}
+User Input: {user_input}
 """
