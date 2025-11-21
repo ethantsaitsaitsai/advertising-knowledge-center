@@ -18,7 +18,7 @@ SQL_GENERATOR_PROMPT = """
     * `廣告計價單位`: 廣告計價單位。
     * `廣告賣價`: 廣告賣價。
     * `委刊次數`: 委刊次數。
-    * `媒體預算` (int): **BUDGET SOURCE OF TRUTH**.
+    * `媒體預算` (int): **BUDGET SOURCE OF TRUTH**. 除非特別指定，否則金額都是指這個欄位。
     * `業務單位`: 業務單位名稱。
     * `產品線類別(product_category)`: 產品線類別。
     * `產品線`: 如"Facebook", "LINE LAP", "YouTube"...。
