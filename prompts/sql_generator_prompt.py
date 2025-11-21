@@ -112,4 +112,10 @@ SQL_GENERATOR_PROMPT = """
 
 ### 錯誤修正模式
 如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。
+
+# 輸出格式規範 (Strict Output Format) - CRITICAL
+1. **NO Explanations**: 嚴禁包含任何「說明」、「解釋」、「因為...所以...」的文字。
+2. **NO Markdown**: 嚴禁使用 Markdown 程式碼區塊 (```sql ... ```)。
+3. **NO Labels**: 嚴禁加上 "SQL:" 或 "Query:" 等前綴。
+4. **PURE SQL**: 回覆內容**必須**以 `SELECT` 開頭，並以 `;` 結尾。
 """

@@ -1,8 +1,34 @@
+import re
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from schemas.state import AgentState
 from config.llm import llm
-
 from prompts.sql_generator_prompt import SQL_GENERATOR_PROMPT
+
+
+def clean_sql_output(text: str) -> str:
+    """
+    Cleans the SQL output from the LLM, removing Markdown and explanatory text.
+    """
+    # 1. Attempt to extract Markdown code block (```sql ... ```)
+    pattern = r"```sql\s*(.*?)\s*```"
+    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+        
+    # 2. Attempt to extract a Markdown block without language tag (``` ... ```)
+    pattern_plain = r"```\s*(.*?)\s*```"
+    match_plain = re.search(pattern_plain, text, re.DOTALL)
+    if match_plain:
+        return match_plain.group(1).strip()
+
+    # 3. If no Markdown, try to find SELECT ... ;
+    # Heuristic: keep the part from the first SELECT to the end
+    select_index = text.upper().find("SELECT")
+    if select_index != -1:
+        return text[select_index:].strip()
+        
+    # 4. If no match, return the original stripped text
+    return text.strip()
 
 
 def sql_generator(state: AgentState) -> dict:
@@ -30,6 +56,7 @@ def sql_generator(state: AgentState) -> dict:
         "confirmed_entities": str(confirmed_entities)
     })
 
-    sql_query = response.content.strip().replace("```sql", "").replace("```", "").strip()
+    # Clean the output before writing to the state
+    clean_sql = clean_sql_output(response.content)
 
-    return {"generated_sql": sql_query}
+    return {"generated_sql": clean_sql}
