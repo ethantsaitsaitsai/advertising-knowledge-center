@@ -1,10 +1,11 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from schemas.state import AgentState
 from config.llm import llm
 from prompts.state_updater_prompt import STATE_UPDATER_PROMPT
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from schemas.search_intent import DateRange
 
 
 class ConfirmedFilters(BaseModel):
@@ -29,6 +30,7 @@ class StateUpdate(BaseModel):
         ...,
         description="The filters that have been confirmed by the user."
     )
+    date_range: Optional[DateRange] = Field(None, description="若使用者有補充日期，則填寫")
     ambiguous_terms: List[str] = Field(
         default_factory=list,
         description="The list of ambiguous terms should be cleared after confirmation."
@@ -74,17 +76,18 @@ def state_updater_node(state: AgentState):
     # 5. Update the extracted_filters in the state
     # Create a copy to avoid modifying the original state directly
     updated_filters = state.get('extracted_filters', {}).copy()
-
     confirmed = result.confirmed_filters
     if confirmed.brands:
         # Use a set to avoid duplicates, then convert back to a list
         updated_brands = list(set(updated_filters.get('brands', []) + confirmed.brands))
         updated_filters['brands'] = updated_brands
-
     if confirmed.campaign_names:
         updated_campaigns = list(set(updated_filters.get('campaign_names', []) + confirmed.campaign_names))
         updated_filters['campaign_names'] = updated_campaigns
-
+    # Update date_range if provided
+    if result.date_range and (result.date_range.start or result.date_range.end):
+        updated_filters['date_start'] = result.date_range.start
+        updated_filters['date_end'] = result.date_range.end
     # 6. Return the updated state
     return {
         "extracted_filters": updated_filters,

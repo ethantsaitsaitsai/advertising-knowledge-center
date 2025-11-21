@@ -59,6 +59,15 @@ SQL_GENERATOR_PROMPT = """
     * `description` (text): **邏輯備註**。通常是受眾的文字描述 (e.g., '積極性消費', '飲料產業受眾')。
     * `name` (varchar): 專案名稱摘要 (e.g., '尚格酒業-大摩...')。
 
+# SELECT 欄位選擇規則 (Column Selection Logic)
+請檢查 `extracted_filters` 與 `analysis_needs`：
+1. **Explicit Filter Visibility**: 
+   - 如果 `extracted_filters` 中有包含多個具體項目 (例如 `brands` 有 ['A', 'B', 'C'])，**務必**將該欄位 (e.g., `cuelist.品牌`) 加入 `SELECT` 與 `GROUP BY` 列表中。
+   - *原因*：避免使用者篩選了 A, B, C，但結果只顯示總數，導致無法區分細節。
+
+2. **Dimension Mapping**:
+   - (既有規則保持不變...)
+
 # 決策邏輯 (Decision Logic) - JOIN 策略
 
 ### 情境 A：基礎商業分析
@@ -106,9 +115,11 @@ SQL_GENERATOR_PROMPT = """
 
 ### SQL 最佳實務 (Best Practices) - CRITICAL
 1. **時間範圍可視化 (Visualize Time Range)**:
-   - 當使用者查詢涉及 **YTD, MTD, 或一段時間的聚合 (Aggregation)** 時，務必在 SELECT 子句中加入該時間欄位的 `MIN()` 和 `MAX()`。
-   - 目的：讓使用者知道數據的具體覆蓋範圍。
-   - 範例：`SELECT 代理商, MIN(date_col) as start_date, MAX(date_col) as end_date, SUM(budget)...`
+   - **原則**: 僅在「聚合範圍較廣」時顯示 `MIN/MAX` 日期。
+   - **情境 A (YTD / 總計 / 依品牌分組)**: 務必加入 `MIN(date_col)` 與 `MAX(date_col)`，讓使用者知道數據覆蓋區間。
+   - **情境 B (依月份 / 日期分組)**: 若 SQL 中已有 `DATE_FORMAT(..., '%Y-%m')` 或 `GROUP BY date`，**不需要** 再顯示 `MIN/MAX` 日期，以免資訊冗餘。
+2. **Null Handling**: 
+   - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(cuelist.代理商, 'Unknown')` 以避免顯示空白。
 
 ### 錯誤修正模式
 如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。
