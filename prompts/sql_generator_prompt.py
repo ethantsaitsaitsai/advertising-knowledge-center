@@ -51,13 +51,20 @@ SQL_GENERATOR_PROMPT = """
     * `selection_id`: 對應 `target_segments`.id。
 
 ## 5. `target_segments` (Level 5 - 受眾定義)
-* **權責**: 查詢受眾名稱、描述與關鍵字設定。
+* **權責**: 查詢受眾名稱、描述與關鍵字設定。**當需要根據 `target_segments` 進行過濾時，務必 JOIN `segment_categories` 表。**
 * **關鍵欄位**:
     * `id` (PK): 關聯鍵。
     * `data_source` (varchar): 資料來源類型 (e.g., 'keyword', 'custom', 'one_category').
     * `data_value` (text): **關鍵字/參數值**。當 `data_source`='keyword' 時，這裡是真正的關鍵字列表 (e.g., '麥卡倫,百富')。
     * `description` (text): **邏輯備註**。通常是受眾的文字描述 (e.g., '積極性消費', '飲料產業受眾')。
     * `name` (varchar): 專案名稱摘要 (e.g., '尚格酒業-大摩...')。
+    * `segment_category_id` (FK): 連接 `segment_categories` 表的 `id` 欄位。代表**數據鎖定**的方式
+
+## 6. `segment_categories` (Level 6 - 受眾類別)
+* **權責**: 查詢受眾類別名稱。
+* **關鍵欄位**:
+    * `id` (PK): 關聯鍵。
+    * `name` (varchar): 受眾類別名稱 (e.g., '客戶有感', 'AdLearn', '興趣特定議題')。
 
 # SELECT 欄位選擇規則 (Column Selection Logic)
 請檢查 `extracted_filters` 與 `analysis_needs`：
@@ -65,6 +72,7 @@ SQL_GENERATOR_PROMPT = """
    - 如果 `extracted_filters` 中有包含多個具體項目 (例如 `brands` 有 ['A', 'B', 'C'])，**務必**將該欄位 (e.g., `cuelist.品牌`) 加入 `SELECT` 與 `GROUP BY` 列表中。
    - 如果 `extracted_filters.advertisers` 中有值，**務必**將 `cuelist.品牌廣告主` 加入 `SELECT` 與 `GROUP BY` 列表中。
    - 如果 `extracted_filters.agencies` 中有值，**務必**將 `cuelist.代理商` 加入 `SELECT` 與 `GROUP BY` 列表中。
+   - 如果 `extracted_filters.target_segments` 中有值，**務必**將 `target_segments.name` 和 `segment_categories.name` 加入 `SELECT` 與 `GROUP BY` 列表中。
    - *原因*：避免使用者篩選了 A, B, C，但結果只顯示總數，導致無法區分細節。
 
 2. **Dimension Mapping**:
@@ -78,27 +86,63 @@ SQL_GENERATOR_PROMPT = """
 
 ### 情境 B：查詢受眾鎖定 (Audience Targeting)
 * **觸發條件**: `extracted_filters.target_segments` **有值** (例如 ['麥卡倫', '高消費'])。
-* **行為**: 執行 5 層 JOIN。
+* **行為**: 執行 6 層 JOIN (新增 `segment_categories`)。
 * **標準路徑**:
   ```sql
   FROM `cuelist`
-  JOIN `one_campaigns` ON `cuelist`.`cmpid` = `one_campaigns`.`id`
+  JOIN `one_campaigns` ON `cuelist`.`cmpid` = `one_campaigns`.`cue_list_id`
   JOIN `pre_campaign` ON `one_campaigns`.`id` = `pre_campaign`.`one_campaign_id`
   JOIN `campaign_target_pids` ON `pre_campaign`.`id` = `campaign_target_pids`.`source_id`
     AND `campaign_target_pids`.`source_type` = 'PreCampaign'
   JOIN `target_segments` ON `campaign_target_pids`.`selection_id` = `target_segments`.`id`
+  JOIN `segment_categories` ON `target_segments`.`segment_category_id` = `segment_categories`.`id`
   ```
-* **受眾搜尋規則 (Target Search Logic)**: 由於受眾資訊分散在不同欄位，你必須同時搜尋 description 和 data_value。
+* **受眾搜尋規則 (Target Search Logic)**: 由於受眾資訊分散在不同欄位，你必須同時搜尋 description, data_value 和 `segment_categories.name`。
   **SQL 範例**:
   ```sql
   WHERE (
       `target_segments`.`description` LIKE '%關鍵字%'
       OR `target_segments`.`data_value` LIKE '%關鍵字%'
+      OR `segment_categories`.`name` LIKE '%關鍵字%'
   )
   ```
-  (解釋：若 User 查「麥卡倫」，它可能存在於 keyword 類型的 data_value 中；若查「高消費」，可能在 description 中。)
+  (解釋：若 User 查「麥卡倫」，它可能存在於 keyword 類型的 data_value 中；若查「高消費」，可能在 description 中；若查「興趣」，可能在 `segment_categories`.`name` 中。)
 
 * **風險控制**: 計算預算時，使用 COUNT(DISTINCT `cuelist`.`cmpid`) 或子查詢避免重複計算。
+
+### 安全與格式限制
+1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
+2. **欄位引用**：所有欄位名稱與表名稱 **必須** 使用 Backticks 包覆 (例如: `cuelist`.`project_name`)，以防止保留字衝突。
+
+### 輸出規則 (Output Rules)
+1. **Ignore Empty**: 避免在 WHERE 條件中加入空值判斷 (e.g., `WHERE column = ''` 或 `WHERE column IS NULL`)，除非使用者明確要求。
+2. **Date Handling**:
+   - `cuelist.刊登日期(起)` 欄位為字串，比較時請務必使用 `STR_TO_DATE(刊登日期(起), '%Y-%m-%d')`。
+   - `one_campaigns.start_date` 欄位為日期格式，可以直接比較。
+3. **預設限制 (Default Limit) - CRITICAL**:
+   - 若 SQL 為聚合查詢 (如 `SUM`, `COUNT`, `AVG`) 且只回傳單行結果，**不需要** LIMIT。
+   - 若 SQL 為列表查詢 (如 `SELECT *` 或 `GROUP BY` 後的多行列表)：
+     - 如果使用者**明確指定**數量 (如 "前 10 名", "Top 5")，請使用使用者指定的數字 (e.g., `LIMIT 10`)。
+     - 如果使用者**未指定**數量，務必強制加上 **`LIMIT 20`**。
+
+### SQL 最佳實務 (Best Practices) - CRITICAL
+1. **時間範圍可視化 (Visualize Time Range)**:
+   - **原則**: 僅在「聚合範圍較廣」時顯示 `MIN/MAX` 日期。
+   - **情境 A (YTD / 總計 / 依品牌分組)**: 務必加入 `MIN(date_col)` 與 `MAX(date_col)`，讓使用者知道數據覆蓋區間。
+   - **情境 B (依月份 / 日期分組)**: 若 SQL 中已有 `DATE_FORMAT(..., '%Y-%m')` 或 `GROUP BY date`，**不需要** 再顯示 `MIN/MAX` 日期，以免資訊冗餘。
+2. **Null Handling**: 
+   - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(cuelist.代理商, 'Unknown')` 以避免顯示空白。
+   - 若查詢 `target_segments.name` 或 `segment_categories.name` 欄位，請使用 `COALESCE(target_segments.name, 'Unknown')` 或 `COALESCE(segment_categories.name, 'Unknown')` 以避免顯示空白。
+
+### 錯誤修正模式
+如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。
+
+# 輸出格式規範 (Strict Output Format) - CRITICAL
+1. **NO Explanations**: 嚴禁包含任何「說明」、「解釋」、「因為...所以...」的文字。
+2. **NO Markdown**: 嚴禁使用 Markdown 程式碼區塊 (```sql ... ```)。
+3. **NO Labels**: 嚴禁加上 "SQL:" 或 "Query:" 等前綴。
+4. **PURE SQL**: 回覆內容**必須**以 `SELECT` 開頭，並以 `;` 結尾。
+"
 
 ### 安全與格式限制
 1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
