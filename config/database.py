@@ -19,4 +19,5 @@ db = SQLDatabase.from_uri(db_uri, include_tables=["cuelist",
                                                   "one_campaigns",
                                                   "pre_campaign",
                                                   "campaign_target_pids",
-                                                  "target_segments"])
+                                                  "target_segments",
+                                                  "segment_categories"])

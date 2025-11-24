@@ -32,8 +32,7 @@ SQL_GENERATOR_PROMPT = """
 ## 2. `one_campaigns` (Level 2 - 執行狀態)
 * **權責**: 查詢執行狀態或 Date 格式的日期。
 * **關鍵欄位**:
-    * `id` (PK): 關聯鍵。
-    * `cue_list_id` (FK): 連接 `cuelist`。
+    * `id` (FK): 連接 `cuelist`。
     * `status`: 執行狀態。
     * `start_date` (date): 實際執行日期。
 
@@ -90,7 +89,7 @@ SQL_GENERATOR_PROMPT = """
 * **標準路徑**:
   ```sql
   FROM `cuelist`
-  JOIN `one_campaigns` ON `cuelist`.`cmpid` = `one_campaigns`.`cue_list_id`
+  JOIN `one_campaigns` ON `cuelist`.`cmpid` = `one_campaigns`.`id`
   JOIN `pre_campaign` ON `one_campaigns`.`id` = `pre_campaign`.`one_campaign_id`
   JOIN `campaign_target_pids` ON `pre_campaign`.`id` = `campaign_target_pids`.`source_id`
     AND `campaign_target_pids`.`source_type` = 'PreCampaign'
