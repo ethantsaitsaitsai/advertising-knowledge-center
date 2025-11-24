@@ -16,7 +16,13 @@ class AnalysisNeeds(BaseModel):
         "Budget_Sum",       # 預算總和 (媒體預算)
         "AdPrice_Sum",      # 實際花費總和 (廣告賣價)
         "Insertion_Count",  # 委刊單數量 (COUNT id)
-        "Campaign_Count"    # 案件數量 (COUNT DISTINCT)
+        "Campaign_Count",    # 案件數量 (COUNT DISTINCT)
+        "Impression_Sum",   # ClickHouse: 曝光數
+        "Click_Sum",        # ClickHouse: 點擊數
+        "CTR_Calc",         # Python 計算: 點擊率
+        "View3s_Sum",       # ClickHouse: 觀看 3 秒數
+        "Q100_Sum",         # ClickHouse: 完整觀看 (100%)
+        "CPC_Calc"          # Python 計算: 點擊成本
     ]] = Field(default_factory=list, description="要計算的數值指標")
 
     # 定義分析維度 (Group By)
