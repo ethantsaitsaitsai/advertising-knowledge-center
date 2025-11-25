@@ -39,6 +39,22 @@ def slot_manager_node(state: AgentState):
         potential_search_terms.update(result.brands)
     final_ambiguous_terms = list(potential_search_terms)
 
+    # --- [BEGIN] Hard-coded Post-processing Block ---
+    # 解決 LLM 在複雜 Prompt 下行為不穩定的問題 (例如：漏加維度, 重複維度)
+
+    # 1. 強制規則：如果 LLM 判斷使用者想看受眾分類 (display_segment_category == True)
+    #    則強制將 "Segment_Category_Name" 加入 dimensions 列表
+    if result.analysis_needs.display_segment_category:
+        if "Segment_Category_Name" not in result.analysis_needs.dimensions:
+            result.analysis_needs.dimensions.append("Segment_Category_Name")
+
+    # 2. 維度去重：移除 LLM 可能產生的重複維度
+    if result.analysis_needs.dimensions:
+        # Using dict.fromkeys to preserve order and remove duplicates
+        unique_dimensions = list(dict.fromkeys(result.analysis_needs.dimensions))
+        result.analysis_needs.dimensions = unique_dimensions
+    # --- [END] Hard-coded Post-processing Block ---
+
     # 4. 回傳更新後的狀態
     return {
         "intent_type": result.intent_type,

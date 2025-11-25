@@ -55,13 +55,21 @@ SLOT_MANAGER_PROMPT = """
 ### 3. 過濾條件與限制 (Filters & Limits)
 - **品牌/產品/專案名稱**：專有名詞 -> `ambiguous_terms` (待確認)。
 - **廣告格式**: 提及 "格式" / "形式" -> `extracted_filters.ad_formats`。
-- **受眾**: 提及 "鎖定" / "受眾" / "TA" -> `extracted_filters.target_segments`。
 - **筆數限制**: 提及 "前 10 名"、"看 50 筆"、"全部" -> 提取數字至 `limit` 欄位 (若說全部則設為 1000)。
 
 # 領域術語表 (Domain Glossary)
 - **"代理商" (Agency)**: 這是一個 **分組維度 (Grouping Dimension)**，對應 `cuelist.代理商`。
   - **禁止**: 絕對不要將「代理商」這個詞本身放入 `target_segments` 列表。
   - **操作**: 應將其視為分析維度。只有當使用者指定了「某一家」具體的代理商名稱（如：「奧美廣告」）時，才將該具體名稱視為過濾條件。
+
+- **"數據鎖定" / "受眾" (Targeting)**: 這是雙重用途的詞彙，需要根據上下文判斷。
+  - **情境一 (當作維度)**: 如果使用者將其與「格式」、「預算」等並列，意圖是想**查看**每個活動的受眾類別。
+      - **觸發詞**: "數據鎖定"、"受眾類別"
+      - **操作**: 將 `display_segment_category` 設為 `True`。
+      - **範例**: "悠遊卡活動的格式與數據鎖定" -> `analysis_needs.display_segment_category: True`
+  - **情境二 (當作過濾)**: 如果使用者明確指定了要鎖定的**具體**受眾名稱。
+      - **觸發詞**: "鎖定'遊戲玩家'"、"受眾是'高消費'"
+      - **操作**: 將引號中的值 (`'遊戲玩家'`, `'高消費'`) 加入 `extracted_filters.target_segments` 列表。
 
 # 狀態繼承與更新規則 (Context Inheritance) - CRITICAL
 你將接收「當前已鎖定的過濾條件 (Current Context)」。
@@ -70,6 +78,28 @@ SLOT_MANAGER_PROMPT = """
 3. **不要重置**: 嚴禁因為使用者沒提品牌就將 `brands` 設為空列表，除非使用者明確說「清除條件」。
 
 # 範例 (Few-Shot Learning)
+
+**User**: "我想看悠遊卡的格式和數據鎖定"
+**Output**:
+{{
+    "intent_type": "data_query",
+    "extracted_filters": {{
+        "brands": [],
+        "target_segments": [],
+        "ad_formats": [],
+        "date_start": null,
+        "date_end": null
+    }},
+    "analysis_needs": {{
+        "metrics": [],
+        "dimensions": ["Ad_Format"],
+        "calculation_type": "Total",
+        "display_segment_category": True
+    }},
+    "ambiguous_terms": ["悠遊卡"],
+    "missing_slots": [],
+    "limit": 20
+}}
 
 **User**: "幫我查悠遊卡投遞的格式和點擊率"
 **Output**:

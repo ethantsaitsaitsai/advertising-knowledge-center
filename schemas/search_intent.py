@@ -39,6 +39,7 @@ class AnalysisNeeds(BaseModel):
     calculation_type: Literal["Total", "Ranking", "Trend", "Comparison"] = Field(
         "Total", description="分析模式：總計、排名、趨勢或比較"
     )
+    display_segment_category: bool = Field(default=False, description="如果使用者想查看受眾分類作為一個維度，設為 True。")
 
 
 class SearchIntent(BaseModel):
