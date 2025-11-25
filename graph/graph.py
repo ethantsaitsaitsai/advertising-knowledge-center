@@ -52,11 +52,12 @@ def route_after_validation(state: AgentState) -> Literal["sql_executor", "sql_ge
         return "sql_generator"
 
 
-def route_after_mysql_execution(state: AgentState) -> Literal["error_handler",
-                                                              "clickhouse_generator",
-                                                              "response_synthesizer"]:
+def route_after_mysql_execution(state: AgentState) -> Literal["error_handler", 
+                                                              "clickhouse_generator", 
+                                                              "data_fusion"]:
     """
     Determines the next path after MySQL execution.
+    Routes to ClickHouse if CH metrics are needed, otherwise goes directly to data fusion.
     """
     if state.get("error_message"):
         return "error_handler"
@@ -66,13 +67,14 @@ def route_after_mysql_execution(state: AgentState) -> Literal["error_handler",
 
     ch_metrics = [
         "Impression_Sum", "Click_Sum", "View3s_Sum",
-        "Q100_Sum", "CTR_Calc", "CPC_Calc"
+        "Q100_Sum", "CTR_Calc", "CPC_Calc", "VTR_Calc", "ER_Calc"
     ]
 
     if any(m in ch_metrics for m in metrics):
         return "clickhouse_generator"
-
-    return "response_synthesizer"
+    
+    # If no CH metrics, go straight to data fusion
+    return "data_fusion"
 
 
 def route_after_ch_validation(state: AgentState) -> Literal["clickhouse_executor", "clickhouse_generator"]:
@@ -166,32 +168,33 @@ workflow.add_conditional_edges(
     {
         "error_handler": "error_handler",
         "clickhouse_generator": "clickhouse_generator",
-        "response_synthesizer": "response_synthesizer",
+        "data_fusion": "data_fusion", # Path for non-CH metrics
     },
 )
 
-# ClickHouse Validation Flow
+# ClickHouse branch
 workflow.add_edge("clickhouse_generator", "clickhouse_validator")
 workflow.add_conditional_edges(
     "clickhouse_validator",
     route_after_ch_validation,
     {
         "clickhouse_executor": "clickhouse_executor",
-        "clickhouse_generator": "clickhouse_generator"
+        "clickhouse_generator": "clickhouse_generator" # Loop on invalid SQL
     }
 )
-
-# ClickHouse Executor Flow
 workflow.add_conditional_edges(
     "clickhouse_executor",
     check_clickhouse_error,
     {
         "clickhouse_error_handler": "clickhouse_error_handler",
-        "data_fusion": "data_fusion"
+        "data_fusion": "data_fusion" # If CH success, go to fusion
     }
 )
 workflow.add_edge("clickhouse_error_handler", "clickhouse_generator")  # Retry loop
+
+# All data paths converge on Data Fusion before synthesizing a response
 workflow.add_edge("data_fusion", "response_synthesizer")
+
 
 
 # Standard Edges

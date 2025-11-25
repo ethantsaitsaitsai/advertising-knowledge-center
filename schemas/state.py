@@ -37,3 +37,4 @@ class AgentState(TypedDict):
     is_valid_sql: bool
     expecting_user_clarification: Optional[bool]
     intent_type: Optional[str]
+    final_dataframe: Optional[List[dict]]
