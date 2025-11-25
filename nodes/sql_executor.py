@@ -1,7 +1,7 @@
 from schemas.state import AgentState
 from config.database import get_mysql_db
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import text  # Added this import
+from sqlalchemy import text
 
 
 def sql_executor(state: AgentState) -> dict:
