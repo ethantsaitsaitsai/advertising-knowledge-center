@@ -123,13 +123,16 @@ SQL_GENERATOR_PROMPT = """
 - **指標為空時的行為**: 如果 `metrics` 列表為空（代表使用者查詢的是 ClickHouse 指標），**你仍然必須嚴格遵守上述規則一和規則二**，生成包含 `cmpid` 和 `dimensions` 的查詢。
 
 ### **規則四：處理過濾條件的維度可見性 (Filter Visibility)**
-- 除了 `analysis_needs.dimensions` 外，如果 `extracted_filters` 中包含具體的篩選值（如 `brands: ['A', 'B']`），也應將該維度（`cuelist.品牌`）加入 `SELECT` 和 `GROUP BY`，以確保結果的清晰度。
+- 除了 `analysis_needs.dimensions` 外，如果 `extracted_filters` 中包含具體的篩選值（如 `brands: ['A', 'B']`），\
+  也應將該維度（`cuelist.品牌`）加入 `SELECT` 和 `GROUP BY`，以確保結果的清晰度。
 
 ### **規則五：聚合查詢的強制組合規則 (CRITICAL RULE for Aggregations)**
 - **禁止單獨聚合**: 即使使用者只要求一個總數（例如 "總共有多少活動"），你的 `SELECT` 語句也**絕對不能**只回傳一個聚合結果（如 `SELECT COUNT(...)`）。這樣會導致下游系統崩潰。
-- **強制組合**: 你**必須**將聚合計算（如 `COUNT` 或 `SUM`）與**規則一**（`cmpid`, `start_date`, `end_date`）和**規則二**（`dimensions`）中定義的欄位組合在同一個 `SELECT` 語句中。
+- **強制組合**: 你**必須**將聚合計算（如 `COUNT` 或 `SUM`）與**規則一**（`cmpid`, `start_date`, `end_date`）\
+  和**規則二**（`dimensions`）中定義的欄位組合在同一個 `SELECT` 語句中。
 - **範例 - 只有指標**: 使用者問 "總案量" (`metrics: ["Campaign_Count"]`)。你生成的 SQL **必須** 包含 `cmpid` 和日期，並且按這些欄位分組。
-  - **CORRECT**: `SELECT cuelist.cmpid, cuelist.刊登日期(起) AS start_date, cuelist.刊登日期(迄) AS end_date, COUNT(DISTINCT cuelist.cmpid) AS Campaign_Count FROM cuelist GROUP BY cuelist.cmpid, start_date, end_date;`
+  - **CORRECT**: `SELECT cuelist.cmpid, cuelist.刊登日期(起) AS start_date, cuelist.刊登日期(迄) AS end_date,\
+    COUNT(DISTINCT cuelist.cmpid) AS Campaign_Count FROM cuelist GROUP BY cuelist.cmpid, start_date, end_date;`
   - **WRONG**: `SELECT COUNT(DISTINCT cuelist.cmpid) FROM cuelist;`
 
 
@@ -141,7 +144,8 @@ SQL_GENERATOR_PROMPT = """
 * **行為**: **只查詢 `cuelist`**。禁止 JOIN 其他表。
 
 ### 情境 B：查詢受眾鎖定 (Audience Targeting)
-* **觸發條件**: `extracted_filters.target_segments` **有值** (例如 ['麥卡倫', '高消費'])，**或者** `analysis_needs.dimensions` 列表中包含 "Segment_Category_Name"。
+* **觸發條件**: `extracted_filters.target_segments` **有值** (例如 ['麥卡倫', '高消費'])，\
+  **或者** `analysis_needs.dimensions` 列表中包含 "Segment_Category_Name"。
 * **行為**: 執行 6 層 JOIN (新增 `segment_categories`)。
 * **標準路徑**:
   ```sql
@@ -186,9 +190,10 @@ SQL_GENERATOR_PROMPT = """
    - **原則**: 僅在「聚合範圍較廣」時顯示 `MIN/MAX` 日期。
    - **情境 A (YTD / 總計 / 依品牌分組)**: 務必加入 `MIN(date_col)` 與 `MAX(date_col)`，讓使用者知道數據覆蓋區間。
    - **情境 B (依月份 / 日期分組)**: 若 SQL 中已有 `DATE_FORMAT(..., '%Y-%m')` 或 `GROUP BY date`，**不需要** 再顯示 `MIN/MAX` 日期，以免資訊冗餘。
-2. **Null Handling**: 
+2. **Null Handling**:
    - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(cuelist.代理商, 'Unknown')` 以避免顯示空白。
-   - 若查詢 `target_segments.name` 或 `segment_categories.name` 欄位，請使用 `COALESCE(target_segments.name, 'Unknown')` 或 `COALESCE(segment_categories.name, 'Unknown')` 以避免顯示空白。
+   - 若查詢 `target_segments.name` 或 `segment_categories.name` 欄位，\
+    請使用 `COALESCE(target_segments.name, 'Unknown')` 或 `COALESCE(segment_categories.name, 'Unknown')` 以避免顯示空白。
 
 ### 錯誤修正模式
 如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。
@@ -220,7 +225,7 @@ SQL_GENERATOR_PROMPT = """
    - **原則**: 僅在「聚合範圍較廣」時顯示 `MIN/MAX` 日期。
    - **情境 A (YTD / 總計 / 依品牌分組)**: 務必加入 `MIN(date_col)` 與 `MAX(date_col)`，讓使用者知道數據覆蓋區間。
    - **情境 B (依月份 / 日期分組)**: 若 SQL 中已有 `DATE_FORMAT(..., '%Y-%m')` 或 `GROUP BY date`，**不需要** 再顯示 `MIN/MAX` 日期，以免資訊冗餘。
-2. **Null Handling**: 
+2. **Null Handling**:
    - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(cuelist.代理商, 'Unknown')` 以避免顯示空白。
 
 ### 錯誤修正模式

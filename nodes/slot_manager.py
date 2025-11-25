@@ -11,21 +11,21 @@ def slot_manager_node(state: AgentState):
     # 1. 取得使用者輸入
     last_message = state['messages'][-1]
     user_input = last_message.get('content') if isinstance(last_message, dict) else last_message.content
-    
+
     # 2. 【關鍵】取得舊狀態 (Context)
     # 從 state 中提取 current_filters, 如果是空的就給一個空 dict
     current_filters = state.get("extracted_filters", {})
     if not isinstance(current_filters, dict):
         current_filters = {}
 
-    current_limit = state.get("limit") # 可能為 None
+    current_limit = state.get("limit")  # 可能為 None
 
     # 3. 呼叫 LLM (注入 Context)
     structured_llm = llm.with_structured_output(SearchIntent)
-    
+
     # 建構傳給 LLM 的 context 字串
     context_string = f"Filters: {current_filters}, Limit: {current_limit}"
-    
+
     result: SearchIntent = structured_llm.invoke(
         SLOT_MANAGER_PROMPT.format(
             user_input=user_input,

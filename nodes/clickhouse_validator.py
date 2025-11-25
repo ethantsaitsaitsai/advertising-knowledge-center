@@ -2,6 +2,7 @@ import re
 from typing import Dict, Any
 from schemas.state import AgentState
 
+
 def clickhouse_validator_node(state: AgentState) -> Dict[str, Any]:
     """
     驗證 ClickHouse SQL 的安全性與效能規範。
@@ -11,7 +12,7 @@ def clickhouse_validator_node(state: AgentState) -> Dict[str, Any]:
     3. 是否包含 LIMIT 限制。
     """
     sql = state.get("clickhouse_sql", "").strip()
-    
+
     errors = []
 
     # 1. 檢查是否為唯讀
@@ -43,6 +44,6 @@ def clickhouse_validator_node(state: AgentState) -> Dict[str, Any]:
             "is_valid_sql": False,
             "error_message": error_msg
         }
-    
+
     # 驗證通過
     return {"is_valid_sql": True, "error_message": None}

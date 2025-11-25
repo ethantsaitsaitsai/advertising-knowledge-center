@@ -14,7 +14,7 @@ def clean_sql_output(text: str) -> str:
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
-        
+
     # 2. Attempt to extract a Markdown block without language tag (``` ... ```)
     pattern_plain = r"```\s*(.*?)\s*```"
     match_plain = re.search(pattern_plain, text, re.DOTALL)
@@ -26,7 +26,7 @@ def clean_sql_output(text: str) -> str:
     select_index = text.upper().find("SELECT")
     if select_index != -1:
         return text[select_index:].strip()
-        
+
     # 4. If no match, return the original stripped text
     return text.strip()
 
@@ -68,7 +68,7 @@ def sql_generator(state: AgentState) -> dict:
     response = chain.invoke({
         "conversation_history": messages,
         "filters": str(extracted_filters),
-        "metrics": str(prompt_analysis_needs), # <--- 傳入包含 dimensions 的新 dict
+        "metrics": str(prompt_analysis_needs),  # <--- 傳入包含 dimensions 的新 dict
         "confirmed_entities": str(confirmed_entities)
     })
 

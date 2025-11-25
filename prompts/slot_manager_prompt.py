@@ -16,8 +16,8 @@ SLOT_MANAGER_PROMPT = """
 
 # 效能與安全規則 (Performance & Safety Rules)
 1. **強制日期檢查 (Mandatory Date Check)**:
-   - 若 `analysis_needs` 包含任何 ClickHouse 成效指標 (如 `Impression_Sum`, `Click_Sum`, `CTR_Calc`, `CPC_Calc`)，且 `extracted_filters.date_range` 為空，\
-      **必須** 將 `"date_range"` 加入 `missing_slots` 列表。
+   - 若 `analysis_needs` 包含任何 ClickHouse 成效指標 (如 `Impression_Sum`, `Click_Sum`, `CTR_Calc`, `CPC_Calc`)，\
+    且`extracted_filters.date_range` 為空，**必須** 將 `"date_range"` 加入 `missing_slots` 列表。
    - *原因*: ClickHouse 的查詢**必須**包含日期範圍，以避免全表掃描導致效能問題。
 
 # 核心任務：區分「過濾實體」與「分析維度」
@@ -129,7 +129,7 @@ SLOT_MANAGER_PROMPT = """
     "extracted_filters": {{
         "brands": [],
         "date_start": "2025-01-01",
-        "date_end": "2025-11-21" 
+        "date_end": "2025-11-21"
     }},
     "analysis_needs": {{
         "metrics": ["AdPrice_Sum"],
