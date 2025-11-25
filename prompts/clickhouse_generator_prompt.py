@@ -37,8 +37,13 @@ SELECT ...
 2. **強制 ID 限制**: WHERE 子句**必須**包含 `cmpid IN ({cmpid_list})`。
 3. **強制筆數限制**: 句尾**必須**加上 `LIMIT 100` (或上游指定的 limit)。
 4. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
-5. **避免別名衝突**: SELECT 的結果別名(Alias)不可與原始欄位名稱相同。例如：使用 `SUM(impression) AS total_impressions` 而不是 `AS impression`，以免在計算衍生指標時發生遞迴聚合錯誤。
+5. **避免別名衝突**: SELECT 的結果別名(Alias)不可與原始欄位名稱相同。例如：使用 `SUM(impression) AS total_impressions` 而不是 `AS impression`\
+   ，以免在計算衍生指標時發生遞迴聚合錯誤。
 6. **欄位引用**：所有欄位名稱與表名稱 **必須** 使用 Backticks 包覆 (例如: `impression`.`day_local`)，以防止保留字衝突。
+7. **禁止錯誤引用**: 嚴禁將資料庫與表名包在同一個反引號中。
+   - ❌ 錯誤: `kafka.summing_ad_format_events_view`
+   - ✅ 正確: kafka.summing_ad_format_events_view
+   - ✅ 正確: `kafka`.`summing_ad_format_events_view`
 
 # 輸入資料
 - Campaign IDs: {cmpid_list}
