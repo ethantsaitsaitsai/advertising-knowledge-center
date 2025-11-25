@@ -1,6 +1,6 @@
 from typing import List
 from langchain.tools import tool
-from config.database import db
+from config.database import get_mysql_db
 
 
 @tool
@@ -19,6 +19,8 @@ def search_ambiguous_term(keyword: str) -> List[dict]:
     ]
     for target in search_targets:
         try:
+            # Get the lazy-loaded MySQL DB instance
+            db = get_mysql_db()
             # 執行 SQL LIKE 搜尋
             query = f"SELECT DISTINCT `{target['col']}` FROM `{target['table']}` WHERE \
                 `{target['col']}` LIKE '%%{keyword}%%' LIMIT 3"
