@@ -52,7 +52,9 @@ def route_after_validation(state: AgentState) -> Literal["sql_executor", "sql_ge
         return "sql_generator"
 
 
-def route_after_mysql_execution(state: AgentState) -> Literal["error_handler", "clickhouse_generator", "response_synthesizer"]:
+def route_after_mysql_execution(state: AgentState) -> Literal["error_handler",
+                                                              "clickhouse_generator",
+                                                              "response_synthesizer"]:
     """
     Determines the next path after MySQL execution.
     """
@@ -61,9 +63,9 @@ def route_after_mysql_execution(state: AgentState) -> Literal["error_handler", "
 
     analysis_needs = state.get("analysis_needs", {})
     metrics = analysis_needs.get("metrics", [])
-    
+
     ch_metrics = [
-        "Impression_Sum", "Click_Sum", "View3s_Sum", 
+        "Impression_Sum", "Click_Sum", "View3s_Sum",
         "Q100_Sum", "CTR_Calc", "CPC_Calc"
     ]
 
@@ -188,7 +190,7 @@ workflow.add_conditional_edges(
         "data_fusion": "data_fusion"
     }
 )
-workflow.add_edge("clickhouse_error_handler", "clickhouse_generator") # Retry loop
+workflow.add_edge("clickhouse_error_handler", "clickhouse_generator")  # Retry loop
 workflow.add_edge("data_fusion", "response_synthesizer")
 
 
