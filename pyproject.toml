@@ -3,14 +3,14 @@ name = "text2sql"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "clickhouse-driver>=0.2.10",
+    "clickhouse-connect>=0.10.0",
     "clickhouse-sqlalchemy>=0.3.2",
-    "langchain>=1.0.7",
+    "langchain>=1.1.0",
     "langchain-community>=0.4.1",
-    "langchain-core>=1.0.5",
-    "langchain-openai>=1.0.3",
+    "langchain-core>=1.1.0",
+    "langchain-openai>=1.1.0",
     "langgraph>=1.0.3",
     "langgraph-cli[inmem]>=0.4.7",
     "mysql-connector-python>=9.5.0",

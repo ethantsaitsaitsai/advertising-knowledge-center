@@ -1,5 +1,5 @@
 from schemas.state import AgentState
-from config.database import db
+from config.database import get_mysql_db
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import text  # Added this import
 
@@ -17,6 +17,7 @@ def sql_executor(state: AgentState) -> dict:
         return {"error_message": error_message, "sql_result": [], "sql_result_columns": []}
 
     try:
+        db = get_mysql_db()
         print(f"Executing SQL: {sql_query}")
         # Use the engine's connect method to get both data and column names
         with db._engine.connect() as connection:

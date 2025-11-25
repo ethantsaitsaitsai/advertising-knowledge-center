@@ -49,10 +49,26 @@ def sql_generator(state: AgentState) -> dict:
 
     chain = prompt | llm
 
+    # 1. 取得原始需求
+    all_metrics = analysis_needs.get('metrics', [])
+    dimensions = analysis_needs.get('dimensions', [])
+
+    # 2. 定義 MySQL 白名單
+    mysql_whitelist = ["Budget_Sum", "AdPrice_Sum", "Insertion_Count", "Campaign_Count"]
+
+    # 3. 過濾 (只留 MySQL 能做的)
+    filtered_metrics = [m for m in all_metrics if m in mysql_whitelist]
+
+    # 4. 建立新的 analysis_needs 給 prompt，確保 dimensions 不會遺失
+    prompt_analysis_needs = {
+        'metrics': filtered_metrics,
+        'dimensions': dimensions
+    }
+
     response = chain.invoke({
         "conversation_history": messages,
         "filters": str(extracted_filters),
-        "metrics": str(analysis_needs),
+        "metrics": str(prompt_analysis_needs), # <--- 傳入包含 dimensions 的新 dict
         "confirmed_entities": str(confirmed_entities)
     })
 

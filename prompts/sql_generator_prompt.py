@@ -28,6 +28,10 @@ SQL_GENERATOR_PROMPT = """
         * **Data Type**: String (Varchar).
         * **Format**: Stores dates as **'YYYY-MM-DD'** (e.g., '2025-01-07').
         * **Rule**: You MUST use `STR_TO_DATE(col, '%Y-%m-%d')` for comparison.
+    * `刊登日期(迄)`:
+        * **Data Type**: String (Varchar).
+        * **Format**: Stores dates as **'YYYY-MM-DD'** (e.g., '2025-01-07').
+        * **Rule**: You MUST use `STR_TO_DATE(col, '%Y-%m-%d')` for comparison.
 
 ## 2. `one_campaigns` (Level 2 - 執行狀態)
 * **權責**: 查詢執行狀態或 Date 格式的日期。
@@ -65,17 +69,54 @@ SQL_GENERATOR_PROMPT = """
     * `id` (PK): 關聯鍵。
     * `name` (varchar): 受眾類別名稱 (e.g., '客戶有感', 'AdLearn', '興趣特定議題')。
 
-# SELECT 欄位選擇規則 (Column Selection Logic)
-請檢查 `extracted_filters` 與 `analysis_needs`：
-1. **Explicit Filter Visibility**: 
-   - 如果 `extracted_filters` 中有包含多個具體項目 (例如 `brands` 有 ['A', 'B', 'C'])，**務必**將該欄位 (e.g., `cuelist.品牌`) 加入 `SELECT` 與 `GROUP BY` 列表中。
-   - 如果 `extracted_filters.advertisers` 中有值，**務必**將 `cuelist.品牌廣告主` 加入 `SELECT` 與 `GROUP BY` 列表中。
-   - 如果 `extracted_filters.agencies` 中有值，**務必**將 `cuelist.代理商` 加入 `SELECT` 與 `GROUP BY` 列表中。
-   - 如果 `extracted_filters.target_segments` 中有值，**務必**將 `target_segments.name` 和 `segment_categories.name` 加入 `SELECT` 與 `GROUP BY` 列表中。
-   - *原因*：避免使用者篩選了 A, B, C，但結果只顯示總數，導致無法區分細節。
+# 任務目標
+生成 MySQL 查詢以獲取：
+1. **過濾後的 Campaign IDs (`cmpid`)** (為了後續 ClickHouse 查詢鋪路)。
+2. **分析維度 (`dimensions`)** (如品牌、格式)。
+3. **MySQL 專屬指標** (如預算)。
 
-2. **Dimension Mapping**:
-   - (既有規則保持不變...)
+# 指標處理規則 (Metrics Handling) - CRITICAL
+你**只能**處理以下屬於 MySQL (`cuelist`) 的指標。**嚴禁**嘗試查詢其他指標。
+
+### ✅ 允許的指標 (Allowed MySQL Metrics):
+* `Budget_Sum` -> `SUM(cuelist.媒體預算)`
+* `AdPrice_Sum` -> `SUM(cuelist.廣告賣價)`
+* `Insertion_Count` -> `COUNT(cuelist.cmpid)` (或委刊次數)
+* `Campaign_Count` -> `COUNT(DISTINCT cuelist.cmpid)`
+
+### ❌ 必須忽略的指標 (Ignored Metrics):
+* 若輸入包含 `Impression_Sum`, `Click_Sum`, `CTR_Calc`, `View3s_Sum` 等 ClickHouse 指標：
+  * **絕對不要** 在 `SELECT` 中生成這些欄位。
+  * **絕對不要** 嘗試計算它們。
+  * **忽略即可**，這些將由後續的 ClickHouse 節點處理。
+
+# 核心查詢邏輯 (Core Query Logic) - CRITICAL
+你的首要任務是為後續的 ClickHouse 查詢準備 `cmpid` 列表，因此 SELECT 語句的設計至關重要。
+
+### **規則一：永遠都要 SELECT `cmpid` 和日期 (ABSOLUTE RULE)**
+不論任何情況，你的 `SELECT` 語句中**必須**永遠包含以下三個欄位，這是絕對且最重要的規則，沒有例外：
+1.  `cuelist.cmpid`
+2.  `cuelist.刊登日期(起)` 並使用別名 `AS start_date`
+3.  `cuelist.刊登日期(迄)` 並使用別名 `AS end_date`
+
+- **正確範例**: `SELECT cuelist.cmpid, cuelist.刊登日期(起) AS start_date, cuelist.刊登日期(迄) AS end_date, cuelist.品牌 FROM ...`
+- **錯誤範例**: `SELECT cuelist.cmpid, cuelist.品牌 FROM ...` (缺少日期欄位)
+
+### **規則二：處理分析維度 (Dimensions)**
+1.  **檢查維度**: 查看傳入的 `analysis_needs` 中的 `dimensions` 列表。
+2.  **加入 SELECT**: 如果 `dimensions` 列表不為空 (例如 `['品牌', '廣告格式名稱']`)，你**必須**將這些維度對應的資料庫欄位加入 `SELECT` 語句中。
+3.  **加入 GROUP BY**: 同時，你也**必須**將這些維度欄位加入 `GROUP BY` 子句。
+- **範例**:
+  - `analysis_needs`: `{{'dimensions': ['品牌']}}`
+  - **SQL**: `SELECT cuelist.cmpid, cuelist.品牌 FROM ... GROUP BY cuelist.品牌`
+
+### **規則三：處理 MySQL 指標 (Metrics)**
+- **僅在需要時計算**: 只有在 `analysis_needs` 中的 `metrics` 列表包含 MySQL 白名單中的指標時，才在 `SELECT` 中加入計算（例如 `SUM(cuelist.媒體預算)`）。
+- **指標為空時的行為**: 如果 `metrics` 列表為空（代表使用者查詢的是 ClickHouse 指標），**你仍然必須嚴格遵守上述規則一和規則二**，生成包含 `cmpid` 和 `dimensions` 的查詢。
+
+### **規則四：處理過濾條件的維度可見性 (Filter Visibility)**
+- 除了 `analysis_needs.dimensions` 外，如果 `extracted_filters` 中包含具體的篩選值（如 `brands: ['A', 'B']`），也應將該維度（`cuelist.品牌`）加入 `SELECT` 和 `GROUP BY`，以確保結果的清晰度。
+
 
 # 決策邏輯 (Decision Logic) - JOIN 策略
 
