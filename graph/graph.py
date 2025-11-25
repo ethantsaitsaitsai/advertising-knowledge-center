@@ -7,7 +7,7 @@ from nodes.slot_manager import slot_manager_node
 from nodes.sql_generator import sql_generator
 from nodes.sql_executor import sql_executor
 from nodes.ask_for_clarification import ask_for_clarification_node
-from nodes.response_synthesizer import response_synthesizer
+from nodes.response_synthesizer import response_synthesizer_node
 from nodes.error_handler import error_handler
 from nodes.entity_search import entity_search_node
 from nodes.state_updater import state_updater_node
@@ -108,7 +108,7 @@ workflow.add_node("sql_generator", sql_generator)
 workflow.add_node("sql_validator", sql_validator_node)
 workflow.add_node("sql_executor", sql_executor)
 workflow.add_node("error_handler", error_handler)
-workflow.add_node("response_synthesizer", response_synthesizer)
+workflow.add_node("response_synthesizer", response_synthesizer_node)
 workflow.add_node("chitchat", chitchat_node)
 workflow.add_node("clickhouse_generator", clickhouse_generator_node)
 workflow.add_node("clickhouse_validator", clickhouse_validator_node)
