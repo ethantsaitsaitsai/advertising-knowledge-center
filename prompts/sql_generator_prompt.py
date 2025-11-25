@@ -90,6 +90,14 @@ SQL_GENERATOR_PROMPT = """
   * **絕對不要** 嘗試計算它們。
   * **忽略即可**，這些將由後續的 ClickHouse 節點處理。
 
+# 維度與資料庫欄位映射 (Dimension to Column Mapping)
+當 `analysis_needs.dimensions` 中包含以下維度時，你必須在 `SELECT` 和 `GROUP BY` 中使用對應的資料庫欄位：
+* "Agency" -> `cuelist`.`代理商`
+* "Ad_Format" -> `cuelist`.`廣告格式名稱`
+* "Segment_Category_Name" -> `segment_categories`.`name`
+* "Date_Month" -> `DATE_FORMAT(cuelist.刊登日期(起), '%Y-%m')`
+
+
 # 核心查詢邏輯 (Core Query Logic) - CRITICAL
 你的首要任務是為後續的 ClickHouse 查詢準備 `cmpid` 列表，因此 SELECT 語句的設計至關重要。
 
@@ -117,15 +125,23 @@ SQL_GENERATOR_PROMPT = """
 ### **規則四：處理過濾條件的維度可見性 (Filter Visibility)**
 - 除了 `analysis_needs.dimensions` 外，如果 `extracted_filters` 中包含具體的篩選值（如 `brands: ['A', 'B']`），也應將該維度（`cuelist.品牌`）加入 `SELECT` 和 `GROUP BY`，以確保結果的清晰度。
 
+### **規則五：聚合查詢的強制組合規則 (CRITICAL RULE for Aggregations)**
+- **禁止單獨聚合**: 即使使用者只要求一個總數（例如 "總共有多少活動"），你的 `SELECT` 語句也**絕對不能**只回傳一個聚合結果（如 `SELECT COUNT(...)`）。這樣會導致下游系統崩潰。
+- **強制組合**: 你**必須**將聚合計算（如 `COUNT` 或 `SUM`）與**規則一**（`cmpid`, `start_date`, `end_date`）和**規則二**（`dimensions`）中定義的欄位組合在同一個 `SELECT` 語句中。
+- **範例 - 只有指標**: 使用者問 "總案量" (`metrics: ["Campaign_Count"]`)。你生成的 SQL **必須** 包含 `cmpid` 和日期，並且按這些欄位分組。
+  - **CORRECT**: `SELECT cuelist.cmpid, cuelist.刊登日期(起) AS start_date, cuelist.刊登日期(迄) AS end_date, COUNT(DISTINCT cuelist.cmpid) AS Campaign_Count FROM cuelist GROUP BY cuelist.cmpid, start_date, end_date;`
+  - **WRONG**: `SELECT COUNT(DISTINCT cuelist.cmpid) FROM cuelist;`
+
+
 
 # 決策邏輯 (Decision Logic) - JOIN 策略
 
 ### 情境 A：基礎商業分析
-* **觸發條件**: `extracted_filters.target_segments` 為空。
+* **觸發條件**: `extracted_filters.target_segments` 為空，**且** `analysis_needs.dimensions` 列表中**不包含** "Segment_Category_Name"。
 * **行為**: **只查詢 `cuelist`**。禁止 JOIN 其他表。
 
 ### 情境 B：查詢受眾鎖定 (Audience Targeting)
-* **觸發條件**: `extracted_filters.target_segments` **有值** (例如 ['麥卡倫', '高消費'])。
+* **觸發條件**: `extracted_filters.target_segments` **有值** (例如 ['麥卡倫', '高消費'])，**或者** `analysis_needs.dimensions` 列表中包含 "Segment_Category_Name"。
 * **行為**: 執行 6 層 JOIN (新增 `segment_categories`)。
 * **標準路徑**:
   ```sql

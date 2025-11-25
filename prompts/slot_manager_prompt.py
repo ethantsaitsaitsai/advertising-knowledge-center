@@ -30,6 +30,7 @@ SLOT_MANAGER_PROMPT = """
 #### a. 維度識別 (dimensions -> GROUP BY):
    - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]`
    - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
+   - "數據鎖定"、"受眾類別" -> `dimensions: ["Segment_Category_Name"]`
    - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
    - "總覽"、"Total" -> `dimensions: []` (不分組)
 

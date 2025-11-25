@@ -49,7 +49,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     budget_col = next((col for col in ['Budget_Sum', 'total_budget', '媒體預算'] if col in merged_df.columns), None)
     if budget_col and 'total_clicks' in merged_df.columns:
         merged_df['CPC'] = merged_df.apply(
-            lambda x: (x[budget_col] / x['total_clicks']) 
+            lambda x: (float(x[budget_col]) / x['total_clicks']) 
             if pd.notnull(x['total_clicks']) and x['total_clicks'] > 0 else 0,
             axis=1
         )
