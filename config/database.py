@@ -1,37 +1,88 @@
 import os
+import traceback
+import paramiko
+from sqlalchemy import create_engine, MetaData
 from langchain_community.utilities import SQLDatabase
 from dotenv import load_dotenv
 import clickhouse_connect
+from sshtunnel import SSHTunnelForwarder
+
+if not hasattr(paramiko, "DSSKey"):
+    paramiko.DSSKey = paramiko.RSAKey
 
 load_dotenv()
 
 _mysql_db_instance = None
+_ssh_tunnel = None
 
 
 def get_mysql_db():
-    global _mysql_db_instance
+    global _mysql_db_instance, _ssh_tunnel
     if _mysql_db_instance is None:
         print("🔌 Initializing MySQL connection...")
         try:
+            db_user = os.getenv('DB_USER')
+            db_password = os.getenv('DB_PASSWORD')
+            db_name = os.getenv('DB_NAME')
+            db_host = os.getenv('DB_HOST')
+            db_port = int(os.getenv('DB_PORT', 3306))
+
+            # SSH Connection details
+            ssh_host = os.getenv('SSH_HOST')
+            ssh_port = int(os.getenv('SSH_PORT', 22))
+            ssh_user = os.getenv('SSH_USER')
+            ssh_password = os.getenv('SSH_PASSWORD')
+
+            print(f"🛡️  Establishing SSH Tunnel to {ssh_host}...")
+
+            ssh_args = {
+                "ssh_address_or_host": (ssh_host, ssh_port),
+                "ssh_username": ssh_user,
+                "remote_bind_address": (db_host, db_port),
+                "ssh_password": ssh_password
+            }
+
+            _ssh_tunnel = SSHTunnelForwarder(**ssh_args)
+            _ssh_tunnel.start()
+
+            print(f"✅ SSH Tunnel established! Local bind port: {_ssh_tunnel.local_bind_port}")
+
+            # Override host and port to use the tunnel
+            current_host = "127.0.0.1"
+            current_port = _ssh_tunnel.local_bind_port
+
             db_uri = (
-                f"mysql+mysqlconnector://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-                f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+                f"mysql+mysqlconnector://{db_user}:{db_password}"
+                f"@{current_host}:{current_port}/{db_name}"
             )
-            _mysql_db_instance = SQLDatabase.from_uri(
-                db_uri,
-                include_tables=[
-                    "cuelist",
-                    "one_campaigns",
-                    "pre_campaign",
-                    "campaign_target_pids",
-                    "target_segments",
-                    "segment_categories"
-                ]
+
+            engine = create_engine(db_uri)
+            target_tables = [
+                "cue_lists",
+                "one_campaigns",
+                "pre_campaign",
+                "campaign_target_pids",
+                "target_segments",
+                "segment_categories"
+            ]
+            metadata = MetaData()
+            metadata.reflect(bind=engine, only=target_tables, resolve_fks=False)
+            _mysql_db_instance = SQLDatabase(
+                engine=engine,
+                metadata=metadata,
+                include_tables=target_tables,
+                lazy_table_reflection=True
             )
+
         except Exception as e:
+            print("❌ Detailed Error Traceback:")
+            traceback.print_exc()
+            if _ssh_tunnel:
+                _ssh_tunnel.stop()
+                _ssh_tunnel = None
             raise ValueError(
-                "Error: Could not establish MySQL connection. "
-                "Please check if DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME are set and correct in .env file."
+                "Error: Could not establish MySQL connection (possibly via SSH). "
+                "Please check your .env configuration."
             ) from e
     return _mysql_db_instance
 
