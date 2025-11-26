@@ -32,7 +32,8 @@ class AnalysisNeeds(BaseModel):
         "Agency",       # 依代理商
         "Ad_Format",    # 依格式
         "Date_Month",   # 依月份 (趨勢)
-        "Date_Year"     # 依年份
+        "Date_Year",    # 依年份
+        "廣告計價單位"    # 依廣告計價單位
     ]] = Field(default_factory=list, description="分析的切分維度 (Group By)")
 
     # 定義計算邏輯
@@ -71,4 +72,4 @@ class SearchIntent(BaseModel):
     # 4. 狀態控制
     missing_info: List[str] = Field(default_factory=list, description="缺少且必須追問的欄位，例如 ['date_range']")
     ambiguous_terms: List[str] = Field(default_factory=list, description="模糊不清、需要由 User 確認的詞彙")
-    limit: Optional[int] = Field(None, description="資料筆數限制 (e.g. 50)")
+    limit: int = Field(20, description="資料筆數限制 (預設 20)")

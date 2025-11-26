@@ -12,10 +12,10 @@ def search_ambiguous_term(keyword: str) -> List[dict]:
 
     # 定義要搜的目標欄位
     search_targets = [
-        {"col": "品牌", "table": "cuelist", "type": "brands"},
-        {"col": "品牌廣告主", "table": "cuelist", "type": "advertisers"},
-        {"col": "廣告案件名稱(campaign_name)", "table": "cuelist", "type": "campaign_names"},
-        {"col": "代理商", "table": "cuelist", "type": "agencies"}
+        {"col": "product", "table": "clients", "type": "brands"},
+        {"col": "company", "table": "clients", "type": "advertisers"},
+        {"col": "campaign_name", "table": "cue_lists", "type": "campaign_names"},
+        {"col": "agencyname", "table": "agency", "type": "agencies"}
     ]
     for target in search_targets:
         try:

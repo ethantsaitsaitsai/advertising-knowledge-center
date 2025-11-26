@@ -28,7 +28,7 @@ SLOT_MANAGER_PROMPT = """
 請根據使用者的語意，提取 `metrics` (算什麼)、`dimensions` (怎麼分) 與 `calculation_type` (如何呈現)。
 
 #### a. 維度識別 (dimensions -> GROUP BY):
-   - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]`
+   - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]` (對應 `agency.agencyname`)
    - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
    - "數據鎖定"、"受眾類別" -> `dimensions: ["Segment_Category_Name"]`
    - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
@@ -58,7 +58,7 @@ SLOT_MANAGER_PROMPT = """
 - **筆數限制**: 提及 "前 10 名"、"看 50 筆"、"全部" -> 提取數字至 `limit` 欄位 (若說全部則設為 1000)。
 
 # 領域術語表 (Domain Glossary)
-- **"代理商" (Agency)**: 這是一個 **分組維度 (Grouping Dimension)**，對應 `cuelist.代理商`。
+- **"代理商" (Agency)**: 這是一個 **分組維度 (Grouping Dimension)**。
   - **禁止**: 絕對不要將「代理商」這個詞本身放入 `target_segments` 列表。
   - **操作**: 應將其視為分析維度。只有當使用者指定了「某一家」具體的代理商名稱（如：「奧美廣告」）時，才將該具體名稱視為過濾條件。
 

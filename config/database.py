@@ -60,6 +60,12 @@ def get_mysql_db():
             target_tables = [
                 "cue_lists",
                 "one_campaigns",
+                "clients",
+                "agency",
+                "cue_list_budgets",
+                "cue_list_ad_formats",
+                "ad_format_types",
+                "pricing_models",
                 "pre_campaign",
                 "campaign_target_pids",
                 "target_segments",
