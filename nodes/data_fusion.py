@@ -41,7 +41,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # 4. 二次聚合 (Re-aggregation)
     analysis_needs = state.get('search_intent', {}).get('analysis_needs', {})
     dimensions = analysis_needs.get('dimensions', [])
-    
+
     # Dimension Mapping (Intent -> DataFrame Column)
     # 必須與 SQL Generator 的 Select 欄位對齊
     dim_map = {
@@ -49,8 +49,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         "Brand": "product",
         "Advertiser": "company",
         "Campaign_Name": "campaign_name",
-        "Ad_Format": "title", 
-        "Industry": "name", 
+        "Ad_Format": "title",
+        "Industry": "name",
         "廣告計價單位": "name"
     }
 
@@ -75,15 +75,15 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         # 我們通常還是會預設保留 Campaign 層級的列表，除非 user 明確說 "總共多少" (Calculation Type = Total?)
         # 但這裡我們先依據 AnalysisNeeds，若 dimensions 空，就真的給 Total。
         # 不過，如果 calculation_type 是 "Total" 且沒有 dimensions，通常意味著 Summary。
-        
+
         # 修正策略：如果 merged_df 筆數 > 1 且 dimensions 為空，
         # 我們不應該強制縮成一行，除非這是一個純指標查詢。
         # 但為了回應您的需求「不要看到每一行日期」，我們這裡執行聚合。
         if not numeric_cols:
-             final_df = merged_df # 無數值可聚，直接回傳
+            final_df = merged_df  # 無數值可聚，直接回傳
         else:
-             final_df = merged_df[numeric_cols].sum().to_frame().T
-             final_df['Item'] = 'Total'
+            final_df = merged_df[numeric_cols].sum().to_frame().T
+            final_df['Item'] = 'Total'
     else:
         # Case B: Group By Dimensions
         final_df = merged_df.groupby(group_cols)[numeric_cols].sum().reset_index()
