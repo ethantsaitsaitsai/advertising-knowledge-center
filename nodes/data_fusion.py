@@ -124,7 +124,14 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = merged_df.groupby(group_cols)[numeric_cols].sum().reset_index()
         debug_logs.append(f"Mode: Group By {group_cols}")
 
-    # 5. 後處理：移除不必要的欄位
+    # 5. 後處理：移除不必要的欄位與過濾無效資料
+    # 過濾掉分組維度值為 'Unknown' 的行
+    IGNORED_VALUES = ['Unknown', 'unknown', '']
+    for col in group_cols:
+        if col in final_df.columns:
+            # 使用向量化操作過濾
+            final_df = final_df[~final_df[col].astype(str).isin(IGNORED_VALUES)]
+
     cols_to_drop_lower = {c.lower() for c in ['start_date', 'end_date', 'cmpid', 'id']}
     current_cols = list(final_df.columns)
     for col in current_cols:
