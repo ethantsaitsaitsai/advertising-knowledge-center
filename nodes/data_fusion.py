@@ -7,104 +7,133 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     """
     Robust Data Fusion:
     1. 以 MySQL 資料為主 (Left Join)。
-    2. 容許 ClickHouse 資料缺失 (會顯示預算但成效為 0)。
+    2. 容許 ClickHouse 資料缺失。
+    3. 執行資料轉型與二次聚合 (Re-aggregation)。
     """
+    debug_logs = []
+    
     # 1. 獲取資料
     mysql_data = state.get('sql_result', [])
     sql_result_columns = state.get('sql_result_columns', [])
     ch_data = state.get('clickhouse_result', [])
 
-    # If there's no primary data from MySQL, we can't proceed.
     if not mysql_data or not sql_result_columns:
         return {"final_dataframe": None, "final_result_text": "查無數據 (MySQL 無回傳)。"}
 
-    # 2. 轉換 DataFrame
+    # 2. 資料前處理 (Preprocessing)
+    debug_logs.append(f"Raw MySQL Cols: {sql_result_columns}")
     df_mysql = pd.DataFrame(mysql_data, columns=sql_result_columns)
     df_ch = pd.DataFrame(ch_data) if ch_data else pd.DataFrame()
 
-    # 轉型 cmpid 以確保能 Join
+    # Helper: 安全的數值轉型函式 (Try-Convert-And-Revert)
+    def safe_numeric_convert(df, name="df"):
+        for col in df.columns:
+            if col.lower() in ['cmpid', 'id']: continue
+            
+            # 嘗試轉型
+            converted = pd.to_numeric(df[col], errors='coerce')
+            
+            # 若轉完變全空但原本有值 (代表是純文字欄位)，則還原
+            if converted.isna().all() and df[col].notna().any():
+                continue 
+            
+            df[col] = converted
+        return df
+
+    df_mysql = safe_numeric_convert(df_mysql, "MySQL")
+    if not df_ch.empty:
+        df_ch = safe_numeric_convert(df_ch, "CH")
+
+    # 確保 ID 類欄位格式一致
     if 'cmpid' in df_mysql.columns:
         df_mysql['cmpid'] = pd.to_numeric(df_mysql['cmpid'], errors='coerce')
-
     if not df_ch.empty and 'cmpid' in df_ch.columns:
         df_ch['cmpid'] = pd.to_numeric(df_ch['cmpid'], errors='coerce')
 
     # 3. 合併 (Merge)
-    # Use a left join to prioritize MySQL data.
     if not df_ch.empty:
         merged_df = pd.merge(df_mysql, df_ch, on='cmpid', how='left', suffixes=('', '_ch'))
     else:
         merged_df = df_mysql
 
     merged_df = merged_df.fillna(0)
+    debug_logs.append(f"Merged Cols: {list(merged_df.columns)}")
 
     # 4. 二次聚合 (Re-aggregation)
-    analysis_needs = state.get('search_intent', {}).get('analysis_needs', {})
-    dimensions = analysis_needs.get('dimensions', [])
+    # 修正：AgentState 中 analysis_needs 是第一層欄位，不是 search_intent 的子欄位
+    analysis_needs = state.get('analysis_needs', {})
+    if hasattr(analysis_needs, 'model_dump'):
+        analysis_needs = analysis_needs.model_dump()
+    elif hasattr(analysis_needs, 'dict'):
+        analysis_needs = analysis_needs.dict()
+        
+    if not isinstance(analysis_needs, dict):
+        analysis_needs = {}
 
-    # Dimension Mapping (Intent -> DataFrame Column)
-    # 必須與 SQL Generator 的 Select 欄位對齊
-    dim_map = {
-        "Agency": "agencyname",
-        "Brand": "product",
-        "Advertiser": "company",
-        "Campaign_Name": "campaign_name",
-        "Ad_Format": "title",
-        "Industry": "name",
-        "廣告計價單位": "name"
+    dimensions = analysis_needs.get('dimensions', [])
+    debug_logs.append(f"Intent Dimensions: {dimensions}")
+    
+    # 簡潔的 Mapping: 僅定義 Intent 到標準 SQL Alias 的對應
+    intent_to_alias = {
+        "Agency": "Agency",
+        "Brand": "Brand",
+        "Advertiser": "Advertiser",
+        "Campaign_Name": "Campaign_Name",
+        "Ad_Format": "Ad_Format", 
+        "Industry": "Industry", 
+        "廣告計價單位": "Pricing_Unit",
+        "Date_Month": "Date_Month"
     }
 
-    # 找出實際存在的維度欄位
     group_cols = []
+    col_lower_map = {c.lower(): c for c in merged_df.columns}
+    
     for d in dimensions:
-        mapped_col = dim_map.get(d, d)
-        if mapped_col in merged_df.columns:
-            group_cols.append(mapped_col)
-        # 處理 name 衝突 (若 SQL 沒有 alias，可能會有多個 name? 通常 sqlalchemy 會 handle 成 name_1)
-        # 這裡簡單處理：若找不到 mapped_col，試著找原始 dimension 名稱
-        elif d in merged_df.columns:
-            group_cols.append(d)
+        target_alias = intent_to_alias.get(d, d)
+        # Case-Insensitive 尋找欄位
+        if target_alias.lower() in col_lower_map:
+            group_cols.append(col_lower_map[target_alias.lower()])
+        # Fallback: 找原始 dimension 名稱
+        elif d.lower() in col_lower_map:
+            group_cols.append(col_lower_map[d.lower()])
+            
+    debug_logs.append(f"Final Group Cols: {group_cols}")
 
     # 定義數值欄位 (Metrics)
-    # 排除 ID, 日期, 和維度欄位
-    exclude_cols = ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates'] + group_cols
-    numeric_cols = [c for c in merged_df.columns if pd.api.types.is_numeric_dtype(merged_df[c]) and c not in exclude_cols]
+    exclude_cols_lower = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates']}
+    for gc in group_cols:
+        exclude_cols_lower.add(gc.lower())
+        
+    numeric_cols = [c for c in merged_df.columns 
+                    if pd.api.types.is_numeric_dtype(merged_df[c]) 
+                    and c.lower() not in exclude_cols_lower]
+    
+    debug_logs.append(f"Numeric Cols: {numeric_cols}")
 
     if not group_cols:
-        # Case A: Total (不分組) -> 雖然 user 沒說要分組，但為了不讓表格只有一行 Total 導致細節全失，
-        # 我們通常還是會預設保留 Campaign 層級的列表，除非 user 明確說 "總共多少" (Calculation Type = Total?)
-        # 但這裡我們先依據 AnalysisNeeds，若 dimensions 空，就真的給 Total。
-        # 不過，如果 calculation_type 是 "Total" 且沒有 dimensions，通常意味著 Summary。
-
-        # 修正策略：如果 merged_df 筆數 > 1 且 dimensions 為空，
-        # 我們不應該強制縮成一行，除非這是一個純指標查詢。
-        # 但為了回應您的需求「不要看到每一行日期」，我們這裡執行聚合。
+        # Case A: Total (總計)
         if not numeric_cols:
-            final_df = merged_df  # 無數值可聚，直接回傳
+            final_df = merged_df 
+            debug_logs.append("Mode: No Grouping, No Numeric - Return Raw")
         else:
             final_df = merged_df[numeric_cols].sum().to_frame().T
             final_df['Item'] = 'Total'
+            debug_logs.append("Mode: Total Summary")
     else:
         # Case B: Group By Dimensions
         final_df = merged_df.groupby(group_cols)[numeric_cols].sum().reset_index()
+        debug_logs.append(f"Mode: Group By {group_cols}")
 
-    # 5. 重算衍生指標 (Derived Metrics) - Must be done AFTER aggregation
-    # CTR = Total Clicks / Total Impressions * 100
-    # 需動態尋找欄位名稱 (ClickHouse 回傳的名稱可能不同)
-
-    # 移除不必要的日期與ID欄位，除非它們是分組維度
+    # 5. 後處理：移除不必要的欄位
     cols_to_drop_lower = {c.lower() for c in ['start_date', 'end_date', 'cmpid', 'id']}
-    # 找出所有目前存在的欄位
     current_cols = list(final_df.columns)
     for col in current_cols:
         if col.lower() in cols_to_drop_lower and col not in group_cols:
             final_df = final_df.drop(columns=[col])
 
-    # 找 Impression 欄位
+    # 6. 重算衍生指標 (CTR, CPC)
     imp_col = next((c for c in final_df.columns if c in ['effective_impressions', 'Impression_Sum', 'impressions']), None)
-    # 找 Click 欄位
     click_col = next((c for c in final_df.columns if c in ['total_clicks', 'Click_Sum', 'clicks']), None)
-    # 找 Budget 欄位
     budget_col = next((c for c in final_df.columns if c in ['Budget_Sum', 'total_budget', 'media_budget', 'budget', '媒體預算']), None)
 
     if imp_col and click_col:
@@ -117,4 +146,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             lambda x: (x[budget_col] / x[click_col]) if x[click_col] > 0 else 0, axis=1
         ).round(2)
 
-    return {"final_dataframe": final_df.to_dict('records')}
+    # 將 Debug 資訊加入回傳
+    return {
+        "final_dataframe": final_df.to_dict('records'),
+        "final_result_text": " | ".join(debug_logs)
+    }

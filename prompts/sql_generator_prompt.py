@@ -91,14 +91,14 @@ SQL_GENERATOR_PROMPT = """
 * `Impression_Sum`, `Click_Sum`, `CTR_Calc` 等 (交給 ClickHouse)。
 
 # 維度與資料庫欄位映射
-* "Agency" -> `agency`.`agencyname`
-* "Brand" -> `clients`.`product`
-* "Advertiser" -> `clients`.`company`
-* "Campaign_Name" -> `cue_lists`.`campaign_name`
-* "廣告計價單位" -> `pricing_models`.`name`
-* "Industry" -> `pre_campaign_categories`.`name`
-* "Ad_Format" -> `ad_format_types`.`title`
-* "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')`
+* "Agency" -> `agency`.`agencyname` AS Agency
+* "Brand" -> `clients`.`product` AS Brand
+* "Advertiser" -> `clients`.`company` AS Advertiser
+* "Campaign_Name" -> `cue_lists`.`campaign_name` AS Campaign_Name
+* "廣告計價單位" -> `pricing_models`.`name` AS Pricing_Unit
+* "Industry" -> `pre_campaign_categories`.`name` AS Industry
+* "Ad_Format" -> `ad_format_types`.`title` AS Ad_Format
+* "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')` AS Date_Month
 
 # 核心查詢邏輯 (Core Query Logic) - CRITICAL
 
