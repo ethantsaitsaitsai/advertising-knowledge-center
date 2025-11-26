@@ -132,7 +132,7 @@ SLOT_MANAGER_PROMPT = """
         "date_end": "2025-11-21"
     }},
     "analysis_needs": {{
-        "metrics": ["AdPrice_Sum"],
+        "metrics": ["Budget_Sum"],
         "dimensions": ["Agency"],
         "calculation_type": "Ranking"
     }},
@@ -140,7 +140,6 @@ SLOT_MANAGER_PROMPT = """
     "missing_slots": [],
     "limit": 20
 }}
-
 **User**: "改成看前 50 名" (假設 Context 已有 Agency 維度)
 **Output**:
 {{
