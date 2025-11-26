@@ -28,6 +28,7 @@ class AgentState(TypedDict):
     candidate_values: List[dict]
     confirmed_entities: List[str]
     generated_sql: Optional[str]
+    generated_sqls: Optional[List[str]] # Store multiple SQLs for batch execution
     clickhouse_sql: Optional[str]
     clickhouse_result: Optional[List[dict]]
     final_result_text: Optional[str]

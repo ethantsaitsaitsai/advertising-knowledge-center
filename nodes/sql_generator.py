@@ -1,4 +1,6 @@
 import re
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from schemas.state import AgentState
 from config.llm import llm
@@ -9,31 +11,60 @@ def clean_sql_output(text: str) -> str:
     """
     Cleans the SQL output from the LLM, removing Markdown and explanatory text.
     """
-    # 1. Attempt to extract Markdown code block (```sql ... ```)
     pattern = r"```sql\s*(.*?)\s*```"
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    # 2. Attempt to extract a Markdown block without language tag (``` ... ```)
     pattern_plain = r"```\s*(.*?)\s*```"
     match_plain = re.search(pattern_plain, text, re.DOTALL)
     if match_plain:
         return match_plain.group(1).strip()
 
-    # 3. If no Markdown, try to find SELECT ... ;
-    # Heuristic: keep the part from the first SELECT to the end
     select_index = text.upper().find("SELECT")
     if select_index != -1:
         return text[select_index:].strip()
 
-    # 4. If no match, return the original stripped text
     return text.strip()
+
+
+def split_date_range(start_str: str, end_str: str) -> list[tuple[str, str]]:
+    """
+    Splits a date range into yearly intervals to avoid DB timeouts.
+    Returns a list of (start_date, end_date) tuples.
+    Handles boundaries correctly (e.g., [A, B], [B+1, C]).
+    """
+    try:
+        start = datetime.strptime(start_str, "%Y-%m-%d")
+        end = datetime.strptime(end_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        # If date parsing fails, return original range as is
+        return [(start_str, end_str)]
+
+    if start > end:
+        return [(start_str, end_str)]
+
+    intervals = []
+    current = start
+    while current <= end:
+        # Move forward by 1 year (or 365 days)
+        # Using 365 days might be safer for 'BETWEEN' if we want strictly controlled chunks
+        # But relativedelta(years=1) is more logical for "Yearly" split.
+        next_hop = current + relativedelta(years=1) - timedelta(days=1)
+        
+        if next_hop >= end:
+            intervals.append((current.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
+            break
+        else:
+            intervals.append((current.strftime("%Y-%m-%d"), next_hop.strftime("%Y-%m-%d")))
+            current = next_hop + timedelta(days=1)
+            
+    return intervals
 
 
 def sql_generator(state: AgentState) -> dict:
     """
-    Generates a SQL query based on the new structured filters, analysis needs, and conversation history.
+    Generates SQL query(s). Supports batching for long date ranges.
     """
     extracted_filters = state.get("extracted_filters", {})
     analysis_needs = state.get("analysis_needs", {})
@@ -43,36 +74,63 @@ def sql_generator(state: AgentState) -> dict:
     prompt = ChatPromptTemplate.from_messages([
         ("system", SQL_GENERATOR_PROMPT),
         MessagesPlaceholder(variable_name="conversation_history"),
-        ("user", "篩選條件 (Filters): {filters}\n\n分析指標 (Metrics): {metrics}\n\n\
-         使用者已確認的實體 (Confirmed Entities): {confirmed_entities}\n\nSQL 查詢:")
+        ("user", "篩選條件 (Filters): {filters}\n\n分析指標 (Metrics): {metrics}\n\n         使用者已確認的實體 (Confirmed Entities): {confirmed_entities}\n\nSQL 查詢:")
     ])
 
     chain = prompt | llm
 
-    # 1. 取得原始需求
+    # 1. Handle Metrics & Dimensions
     all_metrics = analysis_needs.get('metrics', [])
     dimensions = analysis_needs.get('dimensions', [])
-
-    # 2. 定義 MySQL 白名單
     mysql_whitelist = ["Budget_Sum", "AdPrice_Sum", "Insertion_Count", "Campaign_Count"]
-
-    # 3. 過濾 (只留 MySQL 能做的)
     filtered_metrics = [m for m in all_metrics if m in mysql_whitelist]
-
-    # 4. 建立新的 analysis_needs 給 prompt，確保 dimensions 不會遺失
+    
     prompt_analysis_needs = {
         'metrics': filtered_metrics,
         'dimensions': dimensions
     }
 
+    # 2. Handle Date Ranges & Batching
+    date_start = extracted_filters.get("date_start")
+    date_end = extracted_filters.get("date_end")
+    
+    # Default to a safe range if missing (though SlotManager should catch this)
+    if not date_start: date_start = "2025-01-01"
+    if not date_end: date_end = datetime.now().strftime("%Y-%m-%d")
+
+    intervals = split_date_range(date_start, date_end)
+    
+    # Use the FIRST interval to generate the template SQL
+    first_interval = intervals[0]
+    
+    # Create a temporary filter for generation
+    current_filters = extracted_filters.copy()
+    current_filters["date_start"] = first_interval[0]
+    current_filters["date_end"] = first_interval[1]
+
     response = chain.invoke({
         "conversation_history": messages,
-        "filters": str(extracted_filters),
-        "metrics": str(prompt_analysis_needs),  # <--- 傳入包含 dimensions 的新 dict
+        "filters": str(current_filters),
+        "metrics": str(prompt_analysis_needs),
         "confirmed_entities": str(confirmed_entities)
     })
 
-    # Clean the output before writing to the state
-    clean_sql = clean_sql_output(response.content)
+    base_sql = clean_sql_output(response.content)
+    generated_sqls = []
 
-    return {"generated_sql": clean_sql}
+    # 3. Generate all SQLs via String Replacement
+    # We replace the first interval's dates with subsequent intervals
+    if len(intervals) == 1:
+        generated_sqls.append(base_sql)
+    else:
+        # Replace logic
+        # Note: This assumes the LLM actually used the dates we gave it.
+        # If the dates are standard format YYYY-MM-DD, this should work.
+        for start, end in intervals:
+            new_sql = base_sql.replace(first_interval[0], start).replace(first_interval[1], end)
+            generated_sqls.append(new_sql)
+
+    return {
+        "generated_sql": generated_sqls[0], # For compatibility / logging
+        "generated_sqls": generated_sqls    # The real payload
+    }

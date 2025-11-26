@@ -160,11 +160,9 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
 2. **Date Handling**:
    - `one_campaigns.start_date` 欄位為日期格式，可以直接比較。
 3. **預設限制 (Default Limit) - CRITICAL**:
-   - 若 SQL 為聚合查詢 (如 `SUM`, `COUNT`, `AVG`) 且只回傳單行結果，**不需要** LIMIT。
-   - 若 SQL 為列表查詢 (如 `SELECT *` 或 `GROUP BY` 後的多行列表)：
-     - **務必檢查輸入物件中的 `limit` 欄位**。
-     - 若 `limit` 有值 (e.g., 50)，SQL 結尾**必須**加上 `LIMIT 50`。
-     - 若 `limit` 無值或為 None，務必強制加上 **`LIMIT 20`**。
+   - **原則**: 為了確保後續數據聚合的正確性，**除非使用者明確指定數量 (如 "前 10 名", "Top 5")，否則絕對不要加入 LIMIT 子句**。
+   - 我們需要完整的數據列表來進行 Python 端的 Data Fusion。
+   - 若 SQL 為聚合查詢 (如 `SUM`) 回傳單行，當然也不需要 LIMIT。
 
 ### SQL 最佳實務 (Best Practices) - CRITICAL
 1. **時間範圍可視化 (Visualize Time Range)**:
