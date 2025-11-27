@@ -61,28 +61,38 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if seg_col:
         debug_logs.append(f"Found Segment Column: {seg_col}. Performing Pre-Aggregation.")
         
-        # 1. 找出 Metric 欄位 (這些欄位在重複行中是重複的，取 mean/first)
-        # 排除 ID, 日期
-        exclude_cols_lower = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates', seg_col.lower()]}
-        pre_numeric_cols = [c for c in df_mysql.columns 
-                        if pd.api.types.is_numeric_dtype(df_mysql[c]) 
-                        and c.lower() not in exclude_cols_lower]
+        # Define helper for joining strings (used in aggregation)
+        def join_unique_func(x):
+            return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+
+        # 定義在 Pre-Aggregation 階段要排除的非 Group Key 欄位 (ID, Date, Segment 本身)
+        exclude_from_grouping = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates', seg_col.lower()]}
         
-        # 2. 找出 Group Keys (除了 Segment 以外的所有欄位)
-        # 這樣可以保留 cmpid, Agency, Format 等資訊
-        group_keys = [c for c in df_mysql.columns if c != seg_col and c not in pre_numeric_cols]
+        # 找出所有非 Segment, 非 Metric 的維度作為 Pre-Aggregation 的 Group Key
+        # 邏輯：不是要排除的 ID/Date，也不是數值型別 (Metric)
+        other_dims = [c for c in df_mysql.columns 
+                      if c.lower() not in exclude_from_grouping 
+                      and not pd.api.types.is_numeric_dtype(df_mysql[c])]
         
-        if group_keys:
-            # 定義聚合邏輯
-            agg_dict = {col: 'first' for col in pre_numeric_cols} # 數值取 first (避免重複加總)
-            # Segment 用 join
-            def join_unique(x):
-                return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
-            agg_dict[seg_col] = join_unique
-            
-            # 執行 Pre-Aggregation
-            df_mysql = df_mysql.groupby(group_keys).agg(agg_dict).reset_index()
-            debug_logs.append(f"Pre-Aggregated MySQL Rows: {len(df_mysql)}")
+        # 定義 Pre-Aggregation 的邏輯
+        agg_dict_pre = {}
+        for col in df_mysql.columns:
+            # 如果欄位已經是 Group Key，就不需要再聚合 (它會在 Index 裡)
+            if col in other_dims:
+                continue
+                
+            if col == seg_col:
+                agg_dict_pre[col] = join_unique_func # Segment 欄位進行合併
+            elif col.lower() == 'budget_sum':
+                agg_dict_pre[col] = 'sum' # Budget_Sum 在 Pre-Agg 階段要加總
+            elif pd.api.types.is_numeric_dtype(df_mysql[col]):
+                agg_dict_pre[col] = 'mean' # 其他數值 (如其他計數) 可以取平均或 first
+            else:
+                agg_dict_pre[col] = 'first' # 其他維度取 first (反正都是重複值)
+
+        # 執行 Pre-Aggregation
+        df_mysql = df_mysql.groupby(other_dims).agg(agg_dict_pre).reset_index()
+        debug_logs.append(f"Pre-Aggregated MySQL Rows: {len(df_mysql)}")
 
     # ============================================================
 
@@ -236,6 +246,10 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df['CPC'] = final_df.apply(
             lambda x: (x[budget_col] / x[click_col]) if x[click_col] > 0 else 0, axis=1
         ).round(2)
+
+    # 將 Budget_Sum 轉為整數 (台幣無小數點)
+    if 'Budget_Sum' in final_df.columns:
+        final_df['Budget_Sum'] = final_df['Budget_Sum'].astype(int)
 
     # 將 Debug 資訊加入回傳
     return {
