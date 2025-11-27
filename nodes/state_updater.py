@@ -49,6 +49,8 @@ def state_updater_node(state: AgentState):
     """
     Updates the agent's state based on user's clarification.
     """
+    print(f"DEBUG [StateUpdater] Incoming Analysis Needs: {state.get('analysis_needs')}")
+
     # 1. Get the user's latest message and the candidate values from the state
     last_message = state['messages'][-1]
     # Check if last_message is a dict or a BaseMessage object
@@ -107,6 +109,7 @@ def state_updater_node(state: AgentState):
     # 6. Return the updated state
     return {
         "extracted_filters": updated_filters,
+        "analysis_needs": state.get('analysis_needs', {}), # Explicitly preserve analysis_needs
         "ambiguous_terms": [],  # Clear ambiguous terms after confirmation
         "candidate_values": [],  # Clear candidates after confirmation
         "expecting_user_clarification": False  # No longer waiting for user

@@ -98,6 +98,7 @@ SQL_GENERATOR_PROMPT = """
 * "廣告計價單位" -> `pricing_models`.`name` AS Pricing_Unit
 * "Industry" -> `pre_campaign_categories`.`name` AS Industry
 * "Ad_Format" -> `ad_format_types`.`title` AS Ad_Format
+* "Segment_Category_Name" -> `segment_categories`.`name` AS Segment_Category
 * "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')` AS Date_Month
 
 # 核心查詢邏輯 (Core Query Logic) - CRITICAL
@@ -148,8 +149,25 @@ JOIN target_segments ON campaign_target_pids.selection_id = target_segments.id
 LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_categories.id
 ```
 
-### **規則三：Group By**
-若包含 `dimensions`，務必將對應的欄位加入 `GROUP BY`。若查詢包含聚合函數 (SUM, COUNT)，也必須 GROUP BY 非聚合欄位。
+### **規則二：處理分析維度 (Dimensions) - ABSOLUTELY CRITICAL**
+1.  **檢查**: 查看 `analysis_needs.dimensions`。
+2.  **執行**: 對於列表中的**每一個**維度，你**必須**：
+    *   找到對應的資料庫欄位。
+    *   將其加入 `SELECT` 子句，並**務必使用指定的 Alias**。
+    *   將其加入 `GROUP BY` 子句。
+3.  **後果**: 如果你漏了維度，Data Fusion 節點會崩潰。**請務必再三檢查！**
+
+- **範例**:
+  - Input: `dimensions: ["Ad_Format", "Segment_Category_Name"]`
+  - Correct SQL Partial:
+    ```sql
+    SELECT 
+      ..., 
+      `ad_format_types`.`title` AS `Ad_Format`,
+      `segment_categories`.`name` AS `Segment_Category`,
+      ...
+    GROUP BY ..., `ad_format_types`.`title`, `segment_categories`.`name`
+    ```
 
 ### 安全與格式限制
 1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。

@@ -9,6 +9,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     1. 以 MySQL 資料為主 (Left Join)。
     2. 容許 ClickHouse 資料缺失。
     3. 執行資料轉型與二次聚合 (Re-aggregation)。
+    4. 特殊處理 Segment Category 的合併 (去重)。
     """
     debug_logs = []
     
@@ -50,6 +51,41 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if not df_ch.empty and 'cmpid' in df_ch.columns:
         df_ch['cmpid'] = pd.to_numeric(df_ch['cmpid'], errors='coerce')
 
+    # ============================================================
+    # Pre-Aggregation: 處理 Segment Category 的去重合併
+    # 目標：將同一 cmpid + Format 下的多個 Segment 合併成一行，避免 Budget 重複計算
+    # ============================================================
+    seg_col_candidates = ['Segment_Category', 'Segment_Category_Name', 'segment_category', '數據鎖定']
+    seg_col = next((c for c in df_mysql.columns if c in seg_col_candidates), None)
+
+    if seg_col:
+        debug_logs.append(f"Found Segment Column: {seg_col}. Performing Pre-Aggregation.")
+        
+        # 1. 找出 Metric 欄位 (這些欄位在重複行中是重複的，取 mean/first)
+        # 排除 ID, 日期
+        exclude_cols_lower = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates', seg_col.lower()]}
+        pre_numeric_cols = [c for c in df_mysql.columns 
+                        if pd.api.types.is_numeric_dtype(df_mysql[c]) 
+                        and c.lower() not in exclude_cols_lower]
+        
+        # 2. 找出 Group Keys (除了 Segment 以外的所有欄位)
+        # 這樣可以保留 cmpid, Agency, Format 等資訊
+        group_keys = [c for c in df_mysql.columns if c != seg_col and c not in pre_numeric_cols]
+        
+        if group_keys:
+            # 定義聚合邏輯
+            agg_dict = {col: 'first' for col in pre_numeric_cols} # 數值取 first (避免重複加總)
+            # Segment 用 join
+            def join_unique(x):
+                return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+            agg_dict[seg_col] = join_unique
+            
+            # 執行 Pre-Aggregation
+            df_mysql = df_mysql.groupby(group_keys).agg(agg_dict).reset_index()
+            debug_logs.append(f"Pre-Aggregated MySQL Rows: {len(df_mysql)}")
+
+    # ============================================================
+
     # 3. 合併 (Merge)
     if not df_ch.empty:
         merged_df = pd.merge(df_mysql, df_ch, on='cmpid', how='left', suffixes=('', '_ch'))
@@ -60,14 +96,16 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     debug_logs.append(f"Merged Cols: {list(merged_df.columns)}")
 
     # 4. 二次聚合 (Re-aggregation)
-    # 修正：AgentState 中 analysis_needs 是第一層欄位，不是 search_intent 的子欄位
-    analysis_needs = state.get('analysis_needs', {})
-    if hasattr(analysis_needs, 'model_dump'):
-        analysis_needs = analysis_needs.model_dump()
-    elif hasattr(analysis_needs, 'dict'):
-        analysis_needs = analysis_needs.dict()
-        
-    if not isinstance(analysis_needs, dict):
+    # FIX: 直接從 state 讀取 analysis_needs，而不是不存在的 search_intent
+    raw_analysis_needs = state.get('analysis_needs')
+    
+    if hasattr(raw_analysis_needs, 'model_dump'):
+        analysis_needs = raw_analysis_needs.model_dump()
+    elif hasattr(raw_analysis_needs, 'dict'):
+        analysis_needs = raw_analysis_needs.dict()
+    elif isinstance(raw_analysis_needs, dict):
+        analysis_needs = raw_analysis_needs
+    else:
         analysis_needs = {}
 
     dimensions = analysis_needs.get('dimensions', [])
@@ -82,21 +120,38 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         "Ad_Format": "Ad_Format", 
         "Industry": "Industry", 
         "廣告計價單位": "Pricing_Unit",
-        "Date_Month": "Date_Month"
+        "Date_Month": "Date_Month",
+        "Segment_Category_Name": "Segment_Category"
     }
 
     group_cols = []
     col_lower_map = {c.lower(): c for c in merged_df.columns}
     
+    # 建立要聚合的 Segment 欄位列表 (如果在 Final GroupBy 中不需要分組，就要 Join 它)
+    concat_cols = []
+
     for d in dimensions:
         target_alias = intent_to_alias.get(d, d)
-        # Case-Insensitive 尋找欄位
+        found_col = None
+        
         if target_alias.lower() in col_lower_map:
-            group_cols.append(col_lower_map[target_alias.lower()])
-        # Fallback: 找原始 dimension 名稱
+            found_col = col_lower_map[target_alias.lower()]
         elif d.lower() in col_lower_map:
-            group_cols.append(col_lower_map[d.lower()])
+            found_col = col_lower_map[d.lower()]
             
+        if found_col:
+            # 特殊處理：如果 dimension 是 Segment_Category，且我們已經做過 Pre-Aggregation
+            # 這裡還是可以 Group By 它 (如果使用者想依 Segment 分組)
+            # 但如果使用者想看 Format 並列出 Segment，那 Segment 應該不在 dimensions 裡?
+            # 不，如果 dimensions 有 Segment，代表要 Group By Segment。
+            # 如果 dimensions 沒有 Segment，但 merged_df 有，它會被視為 Metric 嗎? 不會。
+            # 
+            # 如果我們希望在 Group By Format 時保留 Segment 資訊 (Join)，
+            # 那 Segment 不應該在 group_cols 裡，而應該在 concat_cols 裡。
+            # 但目前的 dimensions 來自 Intent，如果 Intent 沒說要 Segment，我們就丟棄它?
+            # 為了讓資訊更豐富，如果 Segment 存在但不在 dimensions，我們可以把它加入 concat_cols
+            group_cols.append(found_col)
+
     debug_logs.append(f"Final Group Cols: {group_cols}")
 
     # 定義數值欄位 (Metrics)
@@ -110,26 +165,55 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     
     debug_logs.append(f"Numeric Cols: {numeric_cols}")
 
+    # 定義需要 Concatenate 的欄位 (非 Group Key, 非 Numeric, 但有價值的 Text)
+    # 例如 Segment_Category (如果它不在 Group Key 裡)
+    if seg_col and seg_col not in group_cols and seg_col in merged_df.columns:
+        concat_cols.append(seg_col)
+
     if not group_cols:
         # Case A: Total (總計)
-        if not numeric_cols:
+        if not numeric_cols and not concat_cols:
             final_df = merged_df 
-            debug_logs.append("Mode: No Grouping, No Numeric - Return Raw")
+            debug_logs.append("Mode: No Grouping, No Numeric, No Concat - Return Raw")
         else:
-            final_df = merged_df[numeric_cols].sum().to_frame().T
+            # 分開計算以避免 Pandas agg 錯誤
+            # 1. 數值取 SUM
+            if numeric_cols:
+                numeric_res = merged_df[numeric_cols].sum()
+            else:
+                numeric_res = pd.Series(dtype='float64')
+            
+            # 2. 文字取 Join
+            def join_unique(x):
+                # 確保轉成字串且去重
+                return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+            
+            if concat_cols:
+                text_res = merged_df[concat_cols].apply(join_unique)
+            else:
+                text_res = pd.Series(dtype='object')
+                
+            # 3. 合併結果
+            final_series = pd.concat([numeric_res, text_res])
+            final_df = final_series.to_frame().T
             final_df['Item'] = 'Total'
             debug_logs.append("Mode: Total Summary")
     else:
         # Case B: Group By Dimensions
-        final_df = merged_df.groupby(group_cols)[numeric_cols].sum().reset_index()
+        # 構建 Agg Dict
+        agg_dict = {col: 'sum' for col in numeric_cols}
+        def join_unique(x):
+            return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+        for c in concat_cols:
+            agg_dict[c] = join_unique
+            
+        final_df = merged_df.groupby(group_cols).agg(agg_dict).reset_index()
         debug_logs.append(f"Mode: Group By {group_cols}")
 
     # 5. 後處理：移除不必要的欄位與過濾無效資料
-    # 過濾掉分組維度值為 'Unknown' 的行
     IGNORED_VALUES = ['Unknown', 'unknown', '']
     for col in group_cols:
         if col in final_df.columns:
-            # 使用向量化操作過濾
             final_df = final_df[~final_df[col].astype(str).isin(IGNORED_VALUES)]
 
     cols_to_drop_lower = {c.lower() for c in ['start_date', 'end_date', 'cmpid', 'id']}

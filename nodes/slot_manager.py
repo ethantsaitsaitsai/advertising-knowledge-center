@@ -55,6 +55,8 @@ def slot_manager_node(state: AgentState):
         result.analysis_needs.dimensions = unique_dimensions
     # --- [END] Hard-coded Post-processing Block ---
 
+    print(f"DEBUG [SlotManager] Extracted Analysis Needs: {result.analysis_needs.model_dump()}")
+
     # 4. 回傳更新後的狀態
     return {
         "intent_type": result.intent_type,
