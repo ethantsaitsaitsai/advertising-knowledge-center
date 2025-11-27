@@ -108,6 +108,8 @@ SQL_GENERATOR_PROMPT = """
 1.  `one_campaigns.id` AS `cmpid`
 2.  `one_campaigns.start_date` AS `start_date`
 3.  `one_campaigns.end_date` AS `end_date`
+4.  **若查詢涉及「廣告格式」相關資訊，則必須包含 `ad_format_types.id` AS `ad_format_type_id`**
+
 
 ### **規則二：JOIN 策略 (The Most Important Part)**
 你必須根據需要的欄位動態決定 JOIN 路徑。
@@ -134,11 +136,13 @@ LEFT JOIN pricing_models ON cue_list_budgets.pricing_model_id = pricing_models.i
 LEFT JOIN pre_campaign_categories ON one_campaigns.category_id = pre_campaign_categories.id
 ```
 
-#### 廣告格式路徑 (Ad Format Path - 當查詢包含 "Ad_Format" 維度時追加):
+#### 廣告格式路徑 (Ad Format Path - 當查詢包含 "Ad_Format" 維度或需要 `ad_format_type_id` 時追加):
 ```sql
 -- 此路徑基於 '預算與計價單位路徑'，請確保該路徑已存在，並在其基礎上追加 ad_format_types
 LEFT JOIN ad_format_types ON cue_list_ad_formats.ad_format_type_id = ad_format_types.id
 ```
+*   **注意**: 當使用者需求與「廣告格式」相關時，除了 `ad_format_types.title`，你還應該 `SELECT ad_format_types.id AS ad_format_type_id`。
+
 
 #### 受眾路徑 (Audience Path - 當過濾條件包含 `target_segments` 或 "Segment_Category_Name" 維度時追加):
 ```sql

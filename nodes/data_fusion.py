@@ -127,11 +127,12 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         "Brand": "Brand",
         "Advertiser": "Advertiser",
         "Campaign_Name": "Campaign_Name",
-        "Ad_Format": "Ad_Format", 
         "Industry": "Industry", 
         "廣告計價單位": "Pricing_Unit",
         "Date_Month": "Date_Month",
-        "Segment_Category_Name": "Segment_Category"
+        "Segment_Category_Name": "Segment_Category",
+        # 顯式映射 Ad_Format 意圖，優先使用 ClickHouse 欄位
+        "Ad_Format": ["ad_format_type_ch", "ad_format_type", "ad_format_type_id_ch", "ad_format_type_id", "Ad_Format"] # 優先級: CH string, CH ID, MySQL string
     }
 
     group_cols = []
@@ -141,25 +142,17 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     concat_cols = []
 
     for d in dimensions:
-        target_alias = intent_to_alias.get(d, d)
+        target_aliases = intent_to_alias.get(d, [d]) # 現在可以是列表
+        if not isinstance(target_aliases, list):
+            target_aliases = [target_aliases]
+
         found_col = None
-        
-        if target_alias.lower() in col_lower_map:
-            found_col = col_lower_map[target_alias.lower()]
-        elif d.lower() in col_lower_map:
-            found_col = col_lower_map[d.lower()]
-            
-        if found_col:
-            # 特殊處理：如果 dimension 是 Segment_Category，且我們已經做過 Pre-Aggregation
-            # 這裡還是可以 Group By 它 (如果使用者想依 Segment 分組)
-            # 但如果使用者想看 Format 並列出 Segment，那 Segment 應該不在 dimensions 裡?
-            # 不，如果 dimensions 有 Segment，代表要 Group By Segment。
-            # 如果 dimensions 沒有 Segment，但 merged_df 有，它會被視為 Metric 嗎? 不會。
-            # 
-            # 如果我們希望在 Group By Format 時保留 Segment 資訊 (Join)，
-            # 那 Segment 不應該在 group_cols 裡，而應該在 concat_cols 裡。
-            # 但目前的 dimensions 來自 Intent，如果 Intent 沒說要 Segment，我們就丟棄它?
-            # 為了讓資訊更豐富，如果 Segment 存在但不在 dimensions，我們可以把它加入 concat_cols
+        for alias in target_aliases:
+            if alias.lower() in col_lower_map:
+                found_col = col_lower_map[alias.lower()]
+                break # 找到最佳匹配，使用它
+
+        if found_col and found_col not in group_cols: # 確保沒有重複
             group_cols.append(found_col)
 
     debug_logs.append(f"Final Group Cols: {group_cols}")
@@ -226,7 +219,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if col in final_df.columns:
             final_df = final_df[~final_df[col].astype(str).isin(IGNORED_VALUES)]
 
-    cols_to_drop_lower = {c.lower() for c in ['start_date', 'end_date', 'cmpid', 'id']}
+    cols_to_drop_lower = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'cmpid_ch', 'ad_format_type_id_ch', 'ad_format_type_id']}
     current_cols = list(final_df.columns)
     for col in current_cols:
         if col.lower() in cols_to_drop_lower and col not in group_cols:

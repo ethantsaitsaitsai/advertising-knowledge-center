@@ -17,7 +17,7 @@ def clickhouse_executor_node(state: AgentState) -> dict:
         # 從 get_clickhouse_db 函數獲取 Client 實例
         client = get_clickhouse_db()
 
-        result = client.query(clickhouse_sql)
+        result = client.query(clickhouse_sql, settings={'max_execution_time': 15})
 
         data = result.result_rows
         column_names = result.column_names
