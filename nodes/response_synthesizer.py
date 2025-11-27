@@ -52,6 +52,11 @@ def calculate_insights(df: pd.DataFrame) -> Dict[str, Any]:
             name_col = next((col for col in df.columns if 'name' in col.lower() or '名稱' in col), 'cmpid')
             insights['top_performer_name'] = top_ctr_row.get(name_col, 'N/A')
             insights['top_performer_ctr'] = top_ctr_row.get('CTR_numeric', 0)
+        
+        # Clean up temporary column
+        if 'CTR_numeric' in df.columns:
+            df.drop(columns=['CTR_numeric'], inplace=True)
+
 
     # 3. 異常偵測 (Anomalies)
     # 例如：有花錢但沒點擊

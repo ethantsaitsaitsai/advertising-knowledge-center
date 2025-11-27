@@ -225,20 +225,57 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if col.lower() in cols_to_drop_lower and col not in group_cols:
             final_df = final_df.drop(columns=[col])
 
-    # 6. 重算衍生指標 (CTR, CPC)
-    imp_col = next((c for c in final_df.columns if c in ['effective_impressions', 'Impression_Sum', 'impressions']), None)
-    click_col = next((c for c in final_df.columns if c in ['total_clicks', 'Click_Sum', 'clicks']), None)
-    budget_col = next((c for c in final_df.columns if c in ['Budget_Sum', 'total_budget', 'media_budget', 'budget', '媒體預算']), None)
+    # 6. 重算衍生指標 (Derived Metrics Calculation)
+    # Identify columns flexibly using a helper function
+    all_cols_lower = {c.lower(): c for c in final_df.columns}
+    
+    def find_col(keywords):
+        for k in keywords:
+            if k in all_cols_lower:
+                return all_cols_lower[k]
+        return None
 
-    if imp_col and click_col:
-        final_df['CTR'] = final_df.apply(
-            lambda x: (x[click_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
+    imp_col = find_col(['total_impressions', 'impression', 'impressions'])
+    eff_imp_col = find_col(['effective_impressions'])
+    click_col = find_col(['total_clicks', 'click_sum', 'clicks'])
+    view100_col = find_col(['views_100', 'q100'])
+    view3s_col = find_col(['views_3s', 'view3s'])
+    eng_col = find_col(['total_engagements', 'eng'])
+    
+    # 1. CTR (Click-Through Rate) = Clicks / Effective Impressions * 100
+    # Note: Prefer effective_impressions for CTR denominator if available
+    ctr_denom_col = eff_imp_col if eff_imp_col else imp_col
+    
+    if click_col and ctr_denom_col:
+         final_df['CTR'] = final_df.apply(
+            lambda x: (x[click_col] / x[ctr_denom_col] * 100) if x[ctr_denom_col] > 0 else 0, axis=1
+        ).round(2)
+        
+    # 2. VTR (View-Through Rate) = Completed Views (views_100) / Impressions * 100
+    if view100_col and imp_col:
+        final_df['VTR'] = final_df.apply(
+            lambda x: (x[view100_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
+        ).round(2)
+        
+    # 3. ER (Engagement Rate) = Total Engagements / Impressions * 100
+    if eng_col and imp_col:
+        final_df['ER'] = final_df.apply(
+            lambda x: (x[eng_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
         ).round(2)
 
-    if budget_col and click_col:
-        final_df['CPC'] = final_df.apply(
-            lambda x: (x[budget_col] / x[click_col]) if x[click_col] > 0 else 0, axis=1
-        ).round(2)
+    # 7. 清理原始指標 (只保留比率)
+    # 根據使用者需求，一般成效表格只需顯示 CTR, VTR, ER，因此移除用於計算的原始欄位
+    raw_metrics_to_drop = [imp_col, eff_imp_col, click_col, view100_col, view3s_col, eng_col]
+    # 過濾掉 None (沒找到的欄位)
+    raw_metrics_to_drop = [c for c in raw_metrics_to_drop if c is not None]
+    
+    if raw_metrics_to_drop:
+        final_df = final_df.drop(columns=raw_metrics_to_drop, errors='ignore')
+
+    # 8. 條件式隱藏無效指標
+    # 如果 VTR 全為 0 (表示本次查詢無影片相關數據)，則從結果中移除該欄位
+    if 'VTR' in final_df.columns and (final_df['VTR'] == 0).all():
+        final_df = final_df.drop(columns=['VTR'])
 
     # 將 Budget_Sum 轉為整數 (台幣無小數點)
     if 'Budget_Sum' in final_df.columns:
