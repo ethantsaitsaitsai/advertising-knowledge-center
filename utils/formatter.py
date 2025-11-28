@@ -1,6 +1,42 @@
 import pandas as pd
 from decimal import Decimal
 from typing import List, Tuple, Any
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+
+
+def split_date_range(start_str: str, end_str: str) -> list[tuple[str, str]]:
+    """
+    Splits a date range into yearly intervals to avoid DB timeouts.
+    Returns a list of (start_date, end_date) tuples.
+    Handles boundaries correctly (e.g., [A, B], [B+1, C]).
+    """
+    try:
+        start = datetime.strptime(start_str, "%Y-%m-%d")
+        end = datetime.strptime(end_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        # If date parsing fails, return original range as is
+        return [(start_str, end_str)]
+
+    if start > end:
+        return [(start_str, end_str)]
+
+    intervals = []
+    current = start
+    while current <= end:
+        # Move forward by 1 year (or 365 days)
+        # Using 365 days might be safer for 'BETWEEN' if we want strictly controlled chunks
+        # But relativedelta(years=1) is more logical for "Yearly" split.
+        next_hop = current + relativedelta(years=1) - timedelta(days=1)
+        
+        if next_hop >= end:
+            intervals.append((current.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
+            break
+        else:
+            intervals.append((current.strftime("%Y-%m-%d"), next_hop.strftime("%Y-%m-%d")))
+            current = next_hop + timedelta(days=1)
+            
+    return intervals
 
 
 def format_sql_result_to_markdown(data: List[Tuple[Any, ...]], columns: List[str]) -> str:

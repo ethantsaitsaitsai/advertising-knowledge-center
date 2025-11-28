@@ -5,6 +5,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from datetime import datetime, timedelta
 import re
+from utils.formatter import split_date_range
 
 
 def clean_sql_output(response: str) -> str:
@@ -30,13 +31,13 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     """
     Generates a ClickHouse SQL query.
     Truncates input data if too large to prevent Prompt overflow.
-    Optimized with Partition Pruning logic.
+    Optimized with Partition Pruning logic and Batching.
     """
     sql_result = state.get("sql_result")
     sql_result_columns = state.get("sql_result_columns")
 
     if not sql_result or not sql_result_columns:
-        return {"clickhouse_sql": ""}
+        return {"clickhouse_sql": "", "clickhouse_sqls": []}
 
     # 1. Try to identify ID and Date columns
     has_dates = False
@@ -57,7 +58,7 @@ def clickhouse_generator_node(state: AgentState) -> dict:
 
     if idx_cmpid == -1 and idx_ad_format_type_id == -1:
         # If neither cmpid nor ad_format_type_id is found, we can't generate a meaningful query
-        return {"clickhouse_sql": ""}
+        return {"clickhouse_sql": "", "clickhouse_sqls": []}
 
     try:
         idx_start = next(i for i, col in enumerate(sql_result_columns) if col in ["start_date", "start_time", "campaign_start"])
@@ -87,7 +88,7 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     # Combine all relevant IDs into one list to check if we have anything to query
     all_ids = cmpid_list + ad_format_type_id_list
     if not all_ids:
-        return {"clickhouse_sql": ""}
+        return {"clickhouse_sql": "", "clickhouse_sqls": []}
     
     cmpid_list_str = ", ".join(map(str, set(cmpid_list))) if cmpid_list else ""
     ad_format_type_id_list_str = ", ".join(map(str, set(ad_format_type_id_list))) if ad_format_type_id_list else ""
@@ -126,17 +127,36 @@ def clickhouse_generator_node(state: AgentState) -> dict:
         if not global_end: global_end = today.strftime("%Y-%m-%d")
         if not global_start: global_start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
 
+    # --- Batching Logic Start ---
+    intervals = split_date_range(global_start, global_end)
+    first_interval = intervals[0]
+
     # 4. LLM Generation
+    # We generate SQL using the FIRST interval, then replace dates for subsequent intervals.
     prompt = PromptTemplate.from_template(CLICKHOUSE_GENERATOR_PROMPT)
     chain = prompt | llm | StrOutputParser()
 
     response = chain.invoke({
         "cmpid_list": cmpid_list_str,
         "ad_format_type_id_list": ad_format_type_id_list_str,
-        "date_start": global_start,
-        "date_end": global_end
+        "date_start": first_interval[0],
+        "date_end": first_interval[1]
     })
 
-    final_sql = clean_sql_output(response)
-    
-    return {"clickhouse_sql": final_sql}
+    base_sql = clean_sql_output(response)
+    clickhouse_sqls = []
+
+    if len(intervals) == 1:
+        clickhouse_sqls.append(base_sql)
+    else:
+        # Generate multiple SQLs by replacing date strings
+        for start, end in intervals:
+            # Naive replacement (might be risky if date string appears elsewhere, but specific enough in SQL)
+            # Ideally we should re-invoke LLM or use formatting, but replacement is faster/cheaper.
+            new_sql = base_sql.replace(first_interval[0], start).replace(first_interval[1], end)
+            clickhouse_sqls.append(new_sql)
+
+    return {
+        "clickhouse_sql": clickhouse_sqls[0], # For compatibility
+        "clickhouse_sqls": clickhouse_sqls
+    }

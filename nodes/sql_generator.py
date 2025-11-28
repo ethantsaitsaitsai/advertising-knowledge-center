@@ -1,10 +1,10 @@
 import re
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
+from datetime import datetime
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from schemas.state import AgentState
 from config.llm import llm
 from prompts.sql_generator_prompt import SQL_GENERATOR_PROMPT
+from utils.formatter import split_date_range
 
 
 def clean_sql_output(text: str) -> str:
@@ -26,40 +26,6 @@ def clean_sql_output(text: str) -> str:
         return text[select_index:].strip()
 
     return text.strip()
-
-
-def split_date_range(start_str: str, end_str: str) -> list[tuple[str, str]]:
-    """
-    Splits a date range into yearly intervals to avoid DB timeouts.
-    Returns a list of (start_date, end_date) tuples.
-    Handles boundaries correctly (e.g., [A, B], [B+1, C]).
-    """
-    try:
-        start = datetime.strptime(start_str, "%Y-%m-%d")
-        end = datetime.strptime(end_str, "%Y-%m-%d")
-    except (ValueError, TypeError):
-        # If date parsing fails, return original range as is
-        return [(start_str, end_str)]
-
-    if start > end:
-        return [(start_str, end_str)]
-
-    intervals = []
-    current = start
-    while current <= end:
-        # Move forward by 1 year (or 365 days)
-        # Using 365 days might be safer for 'BETWEEN' if we want strictly controlled chunks
-        # But relativedelta(years=1) is more logical for "Yearly" split.
-        next_hop = current + relativedelta(years=1) - timedelta(days=1)
-        
-        if next_hop >= end:
-            intervals.append((current.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
-            break
-        else:
-            intervals.append((current.strftime("%Y-%m-%d"), next_hop.strftime("%Y-%m-%d")))
-            current = next_hop + timedelta(days=1)
-            
-    return intervals
 
 
 def sql_generator(state: AgentState) -> dict:

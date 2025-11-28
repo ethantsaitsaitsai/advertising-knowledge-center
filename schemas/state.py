@@ -30,6 +30,7 @@ class AgentState(TypedDict):
     generated_sql: Optional[str]
     generated_sqls: Optional[List[str]] # Store multiple SQLs for batch execution
     clickhouse_sql: Optional[str]
+    clickhouse_sqls: Optional[List[str]] # Store multiple ClickHouse SQLs for batch execution
     clickhouse_result: Optional[List[dict]]
     final_result_text: Optional[str]
     sql_result: Optional[List[Any]]
