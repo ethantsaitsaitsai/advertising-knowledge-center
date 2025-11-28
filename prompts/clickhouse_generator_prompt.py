@@ -85,21 +85,21 @@ CREATE VIEW kafka.summing_ad_format_events_view (
 * `day_local`: 日期 (Partition Key)
 
 # 關鍵指標聚合 (Metrics Aggregation)
-請針對傳入的 `cmpid` 列表，查詢以下原始數據的 SUM 值（不要計算比率）：
+請針對傳入的 `cmpid` 列表，查詢以下原始數據的 SUM 值（不要計算比率），**並務必使用指定的 Alias**：
 
 1. **基礎流量**:
-   - `impression` (UInt32): 總曝光
-   - `effective_impressions`: SUM(CASE WHEN ad_type='dsp-creative' THEN cv ELSE impression END)
+   - `SUM(impression)` AS `total_impressions`
+   - `SUM(CASE WHEN ad_type='dsp-creative' THEN cv ELSE impression END)` AS `effective_impressions`
 
 2. **點擊相關 (Click Metrics)**:
-   - `total_clicks`: SUM(bannerClick + videoClick)
+   - `SUM(bannerClick + videoClick)` AS `total_clicks`
 
 3. **觀看相關 (Video Metrics)**:
-   - `views_100`: q100 (完整觀看)
-   - `views_3s`: view3s (3秒觀看)
+   - `SUM(q100)` AS `views_100`
+   - `SUM(view3s)` AS `views_3s`
 
 4. **互動相關 (Engagement Metrics)**:
-   - `total_engagements`: eng (總互動數)
+   - `SUM(eng)` AS `total_engagements`
 
 # 安全性與語法規範 (Safety Rules)
 1. **強制日期限制**: WHERE 子句**必須**包含 `day_local BETWEEN '{date_start}' AND '{date_end}'`。若上游未提供日期，請預設使用最近 7 天。
@@ -114,8 +114,7 @@ CREATE VIEW kafka.summing_ad_format_events_view (
 
 4. **強制筆數限制**: 句尾**必須**加上 `LIMIT 100` (或上游指定的 limit)。
 4. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
-5. **避免別名衝突**: SELECT 的結果別名(Alias)不可與原始欄位名稱相同。例如：使用 `SUM(impression) AS total_impressions` 而不是 `AS impression`\
-   ，以免在計算衍生指標時發生遞迴聚合錯誤。
+5. **避免別名衝突**: 務必使用上述指定的 Alias (如 `total_impressions`)。
 6. **欄位引用**：所有欄位名稱與表名稱 **必須** 使用 Backticks 包覆 (例如: `impression`.`day_local`)，以防止保留字衝突。
 7. **禁止錯誤引用**: 嚴禁將資料庫與表名包在同一個反引號中。
    - ❌ 錯誤: `kafka.summing_ad_format_events_view`
@@ -137,8 +136,8 @@ CREATE VIEW kafka.summing_ad_format_events_view (
 ```sql
 SELECT
     cmpid,
-    SUM(impression) as imps,
-    -- ... (其他指標)
+    SUM(impression) AS total_impressions,
+    SUM(bannerClick + videoClick) AS total_clicks
 FROM kafka.summing_ad_format_events_view
 WHERE cmpid IN (101, 102)
   AND day_local BETWEEN '2023-01-01' AND '2023-01-31'
@@ -152,8 +151,8 @@ SELECT
     cmpid,
     ad_format_type_id,  -- 必須選取
     ad_format_type,     -- 必須選取
-    SUM(impression) as imps,
-    -- ... (其他指標)
+    SUM(impression) AS total_impressions,
+    SUM(bannerClick + videoClick) AS total_clicks
 FROM kafka.summing_ad_format_events_view
 WHERE cmpid IN (101, 102)
   AND ad_format_type_id IN (5, 8) -- 加入過濾條件

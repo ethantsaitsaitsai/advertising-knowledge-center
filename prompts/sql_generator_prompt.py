@@ -162,15 +162,16 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
 3.  **後果**: 如果你漏了維度，Data Fusion 節點會崩潰。**請務必再三檢查！**
 
 - **範例**:
-  - Input: `dimensions: ["Ad_Format", "Segment_Category_Name"]`
+  - Input: `dimensions: ["Ad_Format", "Segment_Category_Name", "Campaign_Name"]`
   - Correct SQL Partial:
     ```sql
     SELECT 
       ..., 
       `ad_format_types`.`title` AS `Ad_Format`,
       `segment_categories`.`name` AS `Segment_Category`,
+      `cue_lists`.`campaign_name` AS `Campaign_Name`,
       ...
-    GROUP BY ..., `ad_format_types`.`title`, `segment_categories`.`name`
+    GROUP BY ..., `ad_format_types`.`title`, `segment_categories`.`name`, `cue_lists`.`campaign_name`
     ```
 
 ### 安全與格式限制

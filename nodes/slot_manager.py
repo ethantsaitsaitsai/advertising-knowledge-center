@@ -48,7 +48,15 @@ def slot_manager_node(state: AgentState):
         if "Segment_Category_Name" not in result.analysis_needs.dimensions:
             result.analysis_needs.dimensions.append("Segment_Category_Name")
 
-    # 2. 維度去重：移除 LLM 可能產生的重複維度
+    # 2. [Dependency Rule] 受眾 (Segment) 必須依附於 活動 (Campaign)
+    #    如果維度中有受眾，強制加入 Campaign_Name，否則數據會因聚合而無法區分
+    if "Segment_Category_Name" in result.analysis_needs.dimensions:
+        if "Campaign_Name" not in result.analysis_needs.dimensions:
+            print("DEBUG [SlotManager] Auto-adding 'Campaign_Name' due to Segment dependency.")
+            # 插入到最前面，這樣在 GroupBy 時通常會排在前面，閱讀上較直觀
+            result.analysis_needs.dimensions.insert(0, "Campaign_Name")
+
+    # 3. 維度去重：移除 LLM 可能產生的重複維度
     if result.analysis_needs.dimensions:
         # Using dict.fromkeys to preserve order and remove duplicates
         unique_dimensions = list(dict.fromkeys(result.analysis_needs.dimensions))

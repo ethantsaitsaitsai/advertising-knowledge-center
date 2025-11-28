@@ -65,39 +65,86 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         def join_unique_func(x):
             return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
 
-        # 定義在 Pre-Aggregation 階段要排除的非 Group Key 欄位 (ID, Date, Segment 本身)
-        exclude_from_grouping = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates', seg_col.lower()]}
+        # 定義 Group Key: 必須是能夠唯一識別 Campaign 的欄位，加上其他維度
+        # 1. 核心 Key: cmpid
+        # 2. 其他維度: Agency, Ad_Format, Campaign_Name 等
+        # 3. 排除: start_date, end_date (日期會導致分組過細), id (內部ID), segment (要被聚合的)
         
-        # 找出所有非 Segment, 非 Metric 的維度作為 Pre-Aggregation 的 Group Key
-        # 邏輯：不是要排除的 ID/Date，也不是數值型別 (Metric)
-        other_dims = [c for c in df_mysql.columns 
-                      if c.lower() not in exclude_from_grouping 
-                      and not pd.api.types.is_numeric_dtype(df_mysql[c])]
+        exclude_keywords = ['start_date', 'end_date', 'schedule_dates', 'id', 'date_month'] # Exclude dates from pre-agg grouping to avoid fragmentation
         
-        # 定義 Pre-Aggregation 的邏輯
-        agg_dict_pre = {}
+        group_keys = ['cmpid']
         for col in df_mysql.columns:
-            # 如果欄位已經是 Group Key，就不需要再聚合 (它會在 Index 裡)
-            if col in other_dims:
+            if col.lower() == 'cmpid': continue
+            if col == seg_col: continue
+            if pd.api.types.is_numeric_dtype(df_mysql[col]): continue # Don't group by metrics
+            
+            # 如果欄位包含 exclude keywords，跳過
+            if any(k in col.lower() for k in exclude_keywords):
                 continue
                 
-            if col == seg_col:
-                agg_dict_pre[col] = join_unique_func # Segment 欄位進行合併
-            elif col.lower() == 'budget_sum':
-                agg_dict_pre[col] = 'sum' # Budget_Sum 在 Pre-Agg 階段要加總
+            group_keys.append(col)
+            
+        debug_logs.append(f"Pre-Agg Group Keys: {group_keys}")
+        
+        # 定義 Agg Logic
+        agg_dict_pre = {}
+        # Segment -> Join
+        agg_dict_pre[seg_col] = join_unique_func
+        
+        # Metrics -> Sum/Mean
+        for col in df_mysql.columns:
+            if col in group_keys or col == seg_col: continue
+            
+            if col.lower() == 'budget_sum':
+                agg_dict_pre[col] = 'sum'
             elif pd.api.types.is_numeric_dtype(df_mysql[col]):
-                agg_dict_pre[col] = 'mean' # 其他數值 (如其他計數) 可以取平均或 first
+                agg_dict_pre[col] = 'mean' # default for others
             else:
-                agg_dict_pre[col] = 'first' # 其他維度取 first (反正都是重複值)
+                agg_dict_pre[col] = 'first' # Date columns etc. -> Take first
 
         # 執行 Pre-Aggregation
-        df_mysql = df_mysql.groupby(other_dims).agg(agg_dict_pre).reset_index()
+        df_mysql = df_mysql.groupby(group_keys, as_index=False).agg(agg_dict_pre)
         debug_logs.append(f"Pre-Aggregated MySQL Rows: {len(df_mysql)}")
+        debug_logs.append(f"Pre-Aggregated MySQL Cols: {list(df_mysql.columns)}")
+
+    # Strict MySQL Column Filtering BEFORE Merge with ClickHouse
+    # Only keep 'cmpid', 'seg_col' (if present), numeric columns (Metrics), AND potential Grouping Dimensions.
+    # We MUST NOT drop dimensions like 'Campaign_Name', 'Ad_Format', 'Agency' here, otherwise final grouping fails.
+    
+    mysql_cols_to_keep_for_merge = ['cmpid']
+    if seg_col and seg_col in df_mysql.columns:
+        mysql_cols_to_keep_for_merge.append(seg_col)
+    
+    # Identify potential dimensions to keep (String columns that are not in exclude list)
+    # We reuse 'exclude_keywords' from above but make it strict for cleaning
+    strict_exclude_keywords = ['start_date', 'end_date', 'schedule_dates', 'id', 'date_month', 'date_year'] 
+    
+    for col in df_mysql.columns:
+        if col in mysql_cols_to_keep_for_merge: continue
+        
+        col_lower = col.lower()
+        # 1. If it's a known excluded column, skip
+        if any(k in col_lower for k in strict_exclude_keywords) and col_lower != 'cmpid':
+            continue
+            
+        # 2. If it's numeric (Metric), keep it
+        if pd.api.types.is_numeric_dtype(df_mysql[col]):
+            mysql_cols_to_keep_for_merge.append(col)
+            continue
+            
+        # 3. If it's a string/object (Dimension), keep it! (Crucial Fix)
+        # This ensures 'Campaign_Name', 'Agency' etc. survive the merge.
+        mysql_cols_to_keep_for_merge.append(col)
+    
+    # Filter df_mysql to only include these essential columns before merging
+    df_mysql = df_mysql[mysql_cols_to_keep_for_merge]
+    debug_logs.append(f"MySQL Cols After Pre-Merge Filter: {list(df_mysql.columns)}")
 
     # ============================================================
 
     # 3. 合併 (Merge)
     if not df_ch.empty:
+
         merged_df = pd.merge(df_mysql, df_ch, on='cmpid', how='left', suffixes=('', '_ch'))
     else:
         merged_df = df_mysql
@@ -213,19 +260,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = merged_df.groupby(group_cols).agg(agg_dict).reset_index()
         debug_logs.append(f"Mode: Group By {group_cols}")
 
-    # 5. 後處理：移除不必要的欄位與過濾無效資料
-    IGNORED_VALUES = ['Unknown', 'unknown', '']
-    for col in group_cols:
-        if col in final_df.columns:
-            final_df = final_df[~final_df[col].astype(str).isin(IGNORED_VALUES)]
-
-    cols_to_drop_lower = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'cmpid_ch', 'ad_format_type_id_ch', 'ad_format_type_id']}
-    current_cols = list(final_df.columns)
-    for col in current_cols:
-        if col.lower() in cols_to_drop_lower and col not in group_cols:
-            final_df = final_df.drop(columns=[col])
-
-    # 6. 重算衍生指標 (Derived Metrics Calculation)
+    # 5. 重算衍生指標 (Derived Metrics Calculation) - Moved UP
     # Identify columns flexibly using a helper function
     all_cols_lower = {c.lower(): c for c in final_df.columns}
     
@@ -242,44 +277,66 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     view3s_col = find_col(['views_3s', 'view3s'])
     eng_col = find_col(['total_engagements', 'eng'])
     
-    # 1. CTR (Click-Through Rate) = Clicks / Effective Impressions * 100
-    # Note: Prefer effective_impressions for CTR denominator if available
+    # 1. CTR (Click-Through Rate)
     ctr_denom_col = eff_imp_col if eff_imp_col else imp_col
-    
     if click_col and ctr_denom_col:
          final_df['CTR'] = final_df.apply(
             lambda x: (x[click_col] / x[ctr_denom_col] * 100) if x[ctr_denom_col] > 0 else 0, axis=1
         ).round(2)
         
-    # 2. VTR (View-Through Rate) = Completed Views (views_100) / Impressions * 100
+    # 2. VTR (View-Through Rate)
     if view100_col and imp_col:
         final_df['VTR'] = final_df.apply(
             lambda x: (x[view100_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
         ).round(2)
         
-    # 3. ER (Engagement Rate) = Total Engagements / Impressions * 100
+    # 3. ER (Engagement Rate)
     if eng_col and imp_col:
         final_df['ER'] = final_df.apply(
             lambda x: (x[eng_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
         ).round(2)
 
-    # 7. 清理原始指標 (只保留比率)
-    # 根據使用者需求，一般成效表格只需顯示 CTR, VTR, ER，因此移除用於計算的原始欄位
-    raw_metrics_to_drop = [imp_col, eff_imp_col, click_col, view100_col, view3s_col, eng_col]
-    # 過濾掉 None (沒找到的欄位)
-    raw_metrics_to_drop = [c for c in raw_metrics_to_drop if c is not None]
+    # 6. 後處理：移除不必要的欄位與過濾無效資料 (Strict Filtering)
+    IGNORED_VALUES = ['Unknown', 'unknown', '']
+    for col in group_cols:
+        if col in final_df.columns:
+            final_df = final_df[~final_df[col].astype(str).isin(IGNORED_VALUES)]
+
+    # Strict Column Filtering: Only keep Dimensions + Calculated Metrics + Explicit Metrics
+    cols_to_keep = []
     
-    if raw_metrics_to_drop:
-        final_df = final_df.drop(columns=raw_metrics_to_drop, errors='ignore')
+    # A. Dimensions (Grouping Keys)
+    for dim in group_cols:
+        if dim in final_df.columns:
+            cols_to_keep.append(dim)
 
-    # 8. 條件式隱藏無效指標
-    # 如果 VTR 全為 0 (表示本次查詢無影片相關數據)，則從結果中移除該欄位
-    if 'VTR' in final_df.columns and (final_df['VTR'] == 0).all():
-        final_df = final_df.drop(columns=['VTR'])
+    # B. Segment Column (if it was concatenated and exists)
+    if seg_col and seg_col in final_df.columns and seg_col not in cols_to_keep:
+        cols_to_keep.append(seg_col)
 
-    # 將 Budget_Sum 轉為整數 (台幣無小數點)
-    if 'Budget_Sum' in final_df.columns:
-        final_df['Budget_Sum'] = final_df['Budget_Sum'].astype(int)
+    # C. Explicit Metrics (Budget, Count, Price) - from analysis_needs ideally, or heuristic
+    # Heuristic: Keep columns that look like "Money" or "Count" provided by MySQL
+    target_metrics_keywords = ['budget', 'price', 'cost', 'amount', 'count', 'campaign_count', 'insertion_count']
+    for col in final_df.columns:
+        if col not in cols_to_keep:
+             if any(k in col.lower() for k in target_metrics_keywords):
+                cols_to_keep.append(col)
+
+    # D. Calculated KPIs (CTR, VTR, ER)
+    for kpi in ['CTR', 'VTR', 'ER']:
+        if kpi in final_df.columns:
+            # Conditional Drop: If VTR is all 0, don't keep it
+            if kpi == 'VTR' and (final_df[kpi] == 0).all():
+                continue
+            cols_to_keep.append(kpi)
+
+    # Apply Selection
+    final_df = final_df[cols_to_keep]
+
+    # 7. Final Formatting (Integer for Budget)
+    for col in final_df.columns:
+        if 'budget' in col.lower() and pd.api.types.is_numeric_dtype(final_df[col]):
+             final_df[col] = final_df[col].fillna(0).astype(int)
 
     # 將 Debug 資訊加入回傳
     return {

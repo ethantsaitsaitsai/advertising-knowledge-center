@@ -29,6 +29,7 @@ SLOT_MANAGER_PROMPT = """
 
 #### a. 維度識別 (dimensions -> GROUP BY):
    - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]` (對應 `agency.agencyname`)
+   - "各活動"、"分案件"、"活動名稱" -> `dimensions: ["Campaign_Name"]` (對應 `cue_lists.campaign_name`)
    - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
    - "數據鎖定"、"受眾類別" -> `dimensions: ["Segment_Category_Name"]`
    - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
@@ -51,6 +52,11 @@ SLOT_MANAGER_PROMPT = """
    - "比較" -> `Comparison`
    - "趨勢" -> `Trend`
    - 若無特別指定，默認為 `Total`。
+
+#### d. 自動關聯規則 (Auto-Association Rules) - CRITICAL:
+   - **受眾細節規則**: 若 `dimensions` 包含 "Segment_Category_Name" (數據鎖定/受眾)，**請自動加入** "Campaign_Name" 到 `dimensions` 中。
+     - *原因*: 受眾設定通常是針對特定活動的，若不顯示活動名稱，會導致表格中出現重複的格式行，使用者無法區分差異。
+     - *例外*: 若使用者明確要求 "匯總" 或 "不分活動"，則可忽略此規則。
 
 ### 3. 過濾條件與限制 (Filters & Limits)
 - **品牌/產品/專案名稱**：專有名詞 -> `ambiguous_terms` (待確認)。
