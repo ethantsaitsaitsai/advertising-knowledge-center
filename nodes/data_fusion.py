@@ -319,25 +319,53 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if seg_col and seg_col in final_df.columns and seg_col not in cols_to_keep:
         cols_to_keep.append(seg_col)
 
-    # C. Explicit Metrics (Budget, Count, Price) - from analysis_needs ideally, or heuristic
-    # Heuristic: Keep columns that look like "Money" or "Count" provided by MySQL
-    target_metrics_keywords = ['budget', 'price', 'cost', 'amount', 'count', 'campaign_count', 'insertion_count']
-    for col in final_df.columns:
-        if col not in cols_to_keep:
-             if any(k in col.lower() for k in target_metrics_keywords):
-                cols_to_keep.append(col)
+    # C. Explicit Metrics (Budget, Count, Price)
+    # Only keep metrics that were actually requested in 'metrics' or are essential summaries
+    requested_metrics_lower = [m.lower() for m in analysis_needs.get('metrics', [])]
+    
+    # Map specific requested metrics to DataFrame columns (loose matching)
+    metric_map = {
+        'budget_sum': ['budget', 'budget_sum'],
+        'campaign_count': ['campaign_count', 'count'],
+        'adprice_sum': ['price', 'adprice_sum', 'uniprice'],
+        'impression_sum': ['impression', 'total_impressions', 'impressions'],
+        'click_sum': ['click', 'total_clicks', 'clicks'],
+        'view3s_sum': ['view3s', 'views_3s'],
+        'q100_sum': ['q100', 'views_100']
+    }
 
-    # D. Calculated KPIs (CTR, VTR, ER)
-    for kpi in ['CTR', 'VTR', 'ER']:
-        if kpi in final_df.columns:
-            # Conditional Drop: If VTR is all 0, don't keep it
-            if kpi == 'VTR' and (final_df[kpi] == 0).all():
-                continue
-            cols_to_keep.append(kpi)
+    for req_m in requested_metrics_lower:
+        candidates = metric_map.get(req_m, [req_m])
+        for cand in candidates:
+            # Find matching column
+            match = next((c for c in final_df.columns if cand in c.lower()), None)
+            if match and match not in cols_to_keep:
+                cols_to_keep.append(match)
+                
+    # Always keep Budget if strictly aggregating Total/Overview to avoid empty tables
+    if not cols_to_keep: 
+         match = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+         if match: cols_to_keep.append(match)
 
-    # Apply Selection
-    final_df = final_df[cols_to_keep]
+    # D. Calculated KPIs (CTR, VTR, ER) - Only keep if requested or standard summary
+    # If user specifically asked for CTR, keep it. If 'metrics' is empty (Overview), keep standard ones.
+    kpi_whitelist = ['CTR', 'VTR', 'ER']
+    if requested_metrics_lower:
+        # Check if calculated metrics were requested (e.g. 'ctr_calc')
+        if 'ctr_calc' in requested_metrics_lower and 'CTR' in final_df.columns: cols_to_keep.append('CTR')
+        if 'vtr_calc' in requested_metrics_lower and 'VTR' in final_df.columns: cols_to_keep.append('VTR')
+        if 'er_calc' in requested_metrics_lower and 'ER' in final_df.columns: cols_to_keep.append('ER')
+    else:
+        # Default Overview: Keep all valid KPIs
+        for kpi in kpi_whitelist:
+            if kpi in final_df.columns:
+                 if kpi == 'VTR' and (final_df[kpi] == 0).all(): continue
+                 cols_to_keep.append(kpi)
 
+    # Apply Selection - But ensure we don't return empty dataframe if logic fails
+    if cols_to_keep:
+        final_df = final_df[cols_to_keep]
+    
     # 7. Final Formatting (Integer for Budget)
     for col in final_df.columns:
         if 'budget' in col.lower() and pd.api.types.is_numeric_dtype(final_df[col]):

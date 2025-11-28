@@ -33,6 +33,7 @@ SLOT_MANAGER_PROMPT = """
    - "各活動"、"分案件"、"活動名稱" -> `dimensions: ["Campaign_Name"]` (對應 `cue_lists.campaign_name`)
    - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
    - "數據鎖定"、"受眾類別" -> `dimensions: ["Segment_Category_Name"]`
+   - "關鍵字"、"Keyword" -> `dimensions: ["Keyword"]`
    - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
    - "總覽"、"Total" -> `dimensions: []` (不分組)
 

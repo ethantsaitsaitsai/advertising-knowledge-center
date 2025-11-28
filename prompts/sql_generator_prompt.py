@@ -70,6 +70,7 @@ SQL_GENERATOR_PROMPT = """
 * **路徑**: `one_campaigns` -> `pre_campaign` -> `campaign_target_pids` -> `target_segments` -> `segment_categories`
 * **關鍵欄位**:
     * `target_segments.name`: 受眾名稱。
+    * `target_segments.data_value`: **關鍵字內容** (當 `data_source='keyword'` 時)。
     * `segment_categories.name`: 受眾類別。
 
 # 任務目標
@@ -99,6 +100,7 @@ SQL_GENERATOR_PROMPT = """
 * "Industry" -> `pre_campaign_categories`.`name` AS Industry
 * "Ad_Format" -> `ad_format_types`.`title` AS Ad_Format
 * "Segment_Category_Name" -> `segment_categories`.`name` AS Segment_Category
+* "Keyword" -> `target_segments`.`data_value` AS Keyword
 * "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')` AS Date_Month
 
 # 核心查詢邏輯 (Core Query Logic) - CRITICAL
@@ -108,7 +110,6 @@ SQL_GENERATOR_PROMPT = """
 1.  `one_campaigns.id` AS `cmpid`
 2.  `one_campaigns.start_date` AS `start_date`
 3.  `one_campaigns.end_date` AS `end_date`
-4.  **若查詢涉及「廣告格式」相關資訊，則必須包含 `ad_format_types.id` AS `ad_format_type_id`**
 
 
 ### **規則二：JOIN 策略 (The Most Important Part)**
@@ -144,7 +145,7 @@ LEFT JOIN ad_format_types ON cue_list_ad_formats.ad_format_type_id = ad_format_t
 *   **注意**: 當使用者需求與「廣告格式」相關時，除了 `ad_format_types.title`，你還應該 `SELECT ad_format_types.id AS ad_format_type_id`。
 
 
-#### 受眾路徑 (Audience Path - 當過濾條件包含 `target_segments` 或 "Segment_Category_Name" 維度時追加):
+#### 受眾路徑 (Audience Path - 當過濾條件包含 `target_segments` 或 "Segment_Category_Name" 或 "Keyword" 維度時追加):
 ```sql
 JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
 JOIN campaign_target_pids ON pre_campaign.id = campaign_target_pids.source_id AND \
@@ -165,14 +166,18 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
   - Input: `dimensions: ["Ad_Format", "Segment_Category_Name", "Campaign_Name"]`
   - Correct SQL Partial:
     ```sql
-    SELECT 
-      ..., 
+    SELECT
+      ...,
       `ad_format_types`.`title` AS `Ad_Format`,
       `segment_categories`.`name` AS `Segment_Category`,
       `cue_lists`.`campaign_name` AS `Campaign_Name`,
       ...
     GROUP BY ..., `ad_format_types`.`title`, `segment_categories`.`name`, `cue_lists`.`campaign_name`
     ```
+
+### **規則三：關鍵字查詢專屬規則 (Keyword Specific Rule)**
+*   若查詢包含 "Keyword" 維度，**必須**在 `WHERE` 子句中加入 `AND target_segments.data_source = 'keyword'`。
+    *   *原因*: `target_segments` 表混合了多種受眾類型，只有 `data_source='keyword'` 的資料才是關鍵字。
 
 ### 安全與格式限制
 1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
