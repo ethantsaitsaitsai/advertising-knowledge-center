@@ -257,8 +257,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         for c in concat_cols:
             agg_dict[c] = join_unique
             
-        final_df = merged_df.groupby(group_cols).agg(agg_dict).reset_index()
-        debug_logs.append(f"Mode: Group By {group_cols}")
+        if not agg_dict:
+            # 如果沒有需要聚合的指標 (agg_dict 為空)，直接回傳去重後的 Dimensions
+            final_df = merged_df[group_cols].drop_duplicates().reset_index(drop=True)
+            debug_logs.append(f"Mode: Group By {group_cols} (No Metrics)")
+        else:
+            final_df = merged_df.groupby(group_cols).agg(agg_dict).reset_index()
+            debug_logs.append(f"Mode: Group By {group_cols}")
 
     # 5. 重算衍生指標 (Derived Metrics Calculation) - Moved UP
     # Identify columns flexibly using a helper function

@@ -16,9 +16,10 @@ SLOT_MANAGER_PROMPT = """
 
 # 效能與安全規則 (Performance & Safety Rules)
 1. **強制日期檢查 (Mandatory Date Check)**:
-   - 若 `analysis_needs` 包含任何 ClickHouse 成效指標 (如 `Impression_Sum`, `Click_Sum`, `CTR_Calc`, `CPC_Calc`)，\
-    且`extracted_filters.date_range` 為空，**必須** 將 `"date_range"` 加入 `missing_slots` 列表。
-   - *原因*: ClickHouse 的查詢**必須**包含日期範圍，以避免全表掃描導致效能問題。
+   - 若查詢意圖為 `data_query` (即包含 `metrics` 或 `dimensions`)，且 `extracted_filters.date_range` 為空，**必須** 將 `"date_range"` 加入 `missing_slots` 列表。
+   - **注意**: 「總覽」(Overview) **不是** 例外！若使用者只說「總覽」，仍須追問日期。
+   - **例外**: 只有當使用者明確提到「全部時間」、「所有歷史」、「YTD (今年以來)」或「累積」時，才允許日期為空。
+   - *原因*: 避免全表掃描，並確保分析結果具有時效性 (Recency)。
 
 # 核心任務：區分「過濾實體」與「分析維度」
 你必須嚴格區分使用者提到的詞彙是「要找的對象 (WHERE)」還是「要看的數據 (SELECT)」。
