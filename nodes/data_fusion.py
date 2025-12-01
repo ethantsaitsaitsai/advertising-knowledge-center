@@ -366,6 +366,47 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if cols_to_keep:
         final_df = final_df[cols_to_keep]
     
+    # ============================================================
+    # 6.5 排序 (Sorting Logic) - Restore intended sort order
+    # ============================================================
+    calc_type = analysis_needs.get('calculation_type', 'Total')
+    
+    if calc_type == 'Ranking':
+        # Sort by the first requested metric (or Budget if none specified)
+        sort_col = None
+        if requested_metrics_lower:
+            # Try to find the column name in final_df that matches the first requested metric
+            first_req = requested_metrics_lower[0]
+            
+            # Use our metric map logic again or just search
+            # 1. Check metric_map
+            candidates = metric_map.get(first_req, [first_req])
+            # 2. Check calculated metrics
+            if 'ctr' in first_req: candidates = ['CTR']
+            if 'vtr' in first_req: candidates = ['VTR']
+            if 'er' in first_req: candidates = ['ER']
+            
+            for cand in candidates:
+                match = next((c for c in final_df.columns if cand.lower() in c.lower()), None)
+                if match:
+                    sort_col = match
+                    break
+        
+        # Fallback to Budget
+        if not sort_col:
+            sort_col = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+            
+        if sort_col:
+            debug_logs.append(f"Sorting by {sort_col} (Descending) for Ranking")
+            final_df = final_df.sort_values(by=sort_col, ascending=False)
+            
+    elif calc_type == 'Trend':
+        # Sort by Date dimension
+        date_col = next((c for c in final_df.columns if 'date' in c.lower() or 'month' in c.lower()), None)
+        if date_col:
+            debug_logs.append(f"Sorting by {date_col} (Ascending) for Trend")
+            final_df = final_df.sort_values(by=date_col, ascending=True)
+
     # 7. Final Formatting (Integer for Budget)
     for col in final_df.columns:
         if 'budget' in col.lower() and pd.api.types.is_numeric_dtype(final_df[col]):
