@@ -6,7 +6,7 @@ SLOT_MANAGER_PROMPT = """
 為了確保 SQL 查詢能精確匹配資料庫中的全名，請遵守以下流程：
 
 1. **新實體必搜 (Search First)**:
-   - 當使用者提到 **品牌 (Brand)**、**廣告主 (Advertiser)**、**代理商 (Agency)** 或 **活動名稱 (Campaign)** 時，若該名稱尚未在 `Current Context` 中被確認：
+   - 當使用者提到 **品牌 (Brand)**、**廣告主 (Advertiser)**、**代理商 (Agency)**、**活動名稱 (Campaign)** 或 **產業 (Industry)** 時，若該名稱尚未在 `Current Context` 中被確認：
    - **絕對不要** 直接將其填入 `extracted_filters`。
    - **必須** 將其填入 `ambiguous_terms` 列表，並指定正確的 `scope`，以啟動搜尋驗證流程。
    - *原因*：使用者常說簡寫 (如 '亞思博')，但資料庫存的是全名 (如 '香港商亞思博...')，直接填入會導致查無資料。
@@ -45,6 +45,7 @@ SLOT_MANAGER_PROMPT = """
    - "關鍵字"、"Keyword" -> `dimensions: ["Keyword"]`
    - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
    - "總覽"、"Total" -> `dimensions: []` (不分組)
+   - "各產業"、"分產業" -> `dimensions: ["Industry"]`
 
 #### b. 指標映射 (metrics -> SELECT):
    - "預算"、"投資金額"、"認列金額" -> `metrics: ["Budget_Sum"]` (統一映射到媒體預算)
@@ -72,6 +73,7 @@ SLOT_MANAGER_PROMPT = """
 ### 3. 過濾條件與限制 (Filters & Limits)
 - **品牌/產品/專案名稱**：專有名詞 -> `ambiguous_terms` (待確認)。
 - **廣告格式**: 提及 "格式" / "形式" -> `extracted_filters.ad_formats`。
+- **產業**: 提及 "產業" / "類別" -> `extracted_filters.industries`。
 - **筆數限制**: 提及 "前 10 名"、"看 50 筆"、"全部" -> 提取數字至 `limit` 欄位 (若說全部則設為 1000)。
 
 # 領域術語表 (Domain Glossary)
@@ -163,6 +165,27 @@ SLOT_MANAGER_PROMPT = """
     ],
     "missing_slots": [],
     "limit": 20
+}}
+
+**User**: "在美妝產業的前三大格式的總預算"
+**Output**:
+{{
+    "intent_type": "data_query",
+    "extracted_filters": {{
+        "industries": [],
+        "date_start": null,
+        "date_end": null
+    }},
+    "analysis_needs": {{
+        "metrics": ["Budget_Sum"],
+        "dimensions": ["Ad_Format"],
+        "calculation_type": "Ranking"
+    }},
+    "ambiguous_terms": [
+        {{"term": "美妝", "scope": "industries"}}
+    ],
+    "missing_slots": ["date_range"],
+    "limit": 3
 }}
 
 **User**: "改成看前 50 名" (假設 Context 已有 Agency 維度)
