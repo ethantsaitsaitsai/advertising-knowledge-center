@@ -96,7 +96,7 @@ class RagService:
                 # query_points returns a QueryResponse, we need .points
                 response = self.client.query_points(
                     collection_name=self.collection_name,
-                    query=embedding, # Note: parameter is 'query' not 'query_vector'
+                    query=embedding,  # Note: parameter is 'query' not 'query_vector'
                     limit=top_k,
                     score_threshold=score_threshold
                 )

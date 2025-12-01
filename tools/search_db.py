@@ -2,6 +2,7 @@ from typing import List
 from langchain.tools import tool
 from utils.rag_service import RagService
 
+
 @tool
 def search_ambiguous_term(keyword: str) -> List[dict]:
     """

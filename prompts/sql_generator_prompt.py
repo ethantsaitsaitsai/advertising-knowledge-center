@@ -83,8 +83,8 @@ SQL_GENERATOR_PROMPT = """
 你**只能**處理以下屬於 MySQL 的指標。
 
 ### ✅ 允許的指標:
-* `Budget_Sum` -> `SUM(cue_list_budgets.budget)` (**必須 JOIN 預算表**)
-* `AdPrice_Sum` -> `SUM(cue_list_budgets.uniprice)`
+* `Budget_Sum` -> `budget_agg.budget_sum` (**必須直接引用，不得再次 SUM**)。
+* `AdPrice_Sum` -> `SUM(cue_list_budgets.uniprice)` (若不涉及 Fan-out 風險) 或類似處理。
 * `Insertion_Count` -> `COUNT(one_campaigns.id)`
 * `Campaign_Count` -> `COUNT(DISTINCT one_campaigns.id)`
 
@@ -123,14 +123,24 @@ JOIN clients ON cue_lists.client_id = clients.id
 LEFT JOIN agency ON cue_lists.agency_id = agency.id
 ```
 
-#### 預算與計價單位路徑 (Budget & Pricing Unit Path - 當查詢包含 `Budget_Sum`, `AdPrice_Sum`, 或 "廣告計價單位" 維度時追加):
+#### 預算與計價單位路徑 (Budget & Pricing Unit Path) - **嚴格禁止直接 JOIN `cue_list_budgets`**
+**警告**: 當查詢同時涉及「預算」與「受眾/關鍵字/一對多關係」時，直接 JOIN `cue_list_budgets` 會導致預算重複計算 (Fan-out)。
+**你必須使用 Subquery 先行聚合預算**。
+
+**正確的預算 JOIN Pattern**:
 ```sql
--- 此路徑是連續的，只有當需要相關維度或指標時才加入
 JOIN cue_list_product_lines ON cue_lists.id = cue_list_product_lines.cue_list_id
 JOIN cue_list_ad_formats ON cue_list_product_lines.id = cue_list_ad_formats.cue_list_product_line_id
-LEFT JOIN cue_list_budgets ON cue_list_ad_formats.id = cue_list_budgets.cue_list_ad_format_id
-LEFT JOIN pricing_models ON cue_list_budgets.pricing_model_id = pricing_models.id
+-- 使用 Subquery 預先聚合預算
+LEFT JOIN (
+    SELECT cue_list_ad_format_id, SUM(budget) AS budget_sum
+    FROM cue_list_budgets
+    GROUP BY cue_list_ad_format_id
+) AS budget_agg ON cue_list_ad_formats.id = budget_agg.cue_list_ad_format_id
+-- 若需要計價單位，再從這裡延伸
+LEFT JOIN pricing_models ON ...
 ```
+*   **指標選取**: 取用預算時，請使用 `budget_agg.budget_sum`，**並將其加入 GROUP BY 子句**。**嚴禁在主查詢中對此欄位使用 SUM()**。
 
 #### 產業路徑 (Industry Path - 當查詢包含 "Industry" 維度時追加):
 ```sql
