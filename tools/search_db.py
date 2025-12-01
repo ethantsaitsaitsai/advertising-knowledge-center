@@ -13,9 +13,12 @@ def search_ambiguous_term(keyword: str) -> List[dict]:
     
     candidates = []
     for res in results:
+        # The rag_service returns keys: value, source, table, filter_type, score
         candidates.append({
             "value": res["value"],
-            "source": res["source_col"], # Map to 'source' to match entity_search_node expectation
+            # Map the 'source' from rag_service directly to 'source' here.
+            # In rag_service.py, the key is 'source' (mapped from payload['column']).
+            "source": res.get("source", res.get("source_col")), 
             "table": res["table"],
             "filter_type": res["filter_type"],
             "score": res["score"]
