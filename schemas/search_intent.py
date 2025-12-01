@@ -1,11 +1,22 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Union
 
 
 class DateRange(BaseModel):
     """明確的時間區間物件，避免 List 索引錯誤"""
     start: Optional[str] = Field(None, description="開始日期 YYYY-MM-DD")
     end: Optional[str] = Field(None, description="結束日期 YYYY-MM-DD")
+
+
+class ScopedTerm(BaseModel):
+    """
+    帶有搜尋範圍的模糊詞彙。
+    讓 Agent 知道這個詞應該在哪個範圍內搜尋。
+    """
+    term: str = Field(..., description="模糊詞彙本身，例如 '亞思博'")
+    scope: Literal["all", "brands", "advertisers", "agencies", "campaign_names", "industries", "keywords"] = Field(
+        "all", description="搜尋範圍。若無法確定或通用，則填 'all'。"
+    )
 
 
 class AnalysisNeeds(BaseModel):
@@ -71,5 +82,8 @@ class SearchIntent(BaseModel):
 
     # 4. 狀態控制
     missing_info: List[str] = Field(default_factory=list, description="缺少且必須追問的欄位，例如 ['date_range']")
-    ambiguous_terms: List[str] = Field(default_factory=list, description="模糊不清、需要由 User 確認的詞彙")
+    
+    # Update: ambiguous_terms now uses ScopedTerm
+    ambiguous_terms: List[ScopedTerm] = Field(default_factory=list, description="模糊不清、需要由 User 確認的詞彙及其搜尋範圍")
+    
     limit: int = Field(20, description="資料筆數限制 (預設 20)")

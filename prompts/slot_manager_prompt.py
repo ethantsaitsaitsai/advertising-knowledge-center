@@ -8,10 +8,19 @@ SLOT_MANAGER_PROMPT = """
 1. **新實體必搜 (Search First)**:
    - 當使用者提到 **品牌 (Brand)**、**廣告主 (Advertiser)**、**代理商 (Agency)** 或 **活動名稱 (Campaign)** 時，若該名稱尚未在 `Current Context` 中被確認：
    - **絕對不要** 直接將其填入 `extracted_filters`。
-   - **必須** 將其填入 `ambiguous_terms` 列表，以啟動搜尋驗證流程。
+   - **必須** 將其填入 `ambiguous_terms` 列表，並指定正確的 `scope`，以啟動搜尋驗證流程。
    - *原因*：使用者常說簡寫 (如 '亞思博')，但資料庫存的是全名 (如 '香港商亞思博...')，直接填入會導致查無資料。
 
-2. **例外情況 (繼承)**:
+2. **Scope (搜尋範圍) 判斷**:
+   - 若使用者明確指出實體類型，請填入對應的 `scope`：
+     - "代理商是亞思博" -> `term: "亞思博", scope: "agencies"`
+     - "品牌找 Nike" -> `term: "Nike", scope: "brands"`
+     - "活動叫春季特賣" -> `term: "春季特賣", scope: "campaign_names"`
+     - "產業是金融" -> `term: "金融", scope: "industries"`
+     - "針對 25歲" (受眾/關鍵字) -> `term: "25歲", scope: "keywords"`
+   - 若無法確定，則填入 `scope: "all"`。
+
+3. **例外情況 (繼承)**:
    - 只有當該值是從 `Current Context` 繼承而來（代表之前已經搜尋並確認過了），才可以直接留在 `extracted_filters` 中。
 
 # 效能與安全規則 (Performance & Safety Rules)
@@ -104,7 +113,9 @@ SLOT_MANAGER_PROMPT = """
         "calculation_type": "Total",
         "display_segment_category": True
     }},
-    "ambiguous_terms": ["悠遊卡"],
+    "ambiguous_terms": [
+        {{"term": "悠遊卡", "scope": "brands"}}
+    ],
     "missing_slots": [],
     "limit": 20
 }}
@@ -125,12 +136,14 @@ SLOT_MANAGER_PROMPT = """
         "dimensions": ["Ad_Format"],
         "calculation_type": "Total"
     }},
-    "ambiguous_terms": ["悠遊卡"],
+    "ambiguous_terms": [
+        {{"term": "悠遊卡", "scope": "brands"}}
+    ],
     "missing_slots": ["date_range"],
     "limit": 20
 }}
 
-**User**: "代理商 YTD 認列金額排名" (假設 Context 為空)
+**User**: "代理商 YTD 認列金額排名，包含台北、亞思博"
 **Output**:
 {{
     "intent_type": "data_query",
@@ -144,10 +157,14 @@ SLOT_MANAGER_PROMPT = """
         "dimensions": ["Agency"],
         "calculation_type": "Ranking"
     }},
-    "ambiguous_terms": [],
+    "ambiguous_terms": [
+        {{"term": "台北", "scope": "agencies"}},
+        {{"term": "亞思博", "scope": "agencies"}}
+    ],
     "missing_slots": [],
     "limit": 20
 }}
+
 **User**: "改成看前 50 名" (假設 Context 已有 Agency 維度)
 **Output**:
 {{

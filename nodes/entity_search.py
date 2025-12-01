@@ -17,11 +17,25 @@ def entity_search_node(state: AgentState) -> Dict[str, Any]:
     seen_candidates = set()
 
     # Iterate over all ambiguous terms provided by the slot_manager
-    for term in ambiguous_terms:
-        print(f"Searching for ambiguous term '{term}' across multiple columns...")
-        # The new search_ambiguous_term tool doesn't need column_name
-        # It returns a list of dicts: [{'value': 'FoundTerm', 'source': 'column_name'}, ...]
-        results = search_ambiguous_term.invoke({"keyword": term})
+    for item in ambiguous_terms:
+        # Determine term and scope based on item type (str or ScopedTerm/dict)
+        if isinstance(item, str):
+            term = item
+            scope = None
+        elif hasattr(item, "term") and hasattr(item, "scope"):
+            term = item.term
+            scope = item.scope
+        elif isinstance(item, dict):
+            term = item.get("term")
+            scope = item.get("scope")
+        else:
+            continue # Skip unknown types
+
+        print(f"Searching for ambiguous term '{term}' with scope '{scope}'...")
+        
+        # Invoke the tool with both keyword and type_filter
+        results = search_ambiguous_term.invoke({"keyword": term, "type_filter": scope})
+        
         for candidate in results:
             # Create a unique identifier for the candidate (e.g., a tuple of its values)
             # This prevents adding the exact same item from different searches

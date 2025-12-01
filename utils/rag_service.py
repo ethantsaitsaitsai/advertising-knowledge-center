@@ -1,8 +1,9 @@
 import re
 import os
 import traceback
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
+from qdrant_client.http import models as qdrant_models
 from sentence_transformers import SentenceTransformer
 from httpx import ConnectTimeout, ConnectError
 from dotenv import load_dotenv
@@ -27,7 +28,6 @@ class RagService:
         self.host = os.getenv("QDRANT_HOST")
         self.port = int(os.getenv("QDRANT_PORT"))
         self.collection_name = os.getenv("QDRANT_COLLECTION_NAME")
-
         print(f"🔌 Initializing Qdrant connection to {self.host}:{self.port}...")
         try:
             self.client = QdrantClient(host=self.host, port=self.port, timeout=10)
@@ -67,9 +67,14 @@ class RagService:
         text = text.strip()
         return text
 
-    def search(self, query: str, top_k: int = 5, score_threshold: float = 0.7) -> List[Dict[str, Any]]:
+    def search(self, query: str, top_k: int = 20, score_threshold: float = 0.90, type_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Search for similar entities in Qdrant.
+        Search for similar entities in Qdrant with optional type filtering.
+        Args:
+            query: The search text
+            top_k: Max candidates to check (default increased to 20 to capture all potential matches)
+            score_threshold: Minimum similarity score (default 0.90 for even higher precision)
+            type_filter: Optional filter for 'type' field
         """
         if not self._is_connected or self.client is None:
             print("⚠️ Skipping RAG search due to connection failure.")
@@ -79,26 +84,39 @@ class RagService:
         if not cleaned_query:
             cleaned_query = query
 
-        print(f"🔍 RAG Search: '{query}' -> Cleaned: '{cleaned_query}'")
+        print(f"🔍 RAG Search: '{query}' (Cleaned: '{cleaned_query}') | Filter: {type_filter} | Threshold: {score_threshold}")
 
         try:
             embedding = self.model.encode(cleaned_query).tolist()
 
-            # Use query_points instead of search if search is missing
+            # Construct Filter if type_filter is provided
+            query_filter = None
+            if type_filter and type_filter != "all":
+                query_filter = qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="type",
+                            match=qdrant_models.MatchValue(value=type_filter)
+                        )
+                    ]
+                )
+
+            # Execute Search
             if hasattr(self.client, 'search'):
                 results = self.client.search(
                     collection_name=self.collection_name,
                     query_vector=embedding,
                     limit=top_k,
-                    score_threshold=score_threshold
+                    score_threshold=score_threshold,
+                    query_filter=query_filter
                 )
             elif hasattr(self.client, 'query_points'):
-                # query_points returns a QueryResponse, we need .points
                 response = self.client.query_points(
                     collection_name=self.collection_name,
-                    query=embedding,  # Note: parameter is 'query' not 'query_vector'
+                    query=embedding,
                     limit=top_k,
-                    score_threshold=score_threshold
+                    score_threshold=score_threshold,
+                    query_filter=query_filter
                 )
                 results = response.points
             else:
@@ -116,6 +134,7 @@ class RagService:
                     "score": hit.score
                 })
 
+            print(f"✅ Found {len(formatted_results)} results above threshold {score_threshold}")
             return formatted_results
         except Exception as e:
             print(f"❌ RAG Search failed: {e}")

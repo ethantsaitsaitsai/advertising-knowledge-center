@@ -1,6 +1,6 @@
 from schemas.state import AgentState
 from config.llm import llm
-from schemas.search_intent import SearchIntent
+from schemas.search_intent import SearchIntent, ScopedTerm
 from prompts.slot_manager_prompt import SLOT_MANAGER_PROMPT
 
 
@@ -33,11 +33,27 @@ def slot_manager_node(state: AgentState):
         )
     )
 
-    # 提取出的 Brand 必須被視為 "潛在模糊詞" 去做搜尋驗證。
-    potential_search_terms = set(result.ambiguous_terms)
+    # Process ambiguous terms and brands with deduplication
+    # Use a dictionary keyed by (term, scope) to handle deduplication
+    unique_terms_map = {}
+
+    # 1. Add explicitly detected ambiguous terms
+    if result.ambiguous_terms:
+        for term_obj in result.ambiguous_terms:
+            # term_obj is ScopedTerm
+            key = (term_obj.term, term_obj.scope)
+            unique_terms_map[key] = term_obj
+
+    # 2. Convert explicitly extracted brands into ScopedTerms
+    # We treat extracted brands as needing verification (scope='brands')
     if result.brands:
-        potential_search_terms.update(result.brands)
-    final_ambiguous_terms = list(potential_search_terms)
+        for brand in result.brands:
+            key = (brand, "brands")
+            if key not in unique_terms_map:
+                unique_terms_map[key] = ScopedTerm(term=brand, scope="brands")
+
+    # Convert back to list
+    final_ambiguous_terms = list(unique_terms_map.values())
 
     # --- [BEGIN] Hard-coded Post-processing Block ---
     # 解決 LLM 在複雜 Prompt 下行為不穩定的問題 (例如：漏加維度, 重複維度)
