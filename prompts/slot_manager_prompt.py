@@ -11,14 +11,15 @@ SLOT_MANAGER_PROMPT = """
    - **必須** 將其填入 `ambiguous_terms` 列表，並指定正確的 `scope`，以啟動搜尋驗證流程。
    - *原因*：使用者常說簡寫 (如 '亞思博')，但資料庫存的是全名 (如 '香港商亞思博...')，直接填入會導致查無資料。
 
-2. **Scope (搜尋範圍) 判斷**:
-   - 若使用者明確指出實體類型，請填入對應的 `scope`：
-     - "代理商是亞思博" -> `term: "亞思博", scope: "agencies"`
-     - "品牌找 Nike" -> `term: "Nike", scope: "brands"`
-     - "活動叫春季特賣" -> `term: "春季特賣", scope: "campaign_names"`
-     - "產業是金融" -> `term: "金融", scope: "industries"`
-     - "針對 25歲" (受眾/關鍵字) -> `term: "25歲", scope: "keywords"`
-   - 若無法確定，則填入 `scope: "all"`。
+2. **Scope (搜尋範圍) 判斷 - 預設寬鬆原則 (Default to All)**:
+   - **明確指定時**: 若使用者使用了明確的修飾詞，才鎖定 Scope：
+     - "代理商是亞思博" -> `scope: "agencies"`
+     - "品牌找 Nike" -> `scope: "brands"`
+     - "活動叫春季特賣" -> `scope: "campaign_names"`
+     - "產業是金融" -> `scope: "industries"`
+     - "針對 25歲" (受眾/關鍵字) -> `scope: "keywords"`
+   - **未指定/模糊時**: 對於單純的名詞（如「悠遊卡」、「統一」、「三星」），**請優先填入 `scope: "all"`**。
+     - *原因*：這些詞可能同時出現在品牌、廣告主或活動名稱中，過早鎖定會導致漏找其他欄位的資料。
 
 3. **例外情況 (繼承)**:
    - 只有當該值是從 `Current Context` 繼承而來（代表之前已經搜尋並確認過了），才可以直接留在 `extracted_filters` 中。
@@ -39,7 +40,7 @@ SLOT_MANAGER_PROMPT = """
 
 #### a. 維度識別 (dimensions -> GROUP BY):
    - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]` (對應 `agency.agencyname`)
-   - "各活動"、"分案件"、"活動名稱" -> `dimensions: ["Campaign_Name"]` (對應 `cue_lists.campaign_name`)
+   - "各活動"、"分案件"、"活動名稱"、"所有 Campaign" -> `dimensions: ["Campaign_Name"]` (對應 `cue_lists.campaign_name`)
    - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
    - "數據鎖定"、"受眾類別" -> `dimensions: ["Segment_Category_Name"]`
    - "關鍵字"、"Keyword" -> `dimensions: ["Keyword"]`
@@ -92,9 +93,11 @@ SLOT_MANAGER_PROMPT = """
 
 # 狀態繼承與更新規則 (Context Inheritance) - CRITICAL
 你將接收「當前已鎖定的過濾條件 (Current Context)」。
-1. **繼承 (Inherit)**: 如果使用者的新指令（如「改成 50 筆」）沒有提到品牌或日期，**必須保留** Context 中的舊值。
-2. **僅更新 (Update)**: 只更新使用者明確提到的欄位 (如 `limit`)。
-3. **不要重置**: 嚴禁因為使用者沒提品牌就將 `brands` 設為空列表，除非使用者明確說「清除條件」。
+1. **繼承 (Inherit)**: 預設情況下，**必須保留** Context 中的所有 `extracted_filters` (brands, advertisers, date_range 等)。
+2. **僅更新 (Update)**:
+   - 若使用者說「改查...」、「再查...」，通常意指**修改維度 (Dimensions)** 或 **指標 (Metrics)**，而非清除過濾條件。
+   - 例如：Context 已鎖定 "悠遊卡"，使用者說 "改查所有活動"，意思是 "查詢悠遊卡旗下的所有活動 (Group By Campaign)"，而非 "查詢全資料庫的所有活動"。
+3. **清除 (Reset)**: 只有當使用者明確說「清除條件」、「重來」、「查全部品牌」時，才清空 `extracted_filters`。
 
 # 範例 (Few-Shot Learning)
 
@@ -116,7 +119,7 @@ SLOT_MANAGER_PROMPT = """
         "display_segment_category": True
     }},
     "ambiguous_terms": [
-        {{"term": "悠遊卡", "scope": "brands"}}
+        {{"term": "悠遊卡", "scope": "all"}}
     ],
     "missing_slots": [],
     "limit": 20
@@ -139,7 +142,7 @@ SLOT_MANAGER_PROMPT = """
         "calculation_type": "Total"
     }},
     "ambiguous_terms": [
-        {{"term": "悠遊卡", "scope": "brands"}}
+        {{"term": "悠遊卡", "scope": "all"}}
     ],
     "missing_slots": ["date_range"],
     "limit": 20
@@ -188,17 +191,21 @@ SLOT_MANAGER_PROMPT = """
     "limit": 3
 }}
 
-**User**: "改成看前 50 名" (假設 Context 已有 Agency 維度)
+**User**: "那改查所有 Campaign Names" (假設 Context 已鎖定 Advertiser="悠遊卡股份有限公司", Date="2025")
 **Output**:
 {{
     "intent_type": "data_query",
     "extracted_filters": {{
-        ... (保留 Context 中的值)
+        "advertisers": ["悠遊卡股份有限公司"],
+        "date_start": "2025-01-01",
+        "date_end": "2025-12-31"
     }},
     "analysis_needs": {{
-        ... (保留 Context 中的值)
+        "metrics": ["Impression_Sum", "Click_Sum", "CTR_Calc"],
+        "dimensions": ["Campaign_Name"],
+        "calculation_type": "Total"
     }},
-    "limit": 50,
+    "limit": 1000,
     "ambiguous_terms": [],
     "missing_slots": []
 }}

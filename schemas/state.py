@@ -20,6 +20,7 @@ class AgentState(TypedDict):
         error_message: 如果執行失敗的報錯
         expecting_user_clarification: Whether the agent is currently expecting a clarification response from the user.
         limit: Optional[int], The number of results to limit (e.g., for "Top N" queries)
+        retry_count: Optional[int], To prevent infinite loops in validation/error handling.
     """
     messages: Annotated[List[BaseMessage], operator.add]
     # Improved structure
@@ -43,3 +44,4 @@ class AgentState(TypedDict):
     intent_type: Optional[str]
     final_dataframe: Optional[List[dict]]
     limit: Optional[int] # Add limit to state
+    retry_count: Optional[int] # Add retry count

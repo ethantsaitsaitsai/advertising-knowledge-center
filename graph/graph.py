@@ -91,14 +91,21 @@ def route_after_mysql_execution(state: AgentState) -> Literal["error_handler",
     return "data_fusion"
 
 
-def route_after_ch_validation(state: AgentState) -> Literal["clickhouse_executor", "clickhouse_generator"]:
+def route_after_ch_validation(state: AgentState) -> Literal["clickhouse_executor", "clickhouse_generator", "data_fusion"]:
     """
-    Routes to the executor if ClickHouse SQL is valid, otherwise returns to the generator.
+    Routes to the executor if ClickHouse SQL is valid.
+    If invalid, checks retry count. If retries exceeded, skips CH and goes to Data Fusion.
+    Otherwise, returns to generator for retry.
     """
     if state.get("is_valid_sql"):
         return "clickhouse_executor"
-    else:
-        return "clickhouse_generator"
+    
+    retry_count = state.get("retry_count", 0) or 0
+    if retry_count >= 3:
+        print("❌ ClickHouse SQL validation failed too many times. Skipping ClickHouse.")
+        return "data_fusion"
+        
+    return "clickhouse_generator"
 
 
 def check_clickhouse_error(state: AgentState) -> Literal["clickhouse_error_handler", "data_fusion"]:
@@ -165,7 +172,7 @@ workflow.add_conditional_edges(
     },
 )
 
-# State Updater Routing (Fix: Conditional routing instead of direct edge)
+# State Updater Routing
 workflow.add_conditional_edges(
     "state_updater",
     route_after_state_updater,
@@ -204,7 +211,8 @@ workflow.add_conditional_edges(
     route_after_ch_validation,
     {
         "clickhouse_executor": "clickhouse_executor",
-        "clickhouse_generator": "clickhouse_generator"  # Loop on invalid SQL
+        "clickhouse_generator": "clickhouse_generator",  # Loop on invalid SQL (until retry limit)
+        "data_fusion": "data_fusion" # Escape route if too many retries
     }
 )
 workflow.add_conditional_edges(
