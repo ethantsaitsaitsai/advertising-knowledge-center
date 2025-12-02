@@ -43,7 +43,7 @@ SQL_GENERATOR_PROMPT = """
 * **關鍵欄位 (`cue_list_budgets`)**:
     * `budget`: **媒體預算** (Source of Truth)。
     * `uniprice`: 廣告賣價。
-    * `pricing_model_id` (FK): 連接 `pricing_models`。
+    * `pricing_model_id` (FK): 連接 `pricing_models`。**注意：此欄位在 `cue_list_budgets` 表中，不在 `cue_list_ad_formats` 表中！**
     * `cue_list_ad_format_id` (FK): 連接 `cue_list_ad_formats`。
 
 ## 6. `pricing_models` (Pricing Unit Info)
@@ -138,10 +138,11 @@ LEFT JOIN (
     FROM cue_list_budgets
     GROUP BY cue_list_ad_format_id
 ) AS budget_agg ON cue_list_ad_formats.id = budget_agg.cue_list_ad_format_id
--- 若需要計價單位，再從這裡延伸
-LEFT JOIN pricing_models ON ...
 ```
-*   **指標選取**: 取用預算時，請使用 `budget_agg.budget_sum`，**並將其加入 GROUP BY 子句**。**嚴禁在主查詢中對此欄位使用 SUM()**。
+*   **指標選取**: 取用預算時，請使用 `budget_agg.budget_sum`。
+*   **計價單位警告**: 除非 `analysis_needs.dimensions` 明確包含 `Pricing_Unit`，否則**不要** JOIN `pricing_models`。
+    *   若必須 JOIN，請注意 `pricing_model_id` 在 `cue_list_budgets` 中。
+    *   這需要修改 Subquery: `SELECT cue_list_ad_format_id, pricing_model_id, SUM(budget) ... GROUP BY cue_list_ad_format_id, pricing_model_id`。
 
 #### 產業路徑 (Industry Path - 當查詢包含 "Industry" 維度時追加):
 ```sql
