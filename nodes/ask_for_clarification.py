@@ -12,7 +12,7 @@ ASK_FOR_CLARIFICATION_PROMPT = """
 你是一位友善且精確的數據助理。你的任務是透過與使用者對話，來澄清他模糊的查詢，確保最終的 SQL 查詢是百分之百正確的。
 
 # 情境
-使用者的查詢 "{ambiguous_terms}" 比較模糊。經過資料庫搜尋，我們在不同的欄位中找到了以下幾個相關的可能項目：
+使用者的查詢 "{ambiguous_terms_str}" 比較模糊。經過資料庫搜尋，我們在不同的欄位中找到了以下幾個相關的可能項目：
 
 {formatted_candidates}
 
@@ -25,7 +25,7 @@ ASK_FOR_CLARIFICATION_PROMPT = """
 # 指示
 1.  **優先處理候選項目**：如果 `formatted_candidates` 有內容，請務必清晰地展示給使用者看，並詢問他們想要查詢的是哪一個或哪幾個。
 2.  **引導式提問**：你的問題應該是引導式的，例如：「請問您是指特定專案，還是所有與該品牌相關的資料？」
-3.  **處理缺少資訊**：如果 `missing_slots` 也有內容，請在同一個問句中一併提出。
+3.  **處理缺少資訊**：如果 `missing_slots`  أيضاً有內容，請在同一個問句中一併提出。
 4.  **語言**：請務必使用繁體中文。
 
 # 範例
@@ -43,11 +43,29 @@ def ask_for_clarification_node(state: AgentState) -> Dict[str, Any]:
     by formatting structured candidates and presenting them to the user.
     """
     missing_slots = state.get("missing_slots", [])
-    ambiguous_terms = state.get("ambiguous_terms", [])
+    ambiguous_terms = state.get("ambiguous_terms", []) # List[ScopedTerm] or List[str]
     candidate_values = state.get("candidate_values", [])
+
+    # Format ambiguous terms for display
+    term_strs = []
+    for t in ambiguous_terms:
+        if isinstance(t, str):
+            term_strs.append(f"「{t}")
+        elif hasattr(t, 'term'): # ScopedTerm object
+            term_strs.append(f"「{t.term}")
+        elif isinstance(t, dict): # ScopedTerm as dict
+            term_strs.append(f"「{t.get('term')}")
+            
+    ambiguous_terms_str = ", ".join(term_strs) if term_strs else "不明確的詞彙"
 
     # If no candidates or missing slots, something is wrong, but have a fallback.
     if not candidate_values and not missing_slots:
+        # Fallback: check if we still have ambiguous terms that yielded no candidates
+        if ambiguous_terms_str: # Use the formatted string for check
+             return {
+                "messages": [AIMessage(content=f"關於{ambiguous_terms_str}，我在資料庫中找不到相關資料。請問您是指品牌、代理商還是其他項目？或者您可以提供更準確的名稱。")],
+                "expecting_user_clarification": True,
+            }
         return {
             "messages": [AIMessage(content="我需要更多資訊，但無法確定要問什麼。可以請您提供更多細節嗎？")],
             "expecting_user_clarification": True,
@@ -65,13 +83,16 @@ def ask_for_clarification_node(state: AgentState) -> Dict[str, Any]:
             for cand in candidate_values:
                 # Use a mapping for better display names
                 source_display_map = {
-                    "brand": "品牌",
-                    "advertiser": "品牌廣告主",
-                    "campaign": "廣告案件名稱",
-                    "agency": "代理商",
+                    "brands": "品牌",
+                    "advertisers": "品牌廣告主",
+                    "campaign_names": "廣告案件名稱",
+                    "agencies": "代理商",
+                    "industries": "產業",
+                    "keywords": "關鍵字"
                 }
-                source_display = source_display_map.get(cand['filter_type'],
-                                                        cand['filter_type'].replace("_", " ").title())
+                # Fallback to raw filter_type if not in map
+                ft = cand.get('filter_type', 'unknown')
+                source_display = source_display_map.get(ft, ft.replace("_", " ").title())
                 grouped_candidates[source_display].append(cand['value'])
 
             # Format the grouped candidates into a readable string for the prompt
@@ -85,7 +106,7 @@ def ask_for_clarification_node(state: AgentState) -> Dict[str, Any]:
         prompt = PromptTemplate.from_template(ASK_FOR_CLARIFICATION_PROMPT)
         chain = prompt | llm | StrOutputParser()
         response = chain.invoke({
-            "ambiguous_terms": ", ".join(f"「{t}」" for t in ambiguous_terms),
+            "ambiguous_terms_str": ambiguous_terms_str,
             "formatted_candidates": formatted_candidates_str,
             "missing_slots": ", ".join(missing_slots) if missing_slots else "無",
         })

@@ -45,6 +45,20 @@ def route_after_entity_search(state: AgentState) -> Literal["ask_for_clarificati
     return "sql_generator"
 
 
+def route_after_state_updater(state: AgentState) -> Literal["entity_search", "ask_for_clarification", "sql_generator"]:
+    """
+    Determines the next step after state update.
+    If the user provided new ambiguous terms (e.g. asked a new question), go back to entity search.
+    If there are missing slots, go to clarification.
+    Otherwise, proceed to SQL generation.
+    """
+    if state.get("ambiguous_terms"):
+        return "entity_search"
+    if state.get("missing_slots"):
+        return "ask_for_clarification"
+    return "sql_generator"
+
+
 def route_after_validation(state: AgentState) -> Literal["sql_executor", "sql_generator"]:
     if state.get("is_valid_sql"):
         return "sql_executor"
@@ -151,6 +165,17 @@ workflow.add_conditional_edges(
     },
 )
 
+# State Updater Routing (Fix: Conditional routing instead of direct edge)
+workflow.add_conditional_edges(
+    "state_updater",
+    route_after_state_updater,
+    {
+        "entity_search": "entity_search",
+        "ask_for_clarification": "ask_for_clarification",
+        "sql_generator": "sql_generator",
+    },
+)
+
 # MySQL Validator Routing
 workflow.add_conditional_edges(
     "sql_validator",
@@ -198,7 +223,6 @@ workflow.add_edge("data_fusion", "response_synthesizer")
 
 # Standard Edges
 workflow.add_edge("ask_for_clarification", END)
-workflow.add_edge("state_updater", "sql_generator")
 workflow.add_edge("sql_generator", "sql_validator")
 workflow.add_edge("error_handler", "sql_generator")
 workflow.add_edge("response_synthesizer", END)

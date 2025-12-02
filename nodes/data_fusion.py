@@ -108,33 +108,53 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         debug_logs.append(f"Pre-Aggregated MySQL Rows: {len(df_mysql)}")
         debug_logs.append(f"Pre-Aggregated MySQL Cols: {list(df_mysql.columns)}")
 
-    # Strict MySQL Column Filtering BEFORE Merge with ClickHouse
-    # Only keep 'cmpid', 'seg_col' (if present), numeric columns (Metrics), AND potential Grouping Dimensions.
-    # We MUST NOT drop dimensions like 'Campaign_Name', 'Ad_Format', 'Agency' here, otherwise final grouping fails.
+    # -----------------------------------------------------------
+    # Strict MySQL Column Filtering BEFORE Merge
+    # -----------------------------------------------------------
+    # Get requested dimensions to protect them from filtering
+    raw_analysis_needs = state.get('analysis_needs')
+    if hasattr(raw_analysis_needs, 'model_dump'):
+        analysis_needs = raw_analysis_needs.model_dump()
+    elif hasattr(raw_analysis_needs, 'dict'):
+        analysis_needs = raw_analysis_needs.dict()
+    elif isinstance(raw_analysis_needs, dict):
+        analysis_needs = raw_analysis_needs
+    else:
+        analysis_needs = {}
     
+    requested_dims = analysis_needs.get('dimensions', [])
+    # Simple mapping for protection check (lowercase)
+    dim_protection_list = [d.lower() for d in requested_dims]
+    # Add common aliases
+    if 'campaign_name' in dim_protection_list: dim_protection_list.append('campaign_name')
+    if 'date_month' in dim_protection_list: dim_protection_list.append('date_month')
+    if 'date_year' in dim_protection_list: dim_protection_list.append('date_year')
+
     mysql_cols_to_keep_for_merge = ['cmpid']
     if seg_col and seg_col in df_mysql.columns:
         mysql_cols_to_keep_for_merge.append(seg_col)
     
-    # Identify potential dimensions to keep (String columns that are not in exclude list)
-    # We reuse 'exclude_keywords' from above but make it strict for cleaning
     strict_exclude_keywords = ['start_date', 'end_date', 'schedule_dates', 'id', 'date_month', 'date_year'] 
     
     for col in df_mysql.columns:
         if col in mysql_cols_to_keep_for_merge: continue
-        
         col_lower = col.lower()
-        # 1. If it's a known excluded column, skip
+        
+        # 1. CRITICAL: If column matches a requested dimension, KEEP IT regardless of exclusion list
+        if col_lower in dim_protection_list:
+            mysql_cols_to_keep_for_merge.append(col)
+            continue
+
+        # 2. If it's a known excluded column, skip
         if any(k in col_lower for k in strict_exclude_keywords) and col_lower != 'cmpid':
             continue
             
-        # 2. If it's numeric (Metric), keep it
+        # 3. If it's numeric (Metric), keep it
         if pd.api.types.is_numeric_dtype(df_mysql[col]):
             mysql_cols_to_keep_for_merge.append(col)
             continue
             
-        # 3. If it's a string/object (Dimension), keep it! (Crucial Fix)
-        # This ensures 'Campaign_Name', 'Agency' etc. survive the merge.
+        # 4. If it's a string/object (Dimension), keep it!
         mysql_cols_to_keep_for_merge.append(col)
     
     # Filter df_mysql to only include these essential columns before merging
@@ -154,17 +174,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     debug_logs.append(f"Merged Cols: {list(merged_df.columns)}")
 
     # 4. 二次聚合 (Re-aggregation)
-    # FIX: 直接從 state 讀取 analysis_needs，而不是不存在的 search_intent
-    raw_analysis_needs = state.get('analysis_needs')
-    
-    if hasattr(raw_analysis_needs, 'model_dump'):
-        analysis_needs = raw_analysis_needs.model_dump()
-    elif hasattr(raw_analysis_needs, 'dict'):
-        analysis_needs = raw_analysis_needs.dict()
-    elif isinstance(raw_analysis_needs, dict):
-        analysis_needs = raw_analysis_needs
-    else:
-        analysis_needs = {}
+    # Use analysis_needs loaded above
 
     dimensions = analysis_needs.get('dimensions', [])
     debug_logs.append(f"Intent Dimensions: {dimensions}")
@@ -178,6 +188,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         "Industry": "Industry", 
         "廣告計價單位": "Pricing_Unit",
         "Date_Month": "Date_Month",
+        "Date_Year": "Date_Year", # Added Date_Year
         "Segment_Category_Name": "Segment_Category",
         # 顯式映射 Ad_Format 意圖，優先使用 ClickHouse 欄位
         "Ad_Format": ["ad_format_type_ch", "ad_format_type", "ad_format_type_id_ch", "ad_format_type_id", "Ad_Format"] # 優先級: CH string, CH ID, MySQL string
