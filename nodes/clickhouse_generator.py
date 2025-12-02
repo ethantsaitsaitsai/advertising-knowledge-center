@@ -39,38 +39,46 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     if not sql_result or not sql_result_columns:
         return {"clickhouse_sql": "", "clickhouse_sqls": []}
 
-    # 1. Try to identify ID and Date columns
-    has_dates = False
-    idx_cmpid = -1
-    idx_ad_format_type_id = -1
-    idx_start = -1
-    idx_end = -1
+    # 1. Robust Column Index Finding (Case-Insensitive)
+    col_map = {col.lower(): i for i, col in enumerate(sql_result_columns)}
 
-    try:
-        idx_cmpid = sql_result_columns.index("cmpid")
-    except ValueError:
-        pass # cmpid might not always be present
+    idx_cmpid = col_map.get("cmpid", -1)
+    # Fallback: if cmpid is missing, try 'id' but verify it's not ad_format_type_id
+    if idx_cmpid == -1:
+        idx_id = col_map.get("id", -1)
+        idx_fmt_id = col_map.get("ad_format_type_id", -1)
+        if idx_id != -1 and idx_id != idx_fmt_id:
+             idx_cmpid = idx_id
 
-    try:
-        idx_ad_format_type_id = sql_result_columns.index("ad_format_type_id")
-    except ValueError:
-        pass # ad_format_type_id might not always be present
+    idx_ad_format_type_id = col_map.get("ad_format_type_id", -1)
 
     if idx_cmpid == -1 and idx_ad_format_type_id == -1:
-        # If neither cmpid nor ad_format_type_id is found, we can't generate a meaningful query
+        print("[ClickHouse Generator] Warning: No 'cmpid' or 'ad_format_type_id' found in SQL result.")
         return {"clickhouse_sql": "", "clickhouse_sqls": []}
 
-    try:
-        idx_start = next(i for i, col in enumerate(sql_result_columns) if col in ["start_date", "start_time", "campaign_start"])
-        idx_end = next(i for i, col in enumerate(sql_result_columns) if col in ["end_date", "end_time", "campaign_end"])
+    # Identify Date Columns flexibly
+    idx_start = -1
+    idx_end = -1
+    has_dates = False
+    
+    date_start_keywords = ["start_date", "start_time", "campaign_start"]
+    date_end_keywords = ["end_date", "end_time", "campaign_end"]
+    
+    for kw in date_start_keywords:
+        if kw in col_map:
+            idx_start = col_map[kw]
+            break
+            
+    for kw in date_end_keywords:
+        if kw in col_map:
+            idx_end = col_map[kw]
+            break
+            
+    if idx_start != -1 and idx_end != -1:
         has_dates = True
-    except StopIteration:
-        has_dates = False
 
     # 2. Prepare Data (Truncate if necessary)
-    # If SQL Result is huge, we MUST truncate it, otherwise the prompt or the generated SQL will be too long.
     MAX_ROWS = 1000
-    
     truncated_result = sql_result
     if len(sql_result) > MAX_ROWS:
         print(f"[ClickHouse Generator] Input too large ({len(sql_result)} rows). Truncating to top {MAX_ROWS}.")
@@ -85,7 +93,6 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     if idx_ad_format_type_id != -1:
         ad_format_type_id_list = [row[idx_ad_format_type_id] for row in truncated_result if row[idx_ad_format_type_id] is not None]
 
-    # Combine all relevant IDs into one list to check if we have anything to query
     all_ids = cmpid_list + ad_format_type_id_list
     if not all_ids:
         return {"clickhouse_sql": "", "clickhouse_sqls": []}
@@ -98,7 +105,6 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     global_start = filters.get("date_start")
     global_end = filters.get("date_end")
 
-    # If dates are missing from filters, try to derive from SQL result
     if (not global_start or not global_end) and has_dates and truncated_result:
         try:
             if not global_start and idx_start != -1:
@@ -121,7 +127,6 @@ def clickhouse_generator_node(state: AgentState) -> dict:
         except Exception as e:
             print(f"[ClickHouse Generator] Error deriving dates: {e}")
 
-    # Final Fallback
     if not global_start or not global_end:
         today = datetime.now()
         if not global_end: global_end = today.strftime("%Y-%m-%d")
@@ -131,8 +136,21 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     intervals = split_date_range(global_start, global_end)
     first_interval = intervals[0]
 
-    # 4. LLM Generation
-    # We generate SQL using the FIRST interval, then replace dates for subsequent intervals.
+    # 4. Get Dimensions for Grouping Logic
+    raw_analysis_needs = state.get('analysis_needs')
+    if hasattr(raw_analysis_needs, 'model_dump'):
+        analysis_needs = raw_analysis_needs.model_dump()
+    elif hasattr(raw_analysis_needs, 'dict'):
+        analysis_needs = raw_analysis_needs.dict()
+    elif isinstance(raw_analysis_needs, dict):
+        analysis_needs = raw_analysis_needs
+    else:
+        analysis_needs = {}
+        
+    dimensions_list = analysis_needs.get("dimensions", [])
+    dimensions_str = ", ".join(dimensions_list)
+
+    # 5. LLM Generation
     prompt = PromptTemplate.from_template(CLICKHOUSE_GENERATOR_PROMPT)
     chain = prompt | llm | StrOutputParser()
 
@@ -140,7 +158,8 @@ def clickhouse_generator_node(state: AgentState) -> dict:
         "cmpid_list": cmpid_list_str,
         "ad_format_type_id_list": ad_format_type_id_list_str,
         "date_start": first_interval[0],
-        "date_end": first_interval[1]
+        "date_end": first_interval[1],
+        "dimensions": dimensions_str # Pass dimensions to prompt
     })
 
     base_sql = clean_sql_output(response)
@@ -149,14 +168,11 @@ def clickhouse_generator_node(state: AgentState) -> dict:
     if len(intervals) == 1:
         clickhouse_sqls.append(base_sql)
     else:
-        # Generate multiple SQLs by replacing date strings
         for start, end in intervals:
-            # Naive replacement (might be risky if date string appears elsewhere, but specific enough in SQL)
-            # Ideally we should re-invoke LLM or use formatting, but replacement is faster/cheaper.
             new_sql = base_sql.replace(first_interval[0], start).replace(first_interval[1], end)
             clickhouse_sqls.append(new_sql)
 
     return {
-        "clickhouse_sql": clickhouse_sqls[0], # For compatibility
+        "clickhouse_sql": clickhouse_sqls[0], 
         "clickhouse_sqls": clickhouse_sqls
     }

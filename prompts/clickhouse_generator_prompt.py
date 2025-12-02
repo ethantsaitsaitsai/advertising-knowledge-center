@@ -121,14 +121,18 @@ CREATE VIEW kafka.summing_ad_format_events_view (
    - ✅ 正確: kafka.summing_ad_format_events_view
    - ✅ 正確: `kafka`.`summing_ad_format_events_view`
 
-8. **強制分組規則 (Grouping Rule)**:
+8. **強制分組規則 (Grouping Rule) - CRITICAL**:
    - 預設情況下，請 `GROUP BY cmpid`。
-   - **若使用了 `ad_format_type_id` 進行過濾**，則**必須**將 `ad_format_type_id` 以及 `ad_format_type` 加入 `SELECT` 列表以及 `GROUP BY` 子句中 (e.g., `SELECT cmpid, ad_format_type_id, ad_format_type, ... GROUP BY cmpid, ad_format_type_id, ad_format_type`)，以保留格式維度的數據細節。
+   - **若分析維度 `{dimensions}` 中包含 'Ad_Format'**，或者使用了 `ad_format_type_id` 進行過濾：
+     - **必須** 將 `ad_format_type_id` 以及 `ad_format_type` 加入 `SELECT` 列表。
+     - **必須** 將其加入 `GROUP BY` 子句中 (e.g., `GROUP BY cmpid, ad_format_type_id, ad_format_type`)。
+     - *原因*: 為了確保後續數據合併時，不同廣告格式的數據不會被錯誤加總。
 
 # 輸入資料
 - Campaign IDs: {cmpid_list}
 - Ad Format Type IDs: {ad_format_type_id_list}
 - Date Range: {date_start} to {date_end}
+- Dimensions: {dimensions}
 
 # SQL 範例
 
@@ -145,7 +149,7 @@ GROUP BY cmpid
 LIMIT 100
 ```
 
-## 範例 2: 針對特定格式查詢 (有 ad_format_type_id)
+## 範例 2: 針對特定格式查詢 (有 ad_format_type_id 或 Ad_Format 維度)
 ```sql
 SELECT
     cmpid,
@@ -155,7 +159,6 @@ SELECT
     SUM(bannerClick + videoClick) AS total_clicks
 FROM kafka.summing_ad_format_events_view
 WHERE cmpid IN (101, 102)
-  AND ad_format_type_id IN (5, 8) -- 加入過濾條件
   AND day_local BETWEEN '2023-01-01' AND '2023-01-31'
 GROUP BY cmpid, ad_format_type_id, ad_format_type -- 必須分組
 LIMIT 100

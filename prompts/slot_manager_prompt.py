@@ -41,8 +41,8 @@ SLOT_MANAGER_PROMPT = """
 #### a. 維度識別 (dimensions -> GROUP BY):
    - "各代理商"、"每一家代理商" -> `dimensions: ["Agency"]` (對應 `agency.agencyname`)
    - "各活動"、"分案件"、"活動名稱"、"所有 Campaign" -> `dimensions: ["Campaign_Name"]` (對應 `cue_lists.campaign_name`)
-   - "不同格式"、"格式分佈" -> `dimensions: ["Ad_Format"]`
-   - "數據鎖定"、"受眾類別" -> `dimensions: ["Segment_Category_Name"]`
+   - "不同格式"、"格式分佈"、"投遞的格式" -> `dimensions: ["Ad_Format"]`
+   - "數據鎖定"、"受眾類別"、"鎖定哪些受眾" -> `dimensions: ["Segment_Category_Name"]`
    - "關鍵字"、"Keyword" -> `dimensions: ["Keyword"]`
    - "每月"、"趨勢"、"走勢" -> `dimensions: ["Date_Month"]`
    - "總覽"、"Total" -> `dimensions: []` (不分組)
@@ -102,7 +102,7 @@ SLOT_MANAGER_PROMPT = """
     }},
     "analysis_needs": {{
         "metrics": [],
-        "dimensions": ["Ad_Format"],
+        "dimensions": ["Ad_Format", "Segment_Category_Name"],
         "calculation_type": "Total",
         "display_segment_category": True
     }},
@@ -113,21 +113,20 @@ SLOT_MANAGER_PROMPT = """
     "limit": 20
 }}
 
-**User**: "幫我查悠遊卡投遞的格式和點擊率"
+**User**: "悠遊卡 投遞的格式、成效、數據鎖定 格式投資金額"
 **Output**:
 {{
     "intent_type": "data_query",
     "extracted_filters": {{
         "brands": [],
-        "target_segments": [],
-        "ad_formats": [],
         "date_start": null,
         "date_end": null
     }},
     "analysis_needs": {{
-        "metrics": ["CTR_Calc"],
-        "dimensions": ["Ad_Format"],
-        "calculation_type": "Total"
+        "metrics": ["Budget_Sum", "Impression_Sum", "Click_Sum", "CTR_Calc"],
+        "dimensions": ["Ad_Format", "Segment_Category_Name", "Campaign_Name"],
+        "calculation_type": "Total",
+        "display_segment_category": True
     }},
     "ambiguous_terms": [
         {{"term": "悠遊卡", "scope": "all"}}
@@ -153,26 +152,6 @@ SLOT_MANAGER_PROMPT = """
     "limit": 1000,
     "ambiguous_terms": [],
     "missing_slots": []
-}}
-
-**User**: "那再給我品牌：悠遊卡的數據" (假設 Context 已經是 Group By Ad_Format, Metric=Budget)
-**Output**:
-{{
-    "intent_type": "data_query",
-    "extracted_filters": {{
-        "date_start": "2025-01-01",
-        "date_end": "2025-12-31"
-    }},
-    "analysis_needs": {{
-        "metrics": ["Budget_Sum"],
-        "dimensions": ["Ad_Format"],
-        "calculation_type": "Ranking"
-    }},
-    "ambiguous_terms": [
-        {{"term": "悠遊卡", "scope": "brands"}}
-    ],
-    "missing_slots": [],
-    "limit": 20
 }}
 
 # 當前輸入
