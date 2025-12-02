@@ -62,8 +62,9 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         debug_logs.append(f"Found Segment Column: {seg_col}. Performing Pre-Aggregation.")
         
         # Define helper for joining strings (used in aggregation)
+        # Modified to use semicolon for separation to ensure Markdown table compatibility
         def join_unique_func(x):
-            return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+            return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
 
         # 定義 Group Key: 必須是能夠唯一識別 Campaign 的欄位，加上其他維度
         # 1. 核心 Key: cmpid
@@ -236,7 +237,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             # 2. 文字取 Join
             def join_unique(x):
                 # 確保轉成字串且去重
-                return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+                return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
             
             if concat_cols:
                 text_res = merged_df[concat_cols].apply(join_unique)
@@ -253,7 +254,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         # 構建 Agg Dict
         agg_dict = {col: 'sum' for col in numeric_cols}
         def join_unique(x):
-            return ', '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+            return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
         for c in concat_cols:
             agg_dict[c] = join_unique
             
@@ -309,6 +310,12 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             # Convert to string for comparison but handle original 0 integer
             final_df = final_df[~final_df[col].isin(IGNORED_VALUES)]
             final_df = final_df[~final_df[col].astype(str).isin([str(v) for v in IGNORED_VALUES])]
+    
+    # After all filtering, also filter rows where Ad_Format is '0'
+    ad_format_col = next((c for c in final_df.columns if 'ad_format' in c.lower() and c != 'ad_format_type_id'), None)
+    if ad_format_col and ad_format_col in final_df.columns:
+        final_df = final_df[~final_df[ad_format_col].astype(str).isin(['0', 0])]
+
 
     # Strict Column Filtering: Only keep Dimensions + Calculated Metrics + Explicit Metrics
     cols_to_keep = []
@@ -350,20 +357,16 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
          match = next((c for c in final_df.columns if 'budget' in c.lower()), None)
          if match: cols_to_keep.append(match)
 
-    # D. Calculated KPIs (CTR, VTR, ER) - Only keep if requested or standard summary
-    # If user specifically asked for CTR, keep it. If 'metrics' is empty (Overview), keep standard ones.
+    # D. Calculated KPIs (CTR, VTR, ER)
+    # Always show calculated KPIs if they exist and have non-zero values
+    # This allows seeing performance metrics even if not explicitly requested
     kpi_whitelist = ['CTR', 'VTR', 'ER']
-    if requested_metrics_lower:
-        # Check if calculated metrics were requested (e.g. 'ctr_calc')
-        if 'ctr_calc' in requested_metrics_lower and 'CTR' in final_df.columns: cols_to_keep.append('CTR')
-        if 'vtr_calc' in requested_metrics_lower and 'VTR' in final_df.columns: cols_to_keep.append('VTR')
-        if 'er_calc' in requested_metrics_lower and 'ER' in final_df.columns: cols_to_keep.append('ER')
-    else:
-        # Default Overview: Keep all valid KPIs
-        for kpi in kpi_whitelist:
-            if kpi in final_df.columns:
-                 if kpi == 'VTR' and (final_df[kpi] == 0).all(): continue
-                 cols_to_keep.append(kpi)
+    for kpi in kpi_whitelist:
+        if kpi in final_df.columns:
+             # Filter out if all values are 0 (e.g. VTR for banner ads)
+             if (final_df[kpi] == 0).all(): continue
+             if kpi not in cols_to_keep:
+                cols_to_keep.append(kpi)
 
     # Apply Selection - But ensure we don't return empty dataframe if logic fails
     if cols_to_keep:

@@ -70,8 +70,9 @@ SQL_GENERATOR_PROMPT = """
 * **路徑**: `one_campaigns` -> `pre_campaign` -> `campaign_target_pids` -> `target_segments` -> `segment_categories`
 * **關鍵欄位**:
     * `target_segments.name`: 受眾名稱。
+    * `target_segments.description`: **受眾描述** (現在作為主要分析維度)。
     * `target_segments.data_value`: **關鍵字內容** (當 `data_source='keyword'` 時)。
-    * `segment_categories.name`: 受眾類別。
+    * `segment_categories.name`: 受眾類別 (舊維度，現改為 `target_segments.description`)。
 
 # 任務目標
 生成 MySQL 查詢以獲取：
@@ -99,7 +100,7 @@ SQL_GENERATOR_PROMPT = """
 * "廣告計價單位" -> `pricing_models`.`name` AS Pricing_Unit
 * "Industry" -> `pre_campaign_categories`.`name` AS Industry
 * "Ad_Format" -> `ad_format_types`.`title` AS Ad_Format
-* "Segment_Category_Name" -> `segment_categories`.`name` AS Segment_Category
+* "Segment_Category_Name" -> `target_segments`.`description` AS Segment_Category
 * "Keyword" -> `target_segments`.`data_value` AS Keyword
 * "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')` AS Date_Month
 
@@ -161,6 +162,7 @@ JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
 JOIN campaign_target_pids ON pre_campaign.id = campaign_target_pids.source_id AND \
     campaign_target_pids.source_type = 'PreCampaign'
 JOIN target_segments ON campaign_target_pids.selection_id = target_segments.id
+-- 若需查詢 segment_categories 再加 (但現在主要用 target_segments)
 LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_categories.id
 ```
 
@@ -179,10 +181,10 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
     SELECT
       ...,
       `ad_format_types`.`title` AS `Ad_Format`,
-      `segment_categories`.`name` AS `Segment_Category`,
+      `target_segments`.`description` AS `Segment_Category`, -- Updated mapping
       `cue_lists`.`campaign_name` AS `Campaign_Name`,
       ...
-    GROUP BY ..., `ad_format_types`.`title`, `segment_categories`.`name`, `cue_lists`.`campaign_name`
+    GROUP BY ..., `ad_format_types`.`title`, `target_segments`.`description`, `cue_lists`.`campaign_name`
     ```
 
 ### **規則三：關鍵字查詢專屬規則 (Keyword Specific Rule)**
