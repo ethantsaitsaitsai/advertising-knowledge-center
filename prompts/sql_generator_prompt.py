@@ -58,13 +58,14 @@ SQL_GENERATOR_PROMPT = """
     * `id` (PK): 連接 `one_campaigns.category_id`。
     * `name`: **客戶產業類別**。
 
-## 8. `cue_list_ad_formats` & `ad_format_types` (Ad Format Info)
+## 8. `cue_list_ad_formats`, `ad_format_types` & `external_ad_formats` (Ad Format Info)
 * **權責**: 提供廣告格式名稱。
-* **路徑**: 預算路徑 (`cue_list_budgets`) -> `cue_list_ad_formats` -> `ad_format_types`
-* **關鍵欄位 (`ad_format_types`)**:
-    * `id` (PK): 連接 `cue_list_ad_formats.ad_format_type_id`。
-    * `title`: **廣告格式名稱**。
-    * **注意**: 舊 SQL 中有 `external_ad_formats`，這裡先以 `ad_format_types.title` 為主要格式名稱，若需區分，可進一步細化。
+* **路徑**: 預算路徑 (`cue_list_budgets`) -> `cue_list_ad_formats` -> `ad_format_types` / `external_ad_formats`
+* **關鍵欄位**:
+    * `cue_list_ad_formats.ad_format_type_id` (FK): 連接 `ad_format_types.id`。
+    * `cue_list_ad_formats.external_ad_format_id` (FK): 連接 `external_ad_formats.id`。
+    * `ad_format_types.title`: **內部廣告格式名稱**。
+    * `external_ad_formats.ad_type`, `external_ad_formats.cost_type`: **外部廣告格式名稱**。
 
 ## 9. Audience Targeting Tables (Targeting)
 * **路徑**: `one_campaigns` -> `pre_campaign` -> `campaign_target_pids` -> `target_segments` -> `segment_categories`
@@ -99,7 +100,7 @@ SQL_GENERATOR_PROMPT = """
 * "Campaign_Name" -> `cue_lists`.`campaign_name` AS Campaign_Name
 * "廣告計價單位" -> `pricing_models`.`name` AS Pricing_Unit
 * "Industry" -> `pre_campaign_categories`.`name` AS Industry
-* "Ad_Format" -> `ad_format_types`.`title` AS Ad_Format
+* "Ad_Format" -> `IFNULL(ad_format_types.title, CONCAT(external_ad_formats.ad_type, '(', external_ad_formats.cost_type, ')'))` AS Ad_Format
 * "Segment_Category_Name" -> `target_segments`.`description` AS Segment_Category
 * "Keyword" -> `target_segments`.`data_value` AS Keyword
 * "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')` AS Date_Month
@@ -111,7 +112,9 @@ SQL_GENERATOR_PROMPT = """
 1.  `one_campaigns.id` AS `cmpid`
 2.  `one_campaigns.start_date` AS `start_date`
 3.  `one_campaigns.end_date` AS `end_date`
-**注意**：既然已經 GROUP BY 了這些欄位，請直接選取它們，**不要** 使用 `MIN()` 或 `MAX()` 包覆。
+**注意**：
+   - 必須使用 Alias `cmpid`。
+   - 既然已經 GROUP BY 了這些欄位，請直接選取它們，**不要** 使用 `MIN()` 或 `MAX()` 包覆。
 
 
 ### **規則二：JOIN 策略 (The Most Important Part)**
@@ -150,10 +153,11 @@ LEFT JOIN pre_campaign_categories ON one_campaigns.category_id = pre_campaign_ca
 
 #### 廣告格式路徑 (Ad Format Path - 當查詢包含 "Ad_Format" 維度或需要 `ad_format_type_id` 時追加):
 ```sql
--- 此路徑基於 '預算與計價單位路徑'，請確保該路徑已存在，並在其基礎上追加 ad_format_types
+-- 此路徑基於 '預算與計價單位路徑'，請確保該路徑已存在，並在其基礎上追加 ad_format_types 和 external_ad_formats
 LEFT JOIN ad_format_types ON cue_list_ad_formats.ad_format_type_id = ad_format_types.id
+LEFT JOIN external_ad_formats ON cue_list_ad_formats.external_ad_format_id = external_ad_formats.id
 ```
-*   **注意**: 當使用者需求與「廣告格式」相關時，除了 `ad_format_types.title`，你還應該 `SELECT ad_format_types.id AS ad_format_type_id`。
+*   **注意**: 當使用者需求與「廣告格式」相關時，除了 Select `Ad_Format` 的複雜邏輯，你還應該 `SELECT ad_format_types.id AS ad_format_type_id`。
 
 
 #### 受眾路徑 (Audience Path - **Only Join if Requested!**)
@@ -172,8 +176,8 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
 2.  **執行**: 對於列表中的**每一個**維度，你**必須**：
     *   找到對應的資料庫欄位。
     *   將其加入 `SELECT` 子句，並**務必使用指定的 Alias**。
-    *   將其加入 `GROUP BY` 子句。
-3.  **後果**: 如果你漏了維度，Data Fusion 節點會崩潰。**請務必再三檢查！**
+    *   **GROUP BY 最佳實務**: 為了避免複雜表達式錯誤 (如 `IF NULL` vs `IFNULL`)，**請在 GROUP BY 子句中直接使用 Alias**。
+    *   **範例**: 若 `SELECT ... AS Ad_Format`，則 `GROUP BY ..., Ad_Format`。
 
 - **範例**:
   - Input: `dimensions: ["Ad_Format", "Segment_Category_Name", "Campaign_Name"]`
@@ -181,16 +185,17 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
     ```sql
     SELECT
       ...,
-      `ad_format_types`.`title` AS `Ad_Format`,
-      `target_segments`.`description` AS `Segment_Category`, -- Updated mapping
+      IFNULL(ad_format_types.title, CONCAT(external_ad_formats.ad_type, '(', external_ad_formats.cost_type, ')')) AS `Ad_Format`,
+      `target_segments`.`description` AS `Segment_Category`,
       `cue_lists`.`campaign_name` AS `Campaign_Name`,
       ...
-    GROUP BY ..., `ad_format_types`.`title`, `target_segments`.`description`, `cue_lists`.`campaign_name`
+    GROUP BY ..., `Ad_Format`, `Segment_Category`, `Campaign_Name`
     ```
 
 ### **規則三：關鍵字查詢專屬規則 (Keyword Specific Rule)**
-*   若查詢包含 "Keyword" 維度，**必須**在 `WHERE` 子句中加入 `AND target_segments.data_source = 'keyword'`。
-    *   *原因*: `target_segments` 表混合了多種受眾類型，只有 `data_source='keyword'` 的資料才是關鍵字。
+*   **觸發條件**: 只有當 `analysis_needs.dimensions` 包含 **"Keyword"** 時，才執行此規則。
+*   **執行**: 在 `WHERE` 子句中加入 `AND target_segments.data_source = 'keyword'`。
+*   **禁止**: 對於 "Segment_Category_Name" (數據鎖定) 或其他維度，**不要** 加入此條件，因為這會過濾掉非關鍵字的受眾資料。
 
 ### 安全與格式限制
 1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。
@@ -206,10 +211,10 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
    - 若 SQL 為聚合查詢 (如 `SUM`) 回傳單行，當然也不需要 LIMIT。
 4. **細粒度聚合原則 (Granular Aggregation Rule) - CRITICAL**:
    - **目標**: 你的 SQL 只是中間產物，最終的 Ranking 與 Total 會由後端 Python 處理。
-   - **強制**: `GROUP BY` 子句**必須**包含 `one_campaigns.id` (cmpid)。
+   - **強制**: `SELECT` 和 `GROUP BY` 子句**必須**包含 `one_campaigns.id` (且 Alias 為 `cmpid`)。這對於系統能夠查詢成效資料至關重要。
    - **禁止**: 嚴禁為了滿足 "Top X" 或 "Ranking" 需求而自行建立複雜的子查詢 (如 `format_totals`) 來預先加總。
-   - **禁止**: 嚴禁在 `WHERE IN (SELECT ...)` 子查詢中使用 `LIMIT`。MySQL 不支援此語法。
-   - **正確做法**: 即使使用者要 "前三名"，你也**必須回傳所有符合條件的資料 (不加 LIMIT)**。讓 Data Fusion 節點去做排序和截斷。
+   - **禁止**: 嚴禁在 `WHERE IN (SELECT ...)` 子查詢中使用 `LIMIT`。
+   - **正確做法**: 即使使用者要 "前三名"，你也**必須回傳所有符合條件的資料 (不加 LIMIT)**。
 
 ### SQL 最佳實務 (Best Practices) - CRITICAL
 1. **時間範圍可視化 (Visualize Time Range)**:

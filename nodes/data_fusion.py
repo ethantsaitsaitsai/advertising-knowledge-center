@@ -26,6 +26,37 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     df_mysql = pd.DataFrame(mysql_data, columns=sql_result_columns)
     df_ch = pd.DataFrame(ch_data) if ch_data else pd.DataFrame()
 
+    # -----------------------------------------------------------
+    # Column Name Normalization (Fix for KeyError: 'cmpid')
+    # -----------------------------------------------------------
+    # Normalize MySQL columns: Ensure 'cmpid' exists and is lowercase
+    mysql_rename_map = {}
+    for col in df_mysql.columns:
+        if col.lower() == 'cmpid':
+            mysql_rename_map[col] = 'cmpid'
+        # Handle case where LLM returned 'id' instead of 'cmpid' but it's likely the campaign id
+        # (This is a heuristic fallback)
+        elif col.lower() == 'id' and 'cmpid' not in [c.lower() for c in df_mysql.columns]:
+             mysql_rename_map[col] = 'cmpid'
+             
+    if mysql_rename_map:
+        df_mysql.rename(columns=mysql_rename_map, inplace=True)
+        
+    # Ensure 'cmpid' is present, otherwise we can't proceed with pre-aggregation or merge
+    if 'cmpid' not in df_mysql.columns:
+        debug_logs.append("CRITICAL WARNING: 'cmpid' column missing in MySQL result. Using first column as cmpid fallback.")
+        if not df_mysql.empty:
+            df_mysql.rename(columns={df_mysql.columns[0]: 'cmpid'}, inplace=True)
+
+    # Normalize CH columns
+    if not df_ch.empty:
+        ch_rename_map = {}
+        for col in df_ch.columns:
+            if col.lower() == 'cmpid':
+                ch_rename_map[col] = 'cmpid'
+        if ch_rename_map:
+            df_ch.rename(columns=ch_rename_map, inplace=True)
+
     # Helper: 安全的數值轉型函式 (Try-Convert-And-Revert)
     def safe_numeric_convert(df, name="df"):
         for col in df.columns:
