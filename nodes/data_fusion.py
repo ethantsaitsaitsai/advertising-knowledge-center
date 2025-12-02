@@ -302,10 +302,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         ).round(2)
 
     # 6. 後處理：移除不必要的欄位與過濾無效資料 (Strict Filtering)
-    IGNORED_VALUES = ['Unknown', 'unknown', '']
+    # Fixed: Added '0' and 0 to ignored values list
+    IGNORED_VALUES = ['Unknown', 'unknown', '', '0', 0]
     for col in group_cols:
         if col in final_df.columns:
-            final_df = final_df[~final_df[col].astype(str).isin(IGNORED_VALUES)]
+            # Convert to string for comparison but handle original 0 integer
+            final_df = final_df[~final_df[col].isin(IGNORED_VALUES)]
+            final_df = final_df[~final_df[col].astype(str).isin([str(v) for v in IGNORED_VALUES])]
 
     # Strict Column Filtering: Only keep Dimensions + Calculated Metrics + Explicit Metrics
     cols_to_keep = []
@@ -367,7 +370,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = final_df[cols_to_keep]
     
     # ============================================================
-    # 6.5 排序 (Sorting Logic) - Restore intended sort order
+    # 6.5 排序 (Sorting Logic) & Limit Truncation
     # ============================================================
     calc_type = analysis_needs.get('calculation_type', 'Total')
     
@@ -406,6 +409,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if date_col:
             debug_logs.append(f"Sorting by {date_col} (Ascending) for Trend")
             final_df = final_df.sort_values(by=date_col, ascending=True)
+
+    # Universal Limit Application (Moved outside of if-calc_type block)
+    # This ensures limit applies to 'Total' or 'Comparison' modes as well if specified
+    limit = state.get('limit')
+    if limit and isinstance(limit, int) and limit > 0:
+        debug_logs.append(f"Applying Limit: Top {limit}")
+        final_df = final_df.head(limit)
 
     # 7. Final Formatting (Integer for Budget)
     for col in final_df.columns:

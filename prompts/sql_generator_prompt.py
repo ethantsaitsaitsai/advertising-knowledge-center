@@ -201,6 +201,12 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
    - **原則**: 為了確保後續數據聚合的正確性，**除非使用者明確指定數量 (如 "前 10 名", "Top 5")，否則絕對不要加入 LIMIT 子句**。
    - 我們需要完整的數據列表來進行 Python 端的 Data Fusion。
    - 若 SQL 為聚合查詢 (如 `SUM`) 回傳單行，當然也不需要 LIMIT。
+4. **細粒度聚合原則 (Granular Aggregation Rule) - CRITICAL**:
+   - **目標**: 你的 SQL 只是中間產物，最終的 Ranking 與 Total 會由後端 Python 處理。
+   - **強制**: `GROUP BY` 子句**必須**包含 `one_campaigns.id` (cmpid)。
+   - **禁止**: 嚴禁為了滿足 "Top X" 或 "Ranking" 需求而自行建立複雜的子查詢 (如 `format_totals`) 來預先加總。
+   - **禁止**: 嚴禁在 `WHERE IN (SELECT ...)` 子查詢中使用 `LIMIT`。MySQL 不支援此語法。
+   - **正確做法**: 即使使用者要 "前三名"，你也**必須回傳所有符合條件的資料 (不加 LIMIT)**。讓 Data Fusion 節點去做排序和截斷。
 
 ### SQL 最佳實務 (Best Practices) - CRITICAL
 1. **時間範圍可視化 (Visualize Time Range)**:
@@ -209,7 +215,7 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
    - **情境 B (依月份 / 日期分組)**: 若 SQL 中已有 `DATE_FORMAT(..., '%Y-%m')` 或 `GROUP BY date`，**不需要** 再顯示 `MIN/MAX` 日期，以免資訊冗餘。
 2. **Null Handling**:
    - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(agency.agencyname, 'Unknown')` 以避免顯示空白。
-   - 若查詢 `target_segments.name` 或 `segment_categories.name` 欄位，\ 
+   - 若查詢 `target_segments.name` 或 `segment_categories.name` 欄位，\
     請使用 `COALESCE(target_segments.name, 'Unknown')` 或 `COALESCE(segment_categories.name, 'Unknown')` 以避免顯示空白。
 
 ### 錯誤修正模式
