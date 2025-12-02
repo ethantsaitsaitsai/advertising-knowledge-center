@@ -35,13 +35,25 @@ STATE_UPDATER_PROMPT = PromptTemplate.from_template("""
         - Action: `ambiguous_terms: [{{"term": "悠遊卡", "scope": "advertisers"}}]`, `brands: []`
 
 ### 3. 補充資訊模式 (Info Supplement)
-當使用者只補充日期或限制時：
-   - 更新 `date_range` 或 `limit`。
-   - **保留** 之前已確認的過濾條件 (如果有)。
+當使用者只補充日期或限制時，或者在確認實體的同時補充日期：
+   - **優先提取日期**: 即使這是一個確認回覆，若包含時間資訊（如 "2025年"），務必提取至 `date_range`。
+   - **保留/更新**: 根據使用者選擇更新 Filter，並填寫 `date_range`。
+
+# 範例 (Few-Shot)
+
+**情境 A: 單純確認**
+User: "我要找品牌那個"
+Output: `confirmed_filters: {{brands: ["悠遊卡"]}}, date_range: null`
+
+**情境 B: 確認 + 補充日期**
+User: "品牌廣告主：悠遊卡股份有限公司，時間為2025年"
+Output: `confirmed_filters: {{advertisers: ["悠遊卡股份有限公司"]}}, date_range: {{start: "2025-01-01", end: "2025-12-31"}}`
+
+**情境 C: 探索模式**
+User: "那有其他名字嗎？"
+Output: `ambiguous_terms: [{{"term": "其他名字", "scope": "all"}}]`
 
 # 輸出 (JSON Update)
 請輸出更新後的狀態。
-注意：若進入「探索模式」，`extracted_filters` 應為空（或保留舊有的確認值），關鍵在於填寫 `ambiguous_terms` 以觸發新一輪搜尋。
-
 {format_instructions}
 """)

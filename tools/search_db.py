@@ -25,10 +25,11 @@ def search_sql_like(keyword: str, type_filter: Optional[str] = None) -> List[dic
         if type_filter in mapping:
             targets.append((type_filter, *mapping[type_filter]))
     else:
-        # If no filter, search everywhere (except maybe keywords to avoid noise?)
-        # Let's search everywhere for now.
+        # If no filter (or 'all'), search everywhere EXCEPT keywords to reduce noise
+        # Keywords are usually too broad or specific for general entity search
         for k, v in mapping.items():
-            targets.append((k, *v))
+            if k != "keywords": 
+                targets.append((k, *v))
 
     db = get_mysql_db()
     
@@ -79,9 +80,24 @@ def search_ambiguous_term(keyword: str, type_filter: Optional[str] = None) -> Li
         print(f"📉 SQL LIKE found no results. Falling back to RAG...")
         rag = RagService()
         # RAG Service uses its own default top_k and threshold
+        # We also apply the same logic: if filter is None/'all', we should exclude keywords in RAG?
+        # Currently RagService.search uses Qdrant filter. If type_filter is None, it searches all.
+        # To exclude keywords in RAG 'all' search, we might need a negative filter, 
+        # but for now let's rely on SQL filter being the primary gatekeeper. 
+        # Actually, RAG should also follow the "no keywords by default" rule if possible.
+        
+        # But RagService search takes a positive type_filter. 
+        # If type_filter is None/all, it searches everything.
+        # Let's leave RAG as is for now, assuming SQL LIKE will catch most common terms.
+        # If RAG returns keywords, it's because they are semantically similar.
+        
         rag_results = rag.search(keyword, type_filter=type_filter)
         
         for res in rag_results:
+            # Optional: Filter out keywords from RAG results if mode is 'all'
+            if (not type_filter or type_filter == "all") and res.get("filter_type") == "keywords":
+                continue
+
             candidates.append({
                 "value": res["value"],
                 "source": res.get("source", res.get("source_col")), 

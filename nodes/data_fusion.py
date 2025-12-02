@@ -96,8 +96,11 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         for col in df_mysql.columns:
             if col in group_keys or col == seg_col: continue
             
-            if col.lower() == 'budget_sum':
-                agg_dict_pre[col] = 'sum'
+            # CRITICAL FIX: When pre-aggregating segments for the same campaign/format,
+            # Budget MUST be aggregated using 'max' (or 'first'), NOT 'sum'.
+            # Because the budget value is repeated across segment rows.
+            if 'budget' in col.lower():
+                agg_dict_pre[col] = 'max' 
             elif pd.api.types.is_numeric_dtype(df_mysql[col]):
                 agg_dict_pre[col] = 'mean' # default for others
             else:

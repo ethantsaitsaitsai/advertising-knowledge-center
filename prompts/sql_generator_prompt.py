@@ -111,6 +111,7 @@ SQL_GENERATOR_PROMPT = """
 1.  `one_campaigns.id` AS `cmpid`
 2.  `one_campaigns.start_date` AS `start_date`
 3.  `one_campaigns.end_date` AS `end_date`
+**注意**：既然已經 GROUP BY 了這些欄位，請直接選取它們，**不要** 使用 `MIN()` 或 `MAX()` 包覆。
 
 
 ### **規則二：JOIN 策略 (The Most Important Part)**
@@ -141,8 +142,6 @@ LEFT JOIN (
 ```
 *   **指標選取**: 取用預算時，請使用 `budget_agg.budget_sum`。
 *   **計價單位警告**: 除非 `analysis_needs.dimensions` 明確包含 `Pricing_Unit`，否則**不要** JOIN `pricing_models`。
-    *   若必須 JOIN，請注意 `pricing_model_id` 在 `cue_list_budgets` 中。
-    *   這需要修改 Subquery: `SELECT cue_list_ad_format_id, pricing_model_id, SUM(budget) ... GROUP BY cue_list_ad_format_id, pricing_model_id`。
 
 #### 產業路徑 (Industry Path - 當查詢包含 "Industry" 維度時追加):
 ```sql
@@ -157,7 +156,8 @@ LEFT JOIN ad_format_types ON cue_list_ad_formats.ad_format_type_id = ad_format_t
 *   **注意**: 當使用者需求與「廣告格式」相關時，除了 `ad_format_types.title`，你還應該 `SELECT ad_format_types.id AS ad_format_type_id`。
 
 
-#### 受眾路徑 (Audience Path - 當過濾條件包含 `target_segments` 或 "Segment_Category_Name" 或 "Keyword" 維度時追加):
+#### 受眾路徑 (Audience Path - **Only Join if Requested!**)
+**注意**: 此路徑會導致一對多 (Fan-out) 現象。**只有當** `extracted_filters` 包含 `target_segments` **或者** `analysis_needs.dimensions` 包含 `Segment_Category_Name` / `Keyword` 時，才加入此 JOIN。
 ```sql
 JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
 JOIN campaign_target_pids ON pre_campaign.id = campaign_target_pids.source_id AND \
