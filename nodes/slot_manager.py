@@ -17,6 +17,11 @@ def slot_manager_node(state: AgentState):
     current_filters = state.get("extracted_filters", {})
     if not isinstance(current_filters, dict):
         current_filters = {}
+        
+    # Get current analysis needs to allow inheritance of metrics/dimensions
+    current_analysis = state.get("analysis_needs", {})
+    if not isinstance(current_analysis, dict):
+        current_analysis = {}
 
     current_limit = state.get("limit")  # 可能為 None
 
@@ -24,7 +29,7 @@ def slot_manager_node(state: AgentState):
     structured_llm = llm.with_structured_output(SearchIntent)
 
     # 建構傳給 LLM 的 context 字串
-    context_string = f"Filters: {current_filters}, Limit: {current_limit}"
+    context_string = f"Filters: {current_filters}, Analysis: {current_analysis}, Limit: {current_limit}"
 
     result: SearchIntent = structured_llm.invoke(
         SLOT_MANAGER_PROMPT.format(

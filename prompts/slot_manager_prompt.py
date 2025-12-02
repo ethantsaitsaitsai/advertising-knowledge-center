@@ -77,27 +77,15 @@ SLOT_MANAGER_PROMPT = """
 - **產業**: 提及 "產業" / "類別" -> `extracted_filters.industries`。
 - **筆數限制**: 提及 "前 10 名"、"看 50 筆"、"全部" -> 提取數字至 `limit` 欄位 (若說全部則設為 1000)。
 
-# 領域術語表 (Domain Glossary)
-- **"代理商" (Agency)**: 這是一個 **分組維度 (Grouping Dimension)**。
-  - **禁止**: 絕對不要將「代理商」這個詞本身放入 `target_segments` 列表。
-  - **操作**: 應將其視為分析維度。只有當使用者指定了「某一家」具體的代理商名稱（如：「奧美廣告」）時，才將該具體名稱視為過濾條件。
-
-- **"數據鎖定" / "受眾" (Targeting)**: 這是雙重用途的詞彙，需要根據上下文判斷。
-  - **情境一 (當作維度)**: 如果使用者將其與「格式」、「預算」等並列，意圖是想**查看**每個活動的受眾類別。
-      - **觸發詞**: "數據鎖定"、"受眾類別"
-      - **操作**: 將 `display_segment_category` 設為 `True`。
-      - **範例**: "悠遊卡活動的格式與數據鎖定" -> `analysis_needs.display_segment_category: True`
-  - **情境二 (當作過濾)**: 如果使用者明確指定了要鎖定的**具體**受眾名稱。
-      - **觸發詞**: "鎖定'遊戲玩家'"、"受眾是'高消費'"
-      - **操作**: 將引號中的值 (`'遊戲玩家'`, `'高消費'`) 加入 `extracted_filters.target_segments` 列表。
-
 # 狀態繼承與更新規則 (Context Inheritance) - CRITICAL
 你將接收「當前已鎖定的過濾條件 (Current Context)」。
-1. **繼承 (Inherit)**: 預設情況下，**必須保留** Context 中的所有 `extracted_filters` (brands, advertisers, date_range 等)。
-2. **僅更新 (Update)**:
+1. **Filter 繼承 (Inherit Filters)**: 預設情況下，**必須保留** Context 中的所有 `extracted_filters` (brands, advertisers, date_range 等)。
+2. **Analysis 繼承 (Inherit Analysis)**: 除非使用者明確要求改變維度（如「改分月份看」）或指標，否則**必須保留** Context 中的 `analysis_needs` (metrics, dimensions)。
+   - *範例*: Context 是 "分活動看預算"，User 說 "改查 Nike"，Output 應該是 "Brand=Nike, Dimension=Campaign, Metric=Budget"。
+3. **僅更新 (Update)**:
    - 若使用者說「改查...」、「再查...」，通常意指**修改維度 (Dimensions)** 或 **指標 (Metrics)**，而非清除過濾條件。
    - 例如：Context 已鎖定 "悠遊卡"，使用者說 "改查所有活動"，意思是 "查詢悠遊卡旗下的所有活動 (Group By Campaign)"，而非 "查詢全資料庫的所有活動"。
-3. **清除 (Reset)**: 只有當使用者明確說「清除條件」、「重來」、「查全部品牌」時，才清空 `extracted_filters`。
+4. **清除 (Reset)**: 只有當使用者明確說「清除條件」、「重來」、「查全部品牌」時，才清空 `extracted_filters`。
 
 # 範例 (Few-Shot Learning)
 
@@ -148,49 +136,6 @@ SLOT_MANAGER_PROMPT = """
     "limit": 20
 }}
 
-**User**: "代理商 YTD 認列金額排名，包含台北、亞思博"
-**Output**:
-{{
-    "intent_type": "data_query",
-    "extracted_filters": {{
-        "brands": [],
-        "date_start": "2025-01-01",
-        "date_end": "2025-11-21"
-    }},
-    "analysis_needs": {{
-        "metrics": ["Budget_Sum"],
-        "dimensions": ["Agency"],
-        "calculation_type": "Ranking"
-    }},
-    "ambiguous_terms": [
-        {{"term": "台北", "scope": "agencies"}},
-        {{"term": "亞思博", "scope": "agencies"}}
-    ],
-    "missing_slots": [],
-    "limit": 20
-}}
-
-**User**: "在美妝產業的前三大格式的總預算"
-**Output**:
-{{
-    "intent_type": "data_query",
-    "extracted_filters": {{
-        "industries": [],
-        "date_start": null,
-        "date_end": null
-    }},
-    "analysis_needs": {{
-        "metrics": ["Budget_Sum"],
-        "dimensions": ["Ad_Format"],
-        "calculation_type": "Ranking"
-    }},
-    "ambiguous_terms": [
-        {{"term": "美妝", "scope": "industries"}}
-    ],
-    "missing_slots": ["date_range"],
-    "limit": 3
-}}
-
 **User**: "那改查所有 Campaign Names" (假設 Context 已鎖定 Advertiser="悠遊卡股份有限公司", Date="2025")
 **Output**:
 {{
@@ -208,6 +153,26 @@ SLOT_MANAGER_PROMPT = """
     "limit": 1000,
     "ambiguous_terms": [],
     "missing_slots": []
+}}
+
+**User**: "那再給我品牌：悠遊卡的數據" (假設 Context 已經是 Group By Ad_Format, Metric=Budget)
+**Output**:
+{{
+    "intent_type": "data_query",
+    "extracted_filters": {{
+        "date_start": "2025-01-01",
+        "date_end": "2025-12-31"
+    }},
+    "analysis_needs": {{
+        "metrics": ["Budget_Sum"],
+        "dimensions": ["Ad_Format"],
+        "calculation_type": "Ranking"
+    }},
+    "ambiguous_terms": [
+        {{"term": "悠遊卡", "scope": "brands"}}
+    ],
+    "missing_slots": [],
+    "limit": 20
 }}
 
 # 當前輸入
