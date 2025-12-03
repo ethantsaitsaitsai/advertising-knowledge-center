@@ -43,14 +43,15 @@ SQL_GENERATOR_PROMPT = """
     * `id` (PK): 連接 `cue_lists.agency_id`。
     * `agencyname`: **代理商名稱**。
 
-## 5. `cue_list_budgets` & Related Tables (Budget & Price)
-* **權責**: 儲存預算與價格資訊。**查詢預算時必須 JOIN 此路徑**。
-* **路徑**: `cue_lists` -> `cue_list_product_lines` -> `cue_list_ad_formats` -> `cue_list_budgets`
-* **關鍵欄位 (`cue_list_budgets`)**:
-    * `budget`: **媒體預算** (Source of Truth)。
-    * `uniprice`: 廣告賣價。
-    * `pricing_model_id` (FK): 連接 `pricing_models`。**注意：此欄位在 `cue_list_budgets` 表中，不在 `cue_list_ad_formats` 表中！**
-    * `cue_list_ad_format_id` (FK): 連接 `cue_list_ad_formats`。
+## 5. `pre_campaign` & `pre_campaign_detail` (Format Level Structure & Budget)
+* **權責**: 廣告活動的執行層級。這是取得**廣告格式**與**格式層級預算**的唯一路徑。
+* **路徑**: `one_campaigns` -> `pre_campaign` -> `pre_campaign_detail`
+* **關鍵欄位**:
+    * `pre_campaign.id` (PK): 連接 `pre_campaign_detail.pre_campaign_id`。
+    * `pre_campaign.one_campaign_id` (FK): 連接 `one_campaigns.id`。
+    * `pre_campaign.budget`: **格式層級預算** (當查詢維度包含廣告格式時，使用此欄位加總)。
+    * `pre_campaign_detail.pre_campaign_id` (FK): 連接 `pre_campaign.id`。
+    * `pre_campaign_detail.ad_format_type_id` (FK): 連接 `ad_format_types.id`。
 
 ## 6. `pricing_models` (Pricing Unit Info)
 * **權責**: 提供廣告計價單位名稱。
@@ -64,14 +65,12 @@ SQL_GENERATOR_PROMPT = """
     * `id` (PK): 連接 `one_campaigns.category_id`。
     * `name`: **客戶產業類別**。
 
-## 8. `cue_list_ad_formats`, `ad_format_types` & `external_ad_formats` (Ad Format Info)
+## 8. `ad_format_types` (Ad Format Info)
 * **權責**: 提供廣告格式名稱。
-* **路徑**: 預算路徑 (`cue_list_budgets`) -> `cue_list_ad_formats` -> `ad_format_types` / `external_ad_formats`
+* **路徑**: `pre_campaign_detail` -> `ad_format_types`
 * **關鍵欄位**:
-    * `cue_list_ad_formats.ad_format_type_id` (FK): 連接 `ad_format_types.id`。
-    * `cue_list_ad_formats.external_ad_format_id` (FK): 連接 `external_ad_formats.id`。
-    * `ad_format_types.title`: **內部廣告格式名稱**。
-    * `external_ad_formats.ad_type`, `external_ad_formats.cost_type`: **外部廣告格式名稱**。
+    * `id` (PK): **Ad Format ID** (連接 `pre_campaign_detail.ad_format_type_id`)。
+    * `title`: **廣告格式名稱** (Ad_Format)。
 
 ## 9. Audience Targeting Tables (Targeting)
 * **路徑**: `one_campaigns` -> `pre_campaign` -> `campaign_target_pids` -> `target_segments` -> `segment_categories`
@@ -90,7 +89,7 @@ SQL_GENERATOR_PROMPT = """
 你**只能**處理以下屬於 MySQL 的指標。
 
 ### ✅ 允許的指標:
-* `Budget_Sum` -> `MAX(budget_agg.budget_sum)` (**必須使用 MAX，並從 GROUP BY 中移除**)。
+* `Budget_Sum` -> 若維度包含 Format，使用 `SUM(pre_campaign.budget)`；否則使用 `MAX(budget_agg.budget_sum)`。
 * `AdPrice_Sum` -> `SUM(cue_list_budgets.uniprice)` (若不涉及 Fan-out 風險) 或類似處理。
 * `Insertion_Count` -> `COUNT(one_campaigns.id)`
 * `Campaign_Count` -> `COUNT(DISTINCT one_campaigns.id)`
@@ -105,7 +104,7 @@ SQL_GENERATOR_PROMPT = """
 * "Campaign_Name" -> `cue_lists`.`campaign_name` AS Campaign_Name
 * "廣告計價單位" -> `pricing_models`.`name` AS Pricing_Unit
 * "Industry" -> `pre_campaign_categories`.`name` AS Industry
-* "Ad_Format" -> `IFNULL(ad_format_types.title, CONCAT(external_ad_formats.ad_type, '(', external_ad_formats.cost_type, ')'))` AS Ad_Format
+* "Ad_Format" -> `ad_format_types`.`title` AS Ad_Format
 * "Segment_Category_Name" -> `target_segments`.`description` AS Segment_Category
 * "Keyword" -> `target_segments`.`data_value` AS Keyword
 * "Date_Month" -> `DATE_FORMAT(one_campaigns.start_date, '%Y-%m')` AS Date_Month
@@ -133,11 +132,18 @@ JOIN clients ON cue_lists.client_id = clients.id
 LEFT JOIN agency ON cue_lists.agency_id = agency.id
 ```
 
-#### 預算與計價單位路徑 (Budget & Pricing Unit Path) - **嚴格禁止直接 JOIN `cue_list_budgets`**
-**警告**: 當查詢同時涉及「預算」與「受眾/關鍵字/一對多關係」時，直接 JOIN `cue_list_budgets` 會導致預算重複計算 (Fan-out)。
-**你必須使用 Subquery 先行聚合預算**。
+#### 廣告格式與格式預算路徑 (Ad Format & Format Budget Path) - **Priority for Format Analysis**
+**觸發條件**: 當 `analysis_needs.dimensions` 包含 **"Ad_Format"** 時，**必須**使用此路徑取得格式與預算。
+```sql
+JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
+JOIN pre_campaign_detail ON pre_campaign.id = pre_campaign_detail.pre_campaign_id
+JOIN ad_format_types ON pre_campaign_detail.ad_format_type_id = ad_format_types.id
+```
+*   **指標選取**: `SUM(pre_campaign.budget) AS Budget_Sum`。
+*   **ID 選取**: 記得 `SELECT ad_format_types.id AS ad_format_type_id`。
 
-**正確的預算 JOIN Pattern**:
+#### 案件總預算路徑 (Campaign Total Budget Path) - **Only when Format is NOT involved**
+**觸發條件**: 當查詢**不涉及**廣告格式細節，僅需案件層級總預算時。
 ```sql
 JOIN cue_list_product_lines ON cue_lists.id = cue_list_product_lines.cue_list_id
 JOIN cue_list_ad_formats ON cue_list_product_lines.id = cue_list_ad_formats.cue_list_product_line_id
@@ -148,22 +154,12 @@ LEFT JOIN (
     GROUP BY cue_list_ad_format_id
 ) AS budget_agg ON cue_list_ad_formats.id = budget_agg.cue_list_ad_format_id
 ```
-*   **指標選取**: 取用預算時，請使用 `MAX(budget_agg.budget_sum)`。**注意：請勿將 `Budget_Sum` 放入 GROUP BY 子句中**。
-*   **計價單位警告**: 除非 `analysis_needs.dimensions` 明確包含 `Pricing_Unit`，否則**不要** JOIN `pricing_models`。
+*   **指標選取**: `MAX(budget_agg.budget_sum)`。
 
 #### 產業路徑 (Industry Path - 當查詢包含 "Industry" 維度時追加):
 ```sql
 LEFT JOIN pre_campaign_categories ON one_campaigns.category_id = pre_campaign_categories.id
 ```
-
-#### 廣告格式路徑 (Ad Format Path - 當查詢包含 "Ad_Format" 維度或需要 `ad_format_type_id` 時追加):
-```sql
--- 此路徑基於 '預算與計價單位路徑'，請確保該路徑已存在，並在其基礎上追加 ad_format_types 和 external_ad_formats
-LEFT JOIN ad_format_types ON cue_list_ad_formats.ad_format_type_id = ad_format_types.id
-LEFT JOIN external_ad_formats ON cue_list_ad_formats.external_ad_format_id = external_ad_formats.id
-```
-*   **注意**: 當使用者需求與「廣告格式」相關時，除了 Select `Ad_Format` 的複雜邏輯，你還應該 `SELECT ad_format_types.id AS ad_format_type_id`。
-
 
 #### 受眾路徑 (Audience Path - **Only Join if Requested!**)
 **注意**: 此路徑會導致一對多 (Fan-out) 現象。**只有當** `extracted_filters` 包含 `target_segments` **或者** `analysis_needs.dimensions` 包含 `Segment_Category_Name` / `Keyword` 時，才加入此 JOIN。
@@ -205,6 +201,13 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
 *   **觸發條件**: 只有當 `analysis_needs.dimensions` 包含 **"Keyword"** 時，才執行此規則。
 *   **執行**: 在 `WHERE` 子句中加入 `AND target_segments.data_source = 'keyword'`。
 *   **禁止**: 對於 "Segment_Category_Name" (數據鎖定) 或其他維度，**不要** 加入此條件，因為這會過濾掉非關鍵字的受眾資料。
+
+### **規則四：排除第三方投遞數據 (Third-party Exclusion)**
+*   **觸發條件**: 當 `analysis_needs.metrics` 包含 ClickHouse 成效指標 (如 `Impression_Sum`, `Click_Sum`, `CTR`, `VTR` 等) 時。
+*   **執行**:
+    1.  確保已 JOIN `pre_campaign` 表 (若尚未 JOIN，請加入 `JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id`)。
+    2.  在 `WHERE` 子句中加入 `AND pre_campaign.campaign_type != 7`。
+*   **例外**: 若使用者僅查詢預算、基本資料，或明確不需要成效數據，則**不要**執行此過濾，以免遺漏資料。
 
 ### 安全與格式限制
 1. **唯讀模式**：嚴禁生成 INSERT, UPDATE, DELETE, DROP 等指令。僅能使用 SELECT。

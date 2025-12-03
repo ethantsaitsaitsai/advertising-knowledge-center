@@ -17,7 +17,7 @@ if not gemini_api_key:
     raise ValueError("Error: Please set GEMINI_API_KEY in your .env file.")
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash-lite",
+    model="gemini-2.5-flash",
     temperature=0,
     google_api_key=gemini_api_key,
     convert_system_message_to_human=True

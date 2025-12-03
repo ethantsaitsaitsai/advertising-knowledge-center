@@ -123,7 +123,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             else:
                 agg_dict_pre[col] = 'first'
 
-        df_mysql = df_mysql.groupby(group_keys, as_index=False).agg(agg_dict_pre)
+        # CRITICAL FIX: dropna=False is required to keep rows where ad_format_type_id is NaN/NULL
+        df_mysql = df_mysql.groupby(group_keys, as_index=False, dropna=False).agg(agg_dict_pre)
 
     # -----------------------------------------------------------
     # Strict MySQL Column Filtering BEFORE Merge
@@ -203,7 +204,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         "Date_Month": "Date_Month",
         "Date_Year": "Date_Year",
         "Segment_Category_Name": "Segment_Category",
-        "Ad_Format": ["ad_format_type_ch", "ad_format_type", "ad_format_type_id_ch", "ad_format_type_id", "Ad_Format"]
+        # Fixed Priority: Title (Ad_Format) > ID to ensure titles are used for grouping and display
+        "Ad_Format": ["Ad_Format", "ad_format_type_ch", "ad_format_type", "ad_format_type_id_ch", "ad_format_type_id"] 
     }
 
     group_cols = []
@@ -269,10 +271,11 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         for c in concat_cols:
             agg_dict[c] = join_unique
             
+        # CRITICAL FIX: Also use dropna=False here to preserve groups with NaN keys (if any ID keys remain)
         if not agg_dict:
             final_df = merged_df[group_cols].drop_duplicates().reset_index(drop=True)
         else:
-            final_df = merged_df.groupby(group_cols).agg(agg_dict).reset_index()
+            final_df = merged_df.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
 
     # 5. 重算衍生指標
     all_cols_lower = {c.lower(): c for c in final_df.columns}
