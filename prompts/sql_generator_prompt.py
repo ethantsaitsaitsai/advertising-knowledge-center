@@ -75,7 +75,8 @@ SQL_GENERATOR_PROMPT = """
 ## 9. Audience Targeting Tables (Targeting)
 * **路徑**: `one_campaigns` -> `pre_campaign` -> `campaign_target_pids` -> `target_segments` -> `segment_categories`
 * **關鍵欄位**:
-    * `target_segments.name`: 受眾名稱/描述 (現在作為主要分析維度)。
+    * `target_segments.description`: 受眾描述 (主要分析維度)。
+    * `target_segments.name`: 受眾內部名稱。
     * `target_segments.data_value`: **關鍵字內容** (當 `data_source='keyword'` 時)。
     * `segment_categories.name`: 受眾類別。
 
@@ -236,8 +237,8 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
    - **情境 B (依月份 / 日期分組)**: 若 SQL 中已有 `DATE_FORMAT(..., '%Y-%m')` 或 `GROUP BY date`，**不需要** 再顯示 `MIN/MAX` 日期，以免資訊冗餘。
 2. **Null Handling**:
    - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(agency.agencyname, 'Unknown')` 以避免顯示空白。
-   - 若查詢 `target_segments.name` 或 `segment_categories.name` 欄位，\
-    請使用 `COALESCE(target_segments.name, 'Unknown')` 或 `COALESCE(segment_categories.name, 'Unknown')` 以避免顯示空白。
+   - 若查詢 `target_segments.description` (Segment Category) 欄位，\
+    請使用 `COALESCE(target_segments.description, 'Unknown')` 以避免顯示空白。
 
 ### 錯誤修正模式
 如果輸入中包含 "SQL Validation Failed" 或 "Execution Error"，請分析錯誤原因，並生成修正後的 SQL。

@@ -85,17 +85,17 @@ def state_updater_node(state: AgentState):
     updated_filters = state.get('extracted_filters', {}).copy()
     confirmed = result.confirmed_filters
     
-    # Update confirmed filters (merging logic)
+    # Update confirmed filters (Replacing logic to support context switching)
     if confirmed.brands:
-        updated_filters['brands'] = list(set(updated_filters.get('brands', []) + confirmed.brands))
+        updated_filters['brands'] = confirmed.brands
     if confirmed.campaign_names:
-        updated_filters['campaign_names'] = list(set(updated_filters.get('campaign_names', []) + confirmed.campaign_names))
+        updated_filters['campaign_names'] = confirmed.campaign_names
     if confirmed.advertisers:
-        updated_filters['advertisers'] = list(set(updated_filters.get('advertisers', []) + confirmed.advertisers))
+        updated_filters['advertisers'] = confirmed.advertisers
     if confirmed.agencies:
-        updated_filters['agencies'] = list(set(updated_filters.get('agencies', []) + confirmed.agencies))
+        updated_filters['agencies'] = confirmed.agencies
     if confirmed.industries:
-        updated_filters['industries'] = list(set(updated_filters.get('industries', []) + confirmed.industries))
+        updated_filters['industries'] = confirmed.industries
 
     # Update date_range and handle missing_slots
     updated_missing_slots = missing_slots.copy()
