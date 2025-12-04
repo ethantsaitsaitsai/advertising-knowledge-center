@@ -118,15 +118,19 @@ SQL_GENERATOR_PROMPT = """
 **注意**：必須使用 Alias `cmpid`，並將它們加入 `GROUP BY`。
 
 ### **規則二：JOIN 策略 (The Most Important Part)**
-你必須根據需要的欄位動態決定 JOIN 路徑。
+你必須根據需要的欄位動態決定 JOIN 路徑。**切勿 Join 不必要的表**。
 
-#### 基礎路徑 (Basic Path - 幾乎總是需要):
-```sql
-FROM cue_lists
-JOIN one_campaigns ON cue_lists.id = one_campaigns.cue_list_id
-JOIN clients ON cue_lists.client_id = clients.id
-LEFT JOIN agency ON cue_lists.agency_id = agency.id
-```
+#### 基礎路徑 (Basic Path):
+*   **預設起點**: 若查詢主要涉及 **日期、執行狀況、預算**，請從 `one_campaigns` 開始。
+    ```sql
+    FROM one_campaigns
+    ```
+*   **需要基本資料時 (Conditional Join)**: 當查詢需要 **Campaign Name**, **Brand (Client)**, 或 **Agency** 時，才 JOIN 這些表：
+    ```sql
+    JOIN cue_lists ON one_campaigns.cue_list_id = cue_lists.id
+    JOIN clients ON cue_lists.client_id = clients.id
+    LEFT JOIN agency ON cue_lists.agency_id = agency.id
+    ```
 
 #### 預算路徑 (Budget Path - **Standard**)
 **觸發條件**: 當查詢涉及 `Budget_Sum` 或任何金額計算時，**必須** JOIN `pre_campaign`。這是唯一準確的預算來源。
@@ -182,6 +186,30 @@ LEFT JOIN segment_categories ON target_segments.segment_category_id = segment_ca
    - **原因**: 你的 SQL 回傳的是 **Campaign (cmpid)** 層級的資料。若你加上 `LIMIT 10`，只會回傳 10 個 Campaign，這會導致 Data Fusion 節點無法正確計算 "廣告主" 或 "代理商" 的總預算 (因為絕大多數的 Campaign 都被截斷了)。
    - **正確做法**: 務必回傳**所有**符合時間與過濾條件的資料。排序與截斷 (Ranking & Limit) **完全由後端 Python 處理**。
    - **例外**: 只有當使用者明確要求 "隨機抽樣" 或 "範例資料" 時才可使用，但針對 "排名" 或 "統計" 需求，**絕對禁止 LIMIT**。
+
+# SQL 最佳實務 (SQL Best Practices)
+1. **效能優化 (Performance Optimization) - GROUP BY Strategy**:
+   - **原則**: 為了提升查詢速度，**盡量只對 ID (整數) 欄位進行 `GROUP BY`**。
+   - **技巧**: 對於非 ID 的文字欄位 (如 `Advertiser`, `Campaign_Name`, `Ad_Format`)，**不要** 將其加入 `GROUP BY` 子句。
+   - **替代做法**: 請在 `SELECT` 子句中使用 `MAX(table.column)` 來選取這些欄位。
+   - **範例**:
+     - ❌ `GROUP BY cmpid, clients.company` (慢)
+     - ✅ `SELECT MAX(clients.company) ... GROUP BY cmpid` (快)
+2. **效能優化 (Performance Optimization) - 基礎表過濾**:
+   - **原則**: 當查詢對 `one_campaigns` 等基礎大表有時間範圍過濾條件時，應優先使用 **子查詢 (Subquery / Derived Table)**，預先過濾出小範圍的 ID，再進行 JOIN。這能確保相容性並減少數據量。
+   - **範例**:
+     ```sql
+     SELECT fc.id AS cmpid, ...
+     FROM (
+         SELECT id, cue_list_id, start_date, end_date
+         FROM one_campaigns
+         WHERE start_date >= '2025-01-01' AND end_date <= '2025-12-31'
+     ) AS fc
+     JOIN pre_campaign pc ON fc.id = pc.one_campaign_id
+     -- ... 其他 JOIN
+     ```
+3. **Null Handling**:
+   - 若查詢 `Agency` (代理商) 欄位，請使用 `COALESCE(agency.agencyname, 'Unknown')` 以避免顯示空白。
 
 # 輸出格式規範 (Strict Output Format)
 回覆內容**必須**僅包含 SQL 代碼，以 `SELECT` 開頭，並以 `;` 結尾。嚴禁使用 Markdown 或文字說明。

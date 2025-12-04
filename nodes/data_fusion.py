@@ -120,7 +120,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         def join_unique_func(x):
             return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
 
-        exclude_keywords = ['start_date', 'end_date', 'schedule_dates', 'id', 'date_month']
+        exclude_keywords = ['schedule_dates', 'id', 'date_month']
         
         # Group by EVERYTHING except segment and exclude_keywords
         group_keys = ['cmpid']
@@ -178,7 +178,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if seg_col and seg_col in df_mysql.columns:
         mysql_cols_to_keep_for_merge.append(seg_col)
     
-    strict_exclude_keywords = ['start_date', 'end_date', 'schedule_dates', 'id', 'date_month', 'date_year'] 
+    strict_exclude_keywords = ['schedule_dates', 'id', 'date_month', 'date_year'] 
     
     for col in df_mysql.columns:
         if col in mysql_cols_to_keep_for_merge: continue
@@ -299,7 +299,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             final_df = final_series.to_frame().T
             final_df['Item'] = 'Total'
     else:
-            # Case B: Group By Dimensions
+    # Case B: Group By Dimensions
             agg_dict = {col: 'sum' for col in numeric_cols}
             
             # Explicitly force SUM for known metric columns if they exist, regardless of type detection
@@ -310,6 +310,11 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
                          # Try to convert again just in case
                          merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce').fillna(0)
                          agg_dict[col] = 'sum'
+                         
+            # Preserve Date Columns if they exist
+            for date_col in ['start_date', 'end_date']:
+                if date_col in merged_df.columns and date_col not in group_cols:
+                    agg_dict[date_col] = 'max'
         
             def join_unique(x):            
                 return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
@@ -413,6 +418,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
              if (final_df[kpi] == 0).all(): continue
              if kpi not in cols_to_keep:
                 cols_to_keep.append(kpi)
+                
+    # CONDITIONAL KEEP DATES: Only keep start_date/end_date if Campaign-level dimensions are in group_cols
+    # This prevents showing misleading campaign-level dates when aggregated by month/advertiser.
+    if any(dim in group_cols for dim in ['Campaign_Name', 'cmpid']):
+        for date_col in ['start_date', 'end_date']:
+            if date_col in final_df.columns and date_col not in cols_to_keep:
+                cols_to_keep.append(date_col)
 
     if cols_to_keep:
         final_df = final_df[cols_to_keep]
@@ -490,6 +502,23 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     for col in final_df.columns:
         if 'budget' in col.lower() and pd.api.types.is_numeric_dtype(final_df[col]):
              final_df[col] = final_df[col].fillna(0).astype(int)
+
+    # Reorder Columns: Campaign Name -> Dates -> Format -> Segment -> Metrics
+    preferred_order = ['Campaign_Name', 'start_date', 'end_date', 'Ad_Format', 'Segment_Category', 'Segment_Category_Name']
+    new_cols = []
+    
+    # Add preferred columns if they exist
+    for p_col in preferred_order:
+        match = next((c for c in final_df.columns if c.lower() == p_col.lower()), None)
+        if match:
+            new_cols.append(match)
+            
+    # Add remaining columns
+    for col in final_df.columns:
+        if col not in new_cols:
+            new_cols.append(col)
+            
+    final_df = final_df[new_cols]
 
     return {
         "final_dataframe": final_df.to_dict('records'),
