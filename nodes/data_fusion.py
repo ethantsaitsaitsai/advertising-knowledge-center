@@ -63,16 +63,38 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # Helper: 安全的數值轉型函式
     def safe_numeric_convert(df, name="df"):
         for col in df.columns:
-            if col.lower() in ['cmpid', 'id', 'ad_format_type_id']: continue
+            col_lower = col.lower()
+            if col_lower in ['cmpid', 'id', 'ad_format_type_id']: continue
+            
+            # 強制嘗試轉換包含 'budget', 'sum', 'price', 'count' 的欄位
+            is_metric_candidate = any(k in col_lower for k in ['budget', 'sum', 'price', 'count', 'impression', 'click', 'view'])
+            
+            if is_metric_candidate:
+                 # 先移除可能的千分位逗號
+                if df[col].dtype == 'object':
+                    df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+            
             converted = pd.to_numeric(df[col], errors='coerce')
-            if converted.isna().all() and df[col].notna().any():
+            
+            # 如果轉換後全是 NaN，但原本不是全空，則保留原值 (可能是純文字欄位)
+            # 但對於 metric candidates，我們傾向於認為它是數值，保留 NaN 也比錯誤的文字好
+            if converted.isna().all() and df[col].notna().any() and not is_metric_candidate:
                 continue 
+            
+            # 覆蓋
             df[col] = converted
         return df
 
     df_mysql = safe_numeric_convert(df_mysql, "MySQL")
     if not df_ch.empty:
         df_ch = safe_numeric_convert(df_ch, "CH")
+
+    # DEBUG: Check Total Budget from Raw SQL Data
+    raw_budget_total = 0
+    budget_col = next((c for c in df_mysql.columns if 'budget' in c.lower()), None)
+    if budget_col:
+        raw_budget_total = df_mysql[budget_col].sum()
+        debug_logs.append(f"DEBUG: Raw SQL Budget Total: {raw_budget_total:,.0f}")
 
     # Ensure ID columns are numeric/consistent
     for df in [df_mysql, df_ch]:
@@ -81,6 +103,11 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if 'ad_format_type_id' in df.columns:
             df['ad_format_type_id'] = pd.to_numeric(df['ad_format_type_id'], errors='coerce')
 
+    # STRING NORMALIZATION: Strip whitespace from all object columns to prevent GroupBy fragmentation
+    for col in df_mysql.columns:
+        if df_mysql[col].dtype == 'object':
+            df_mysql[col] = df_mysql[col].astype(str).str.strip()
+    
     # ============================================================
     # Pre-Aggregation
     # ============================================================
@@ -189,6 +216,14 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         merged_df = df_mysql
 
     merged_df = merged_df.fillna(0)
+    
+    # DEBUG: Check Budget After Merge
+    merge_budget_total = 0
+    budget_col_merge = next((c for c in merged_df.columns if 'budget' in c.lower()), None)
+    if budget_col_merge:
+        merge_budget_total = merged_df[budget_col_merge].sum()
+        debug_logs.append(f"DEBUG: Post-Merge Budget Total: {merge_budget_total:,.0f}")
+
     debug_logs.append(f"Merged Cols: {list(merged_df.columns)}")
 
     # 4. 二次聚合 (Re-aggregation)
@@ -264,18 +299,36 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             final_df = final_series.to_frame().T
             final_df['Item'] = 'Total'
     else:
-        # Case B: Group By Dimensions
-        agg_dict = {col: 'sum' for col in numeric_cols}
-        def join_unique(x):
-            return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
-        for c in concat_cols:
-            agg_dict[c] = join_unique
+            # Case B: Group By Dimensions
+            agg_dict = {col: 'sum' for col in numeric_cols}
             
-        # CRITICAL FIX: Also use dropna=False here to preserve groups with NaN keys (if any ID keys remain)
-        if not agg_dict:
-            final_df = merged_df[group_cols].drop_duplicates().reset_index(drop=True)
-        else:
-            final_df = merged_df.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
+            # Explicitly force SUM for known metric columns if they exist, regardless of type detection
+            for col in merged_df.columns:
+                col_lower = col.lower()
+                if 'budget' in col_lower or 'sum' in col_lower:
+                     if col not in group_cols and col not in agg_dict:
+                         # Try to convert again just in case
+                         merged_df[col] = pd.to_numeric(merged_df[col], errors='coerce').fillna(0)
+                         agg_dict[col] = 'sum'
+        
+            def join_unique(x):            
+                return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
+        
+            for c in concat_cols:
+                agg_dict[c] = join_unique
+                
+            # CRITICAL FIX: Also use dropna=False here to preserve groups with NaN keys (if any ID keys remain)
+            if not agg_dict:
+                final_df = merged_df[group_cols].drop_duplicates().reset_index(drop=True)
+            else:
+                final_df = merged_df.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
+
+    # DEBUG: Check Budget After Aggregation
+    agg_budget_total = 0
+    budget_col_agg = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+    if budget_col_agg:
+        agg_budget_total = final_df[budget_col_agg].sum()
+        debug_logs.append(f"DEBUG: Post-Agg Budget Total: {agg_budget_total:,.0f}")
 
     # 5. 重算衍生指標
     all_cols_lower = {c.lower(): c for c in final_df.columns}
@@ -369,12 +422,26 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     
     if calc_type == 'Ranking':
         sort_col = None
+        
+        # Strategy 1: Use explicitly requested metrics (Smart Priority)
         if requested_metrics_lower:
-            first_req = requested_metrics_lower[0]
-            candidates = metric_map.get(first_req, [first_req])
-            if 'ctr' in first_req: candidates = ['CTR']
-            if 'vtr' in first_req: candidates = ['VTR']
-            if 'er' in first_req: candidates = ['ER']
+            # Check if any KPI is requested, prioritize Rate metrics over Volume metrics for "Ranking"
+            kpi_candidates = ['ctr', 'vtr', 'er']
+            found_kpi = None
+            for req in requested_metrics_lower:
+                if any(k in req for k in kpi_candidates):
+                    found_kpi = req
+                    break
+            
+            target_metric = found_kpi if found_kpi else requested_metrics_lower[0]
+            
+            # Map generic terms to specific columns
+            candidates = metric_map.get(target_metric, [target_metric])
+            
+            # Smart Mapping for common abbreviations
+            if 'ctr' in target_metric: candidates = ['CTR']
+            if 'vtr' in target_metric: candidates = ['VTR']
+            if 'er' in target_metric: candidates = ['ER']
             
             for cand in candidates:
                 match = next((c for c in final_df.columns if cand.lower() in c.lower()), None)
@@ -382,6 +449,25 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
                     sort_col = match
                     break
         
+        # Strategy 2: Smart Defaults for "Performance" (Qualitative > Quantitative)
+        if not sort_col:
+            # Priority: CTR > VTR > ER > Clicks > Impressions
+            kpi_priority = ['CTR', 'VTR', 'ER']
+            for kpi in kpi_priority:
+                if kpi in final_df.columns:
+                    sort_col = kpi
+                    break
+        
+        # Strategy 3: Quantitative Fallback
+        if not sort_col:
+            qty_priority = ['total_clicks', 'clicks', 'total_impressions', 'impressions']
+            for qty in qty_priority:
+                match = next((c for c in final_df.columns if qty in c.lower()), None)
+                if match:
+                    sort_col = match
+                    break
+
+        # Strategy 4: Budget Fallback
         if not sort_col:
             sort_col = next((c for c in final_df.columns if 'budget' in c.lower()), None)
             
@@ -407,5 +493,5 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     return {
         "final_dataframe": final_df.to_dict('records'),
-        "final_result_text": " | ".join(debug_logs)
+        "final_result_text": f"MySQL Rows: {len(df_mysql)} | " + " | ".join(debug_logs)
     }
