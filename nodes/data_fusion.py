@@ -351,16 +351,14 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     view3s_col = find_col(['views_3s', 'view3s'])
     eng_col = find_col(['total_engagements', 'eng'])
     
-    if click_col:
-        ctr_denom_col = eff_imp_col if eff_imp_col else imp_col
-        if ctr_denom_col:
-             final_df['CTR'] = final_df.apply(
-                lambda x: (x[click_col] / x[ctr_denom_col] * 100) if x[ctr_denom_col] > 0 else 0, axis=1
-            ).round(2)
+    if click_col and imp_col:
+        final_df['CTR'] = final_df.apply(
+            lambda x: (x[click_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
+        ).round(2)
         
-    if view100_col and imp_col:
+    if view3s_col and imp_col:
         final_df['VTR'] = final_df.apply(
-            lambda x: (x[view100_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
+            lambda x: (x[view3s_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
         ).round(2)
         
     if eng_col and imp_col:
