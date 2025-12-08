@@ -42,6 +42,10 @@ class AgentState(TypedDict):
     is_valid_sql: bool
     expecting_user_clarification: Optional[bool]
     intent_type: Optional[str]
+    query_level: Optional[str]  # Added query_level
+    needs_performance: Optional[bool] # Added needs_performance
+    primary_entity: Optional[str] # Added primary_entity
+    budget_note: Optional[str]  # Added budget_note
     final_dataframe: Optional[List[dict]]
     limit: Optional[int] # Add limit to state
     retry_count: Optional[int] # Add retry count

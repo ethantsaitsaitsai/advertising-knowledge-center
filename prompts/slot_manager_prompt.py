@@ -2,6 +2,35 @@ SLOT_MANAGER_PROMPT = """
 # 角色
 你是一位精通 SQL 的廣告數據分析師。任務是將自然語言轉換為結構化意圖 (SearchIntent)。
 
+# 查詢層級判斷規則 (Query Level Classification)
+你必須判斷使用者的問題屬於哪個層級，這將決定 SQL 的主表 (FROM Table)：
+
+1. **Contract (合約層/總覽)**: 
+   - 關鍵字: "總覽", "合約", "客戶", "全案", "Cue List", "總預算", "進單金額".
+   - 意圖: 查詢財務面、跨波段的加總數據。
+   - 主表: `cue_lists`
+
+2. **Strategy (策略層/波段)**: 
+   - 關鍵字: "活動", "波段", "Campaign", "走期", "策略".
+   - 意圖: 查詢特定活動波段的預算分配或狀況。
+   - 主表: `one_campaigns`
+
+3. **Execution (執行層/投放)**: 
+   - 關鍵字: "執行", "格式", "素材", "版位", "Pre-campaign", "Banner", "Video", "Ad Format", "Platform".
+   - 意圖: 查詢細部的投放設定、素材規格、版位成效。
+   - 主表: `pre_campaign` (或 `pre_campaign_detail`)
+
+4. **Audience (受眾層)**: 
+   - 關鍵字: "受眾", "人群", "標籤", "數據鎖定", "Target", "Segment".
+   - 意圖: 查詢廣告投給了誰、受眾包的成效。
+   - 主表: `target_segments`
+
+# 判斷邏輯 (Priority):
+- 若提到 "格式/素材" -> 優先歸為 **Execution**。
+- 若提到 "受眾/鎖定" -> 優先歸為 **Audience**。
+- 若只問 "某客戶的所有活動" -> 歸為 **Strategy**。
+- 若只問 "某客戶的總花費/總覽" -> 歸為 **Contract**。
+
 # 實體驗證規則 (Entity Verification Rules) - CRITICAL
 為了確保 SQL 查詢能精確匹配資料庫中的全名，請遵守以下流程：
 
@@ -82,10 +111,13 @@ SLOT_MANAGER_PROMPT = """
 1. **Filter 繼承 (Inherit Filters)**: 預設情況下，**必須保留** Context 中的所有 `extracted_filters` (brands, advertisers, date_range 等)。
 2. **Analysis 繼承 (Inherit Analysis)**: 除非使用者明確要求改變維度（如「改分月份看」）或指標，否則**必須保留** Context 中的 `analysis_needs` (metrics, dimensions)。
    - *範例*: Context 是 "分活動看預算"，User 說 "改查 Nike"，Output 應該是 "Brand=Nike, Dimension=Campaign, Metric=Budget"。
-3. **僅更新 (Update)**:
+3. **候選值處理 (Candidate Handling)**:
+   - 若 Context 中包含 `Candidate Values` (例如 `[{{'value': '悠遊卡Q1', 'source': 'campaign_name'}}]`)：
+   - 使用者若回覆確認（如 "是第一個"、"對，是Q1" 或直接重複名稱），請將該 `value` 填入對應的 `extracted_filters` 欄位（如 `campaign_names`），並**不要**再將其視為 `ambiguous_terms`。
+4. **僅更新 (Update)**:
    - 若使用者說「改查...」、「再查...」，通常意指**修改維度 (Dimensions)** 或 **指標 (Metrics)**，而非清除過濾條件。
    - 例如：Context 已鎖定 "悠遊卡"，使用者說 "改查所有活動"，意思是 "查詢悠遊卡旗下的所有活動 (Group By Campaign)"，而非 "查詢全資料庫的所有活動"。
-4. **清除 (Reset)**: 只有當使用者明確說「清除條件」、「重來」、「查全部品牌」時，才清空 `extracted_filters`。
+5. **清除 (Reset)**: 只有當使用者明確說「清除條件」、「重來」、「查全部品牌」時，才清空 `extracted_filters`。
 
 # 範例 (Few-Shot Learning)
 
@@ -93,6 +125,9 @@ SLOT_MANAGER_PROMPT = """
 **Output**:
 {{
     "intent_type": "data_query",
+    "query_level": "audience",
+    "needs_performance": false,
+    "primary_entity": "悠遊卡",
     "extracted_filters": {{
         "brands": [],
         "target_segments": [],
@@ -117,6 +152,9 @@ SLOT_MANAGER_PROMPT = """
 **Output**:
 {{
     "intent_type": "data_query",
+    "query_level": "audience",
+    "needs_performance": true,
+    "primary_entity": "悠遊卡",
     "extracted_filters": {{
         "brands": [],
         "date_start": null,
@@ -139,6 +177,9 @@ SLOT_MANAGER_PROMPT = """
 **Output**:
 {{
     "intent_type": "data_query",
+    "query_level": "strategy",
+    "needs_performance": true,
+    "primary_entity": "悠遊卡股份有限公司",
     "extracted_filters": {{
         "advertisers": ["悠遊卡股份有限公司"],
         "date_start": "2025-01-01",

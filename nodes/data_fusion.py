@@ -518,7 +518,16 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             
     final_df = final_df[new_cols]
 
+    # Generate Budget Note
+    query_level = state.get("query_level", "strategy")
+    budget_note = ""
+    if query_level == "contract":
+        budget_note = "這是合約層級的進單金額 (Booking Amount)，不包含執行細節。"
+    elif query_level in ["execution", "strategy", "audience"]:
+        budget_note = "這是系統設定的執行預算上限 (Execution Budget)。"
+
     return {
         "final_dataframe": final_df.to_dict('records'),
-        "final_result_text": f"MySQL Rows: {len(df_mysql)} | " + " | ".join(debug_logs)
+        "final_result_text": f"MySQL Rows: {len(df_mysql)} | " + " | ".join(debug_logs),
+        "budget_note": budget_note
     }

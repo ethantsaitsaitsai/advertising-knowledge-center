@@ -1,5 +1,13 @@
+from enum import Enum
 from pydantic import BaseModel, Field
-from typing import Optional, List, Literal, Union
+from typing import Optional, List, Literal
+
+
+class QueryLevel(str, Enum):
+    CONTRACT = "contract"        # 對應 cue_lists (總覽/財務)
+    STRATEGY = "strategy"        # 對應 one_campaigns (波段/AM)
+    EXECUTION = "execution"      # 對應 pre_campaign (投放/素材/格式)
+    AUDIENCE = "audience"        # 對應 target_segments (受眾/數據)
 
 
 class DateRange(BaseModel):
@@ -49,6 +57,19 @@ class SearchIntent(BaseModel):
     intent_type: Literal["data_query", "greeting", "other"] = Field(
         ...,
         description="判斷使用者的意圖：'data_query' (查數據), 'greeting' (打招呼/閒聊), 'other' (無關問題)"
+    )
+
+    query_level: QueryLevel = Field(
+        QueryLevel.STRATEGY, 
+        description="The hierarchical level of the query. Determines the FROM table."
+    )
+    primary_entity: Optional[str] = Field(
+        None,
+        description="The primary entity name (e.g. '悠遊卡', 'Nike') found in the query."
+    )
+    needs_performance: bool = Field(
+        False, 
+        description="Whether to query ClickHouse for performance metrics (Impression, Click...)."
     )
 
     # 1. 過濾條件 (對應 SQL WHERE)

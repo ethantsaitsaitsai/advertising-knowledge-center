@@ -103,6 +103,11 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
     stats = calculate_insights(df)
     insights_summary = "\n".join([f"- {key}: {value:.2f}" if isinstance(value, (int, float))
                                   else f"- {key}: {value}" for key, value in stats.items()])
+    
+    budget_note = state.get("budget_note")
+    if budget_note:
+        insights_summary += f"\n- **Budget Note**: {budget_note}"
+
     if not insights_summary:
         insights_summary = "沒有足夠的數據來生成統計摘要。"
 

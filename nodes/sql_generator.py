@@ -45,6 +45,12 @@ def sql_generator(state: AgentState) -> dict:
 
     chain = prompt | llm
 
+    # 0. Get Query Level
+    query_level = state.get("query_level")
+    if not query_level:
+        # Fallback to STRATEGY if not present (backward compatibility)
+        query_level = "strategy"
+    
     # 1. Handle Metrics & Dimensions
     all_metrics = analysis_needs.get('metrics', [])
     dimensions = analysis_needs.get('dimensions', [])
@@ -78,7 +84,8 @@ def sql_generator(state: AgentState) -> dict:
         "conversation_history": messages,
         "filters": str(current_filters),
         "metrics": str(prompt_analysis_needs),
-        "confirmed_entities": str(confirmed_entities)
+        "confirmed_entities": str(confirmed_entities),
+        "query_level": str(query_level)
     })
 
     base_sql = clean_sql_output(response.content)

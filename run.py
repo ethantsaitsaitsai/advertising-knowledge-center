@@ -36,10 +36,8 @@ def main():
 
         state["messages"].append(HumanMessage(content=user_input))
 
-        # Determine the entry point dynamically
+        # Always start at slot_manager after user input
         entry_point = "slot_manager"
-        if state.get("expecting_user_clarification"):
-            entry_point = "state_updater"
 
         # Invoke the graph with the determined entry point
         final_state = app.invoke(state, {"configurable": {"thread_id": thread_id},

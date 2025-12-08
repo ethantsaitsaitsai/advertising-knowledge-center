@@ -10,23 +10,16 @@ from nodes.ask_for_clarification import ask_for_clarification_node
 from nodes.response_synthesizer import response_synthesizer_node
 from nodes.error_handler import error_handler
 from nodes.entity_search import entity_search_node
-from nodes.state_updater import state_updater_node
-from nodes.chitchat import chitchat_node
 from nodes.sql_validator import sql_validator_node
 from nodes.clickhouse_generator import clickhouse_generator_node
 from nodes.clickhouse_executor import clickhouse_executor_node
 from nodes.data_fusion import data_fusion_node
 from nodes.clickhouse_validator import clickhouse_validator_node
 from nodes.clickhouse_error_handler import clickhouse_error_handler_node
+from nodes.chitchat import chitchat_node
 
 
 # --- 既有路由函數 ---
-def route_user_input(state: AgentState) -> Literal["state_updater", "slot_manager"]:
-    if state.get("expecting_user_clarification", False):
-        return "state_updater"
-    return "slot_manager"
-
-
 def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification",
                                                            "sql_generator", "chitchat"]:
     intent = state.get("intent_type", "data_query")
@@ -41,20 +34,6 @@ def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask
 
 def route_after_entity_search(state: AgentState) -> Literal["ask_for_clarification", "sql_generator"]:
     if state.get("candidate_values"):
-        return "ask_for_clarification"
-    return "sql_generator"
-
-
-def route_after_state_updater(state: AgentState) -> Literal["entity_search", "ask_for_clarification", "sql_generator"]:
-    """
-    Determines the next step after state update.
-    If the user provided new ambiguous terms (e.g. asked a new question), go back to entity search.
-    If there are missing slots, go to clarification.
-    Otherwise, proceed to SQL generation.
-    """
-    if state.get("ambiguous_terms"):
-        return "entity_search"
-    if state.get("missing_slots"):
         return "ask_for_clarification"
     return "sql_generator"
 
@@ -76,15 +55,8 @@ def route_after_mysql_execution(state: AgentState) -> Literal["error_handler",
     if state.get("error_message"):
         return "error_handler"
 
-    analysis_needs = state.get("analysis_needs", {})
-    metrics = analysis_needs.get("metrics", [])
-
-    ch_metrics = [
-        "Impression_Sum", "Click_Sum", "View3s_Sum",
-        "Q100_Sum", "CTR_Calc", "CPC_Calc", "VTR_Calc", "ER_Calc"
-    ]
-
-    if any(m in ch_metrics for m in metrics):
+    # Use the explicit flag set by SlotManager
+    if state.get("needs_performance"):
         return "clickhouse_generator"
 
     # If no CH metrics, go straight to data fusion
@@ -124,7 +96,6 @@ workflow = StateGraph(AgentState)
 workflow.add_node("slot_manager", slot_manager_node)
 workflow.add_node("entity_search", entity_search_node)
 workflow.add_node("ask_for_clarification", ask_for_clarification_node)
-workflow.add_node("state_updater", state_updater_node)
 workflow.add_node("sql_generator", sql_generator)
 workflow.add_node("sql_validator", sql_validator_node)
 workflow.add_node("sql_executor", sql_executor)
@@ -141,14 +112,7 @@ workflow.add_node("data_fusion", data_fusion_node)
 # --- Set Edges ---
 
 # Entry Point
-workflow.add_conditional_edges(
-    START,
-    route_user_input,
-    {
-        "slot_manager": "slot_manager",
-        "state_updater": "state_updater",
-    },
-)
+workflow.add_edge(START, "slot_manager")
 
 # SlotManager Routing
 workflow.add_conditional_edges(
@@ -167,17 +131,6 @@ workflow.add_conditional_edges(
     "entity_search",
     route_after_entity_search,
     {
-        "ask_for_clarification": "ask_for_clarification",
-        "sql_generator": "sql_generator",
-    },
-)
-
-# State Updater Routing
-workflow.add_conditional_edges(
-    "state_updater",
-    route_after_state_updater,
-    {
-        "entity_search": "entity_search",
         "ask_for_clarification": "ask_for_clarification",
         "sql_generator": "sql_generator",
     },

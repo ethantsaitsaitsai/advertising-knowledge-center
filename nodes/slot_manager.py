@@ -30,6 +30,11 @@ def slot_manager_node(state: AgentState):
 
     # 建構傳給 LLM 的 context 字串
     context_string = f"Filters: {current_filters}, Analysis: {current_analysis}, Limit: {current_limit}"
+    
+    # Inject Candidates if available (Critical for Confirmation Flow)
+    candidate_values = state.get("candidate_values", [])
+    if candidate_values:
+        context_string += f", Candidate Values (User might select one): {candidate_values}"
 
     result: SearchIntent = structured_llm.invoke(
         SLOT_MANAGER_PROMPT.format(
@@ -42,6 +47,19 @@ def slot_manager_node(state: AgentState):
     # Use a dictionary keyed by (term, scope) to handle deduplication
     unique_terms_map = {}
 
+    # --- [New Logic] Handle Candidate Values (Confirmation) ---
+    # Check if the user input matches any candidate values from the previous turn
+    candidate_values = state.get("candidate_values", [])
+    if candidate_values:
+        print(f"DEBUG [SlotManager] Checking candidates: {candidate_values}")
+        # Simple heuristic: If user input contains the candidate value, consider it confirmed
+        # In a real-world scenario, the LLM should handle this via context, but strict matching helps.
+        
+        # We rely on the LLM (via SLOT_MANAGER_PROMPT) to put the confirmed value 
+        # into the correct filter slot (e.g., 'brands') because we pass the current_filters context.
+        # However, to help the LLM, we can append candidate info to the context string.
+        pass # Logic handled by Prompt Injection below
+        
     # 1. Add explicitly detected ambiguous terms
     if result.ambiguous_terms:
         for term_obj in result.ambiguous_terms:
@@ -89,6 +107,9 @@ def slot_manager_node(state: AgentState):
     # 4. 回傳更新後的狀態
     return {
         "intent_type": result.intent_type,
+        "query_level": result.query_level,
+        "needs_performance": result.needs_performance,  # Add this too
+        "primary_entity": result.primary_entity,
         "extracted_filters": {
             "brands": result.brands,
             "advertisers": result.advertisers,
@@ -103,5 +124,7 @@ def slot_manager_node(state: AgentState):
         "analysis_needs": result.analysis_needs.model_dump(),
         "ambiguous_terms": final_ambiguous_terms,
         "missing_slots": result.missing_info,
-        "limit": result.limit
+        "limit": result.limit,
+        "candidate_values": [], # Clear candidates as we have processed them
+        "expecting_user_clarification": False # Reset flag
     }

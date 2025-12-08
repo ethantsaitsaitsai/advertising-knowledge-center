@@ -15,3 +15,4 @@ data/
 .langgraph_api
 .env
 .DS_Store
+dev.sh
