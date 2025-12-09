@@ -29,7 +29,7 @@ def campaign_node(state: AgentState):
     last_message = result["messages"][-1]
     
     # Context Window Protection
-    MAX_CONTENT_LENGTH = 2000
+    MAX_CONTENT_LENGTH = 10000
     if len(last_message.content) > MAX_CONTENT_LENGTH:
         print(f"DEBUG [CampaignNode] Truncating output from {len(last_message.content)} chars.")
         last_message.content = last_message.content[:MAX_CONTENT_LENGTH] + "\n... [Output Truncated for Supervisor] ..."
@@ -45,6 +45,12 @@ def campaign_node(state: AgentState):
                 tool_output = json.loads(msg.content)
                 if isinstance(tool_output, dict) and "data" in tool_output:
                     print(f"DEBUG [CampaignNode] Extracted {len(tool_output['data'])} rows of campaign data.")
+                    
+                    # Debug: Print Generated SQL
+                    sqls = tool_output.get("generated_sqls", [])
+                    if sqls:
+                        print(f"DEBUG [CampaignNode] Generated SQL:\n{sqls[0]}")
+                        
                     campaign_data = tool_output # Store the full structure (data + columns)
                     break
             except json.JSONDecodeError:

@@ -75,7 +75,7 @@ For now, let's inject.
     last_message = result["messages"][-1]
     
     # --- Optimization: Context Window Protection ---
-    MAX_CONTENT_LENGTH = 2000
+    MAX_CONTENT_LENGTH = 10000
     if len(last_message.content) > MAX_CONTENT_LENGTH:
         print(f"DEBUG [PerformanceNode] Truncating output from {len(last_message.content)} chars.")
         last_message.content = last_message.content[:MAX_CONTENT_LENGTH] + "\n... [Output Truncated for Supervisor] ..."

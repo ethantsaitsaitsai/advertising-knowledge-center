@@ -47,5 +47,33 @@ INTENT_ANALYZER_PROMPT = """
    - 若使用者明確詢問「成效」、「表現」、「曝光」、「點擊」、「CTR」、「VTR」，設為 True。
    - 若只問「預算」、「金額」、「走期」，設為 False。
 
+4. **Missing Info**:
+   - 若 `query_level` 為 data query 相關 (contract/strategy/execution/audience)，且使用者**完全沒有**提到時間詞（如 "今年", "2024", "最近"），請將 "date_range" 加入 `missing_info`。
+
+# 澄清回覆處理 (Clarification Handling) - CRITICAL
+當對話歷史中，AI 上一輪回覆是**列出選項並詢問使用者**（例如：「您是指品牌 A 還是品牌 B？」），而使用者本輪的回覆是：
+   - **直接選擇一個選項**（例如：「品牌 A」、「悠遊卡股份有限公司」）。
+   - **選擇序號**（例如：「1」、「第一個」）。
+   - **確認**（例如：「對」、「是」）。
+   
+   則請從 AI 上一輪的回覆中找到使用者確認的實體，並將其填入 `entities` 欄位。
+
+# 範例 (Few-Shot Examples for Clarification)
+**範例 1: 確認實體**
+- AI (上一個訊息): "您是指品牌「悠遊卡」還是「悠遊卡股份有限公司」？"
+- User: "悠遊卡股份有限公司"
+- Output: {{ "query_level": "strategy", "entities": ["悠遊卡股份有限公司"], ... }}
+
+**範例 2: 確認序號**
+- AI (上一個訊息): "您是指 1. 品牌 A 還是 2. 品牌 B？"
+- User: "1"
+- Output: {{ "query_level": "strategy", "entities": ["品牌 A"], ... }}
+
+**範例 3: 確認簡稱**
+- AI (上一個訊息): "您是指品牌「悠遊卡」還是「悠遊卡股份有限公司」？"
+- User: "悠遊卡"
+- Output: {{ "query_level": "strategy", "entities": ["悠遊卡"], ... }}
+
+
 請輸出符合 UserIntent 結構的 JSON。
 """

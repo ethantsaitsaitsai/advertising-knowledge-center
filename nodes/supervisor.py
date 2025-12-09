@@ -55,8 +55,10 @@ def supervisor_node(state: AgentState):
         if msg_type == 'ai' and not tool_calls:
              print(f"DEBUG [Supervisor] Last message was from Worker: {content[:50]}...")
              # Inject a temporary system hint to break the loop
+             # We do this by appending a system message to the context passed to invoke
+             # Note: This doesn't change the persistent state, only the prompt context.
              messages = list(messages) + [
-                 {"role": "system", "content": "The previous agent has completed its task and provided data. If the user's request is satisfied, choose FINISH. Do NOT call the same agent again immediately."}
+                 {"role": "system", "content": "The previous agent has responded. If this response is a question for the user (clarification) or a final result, choose FINISH to return control to the user. Do NOT call the same agent again immediately."}
              ]
     
     # Create the chain using with_structured_output
@@ -69,6 +71,14 @@ def supervisor_node(state: AgentState):
     invoke_state = state.copy()
     if messages != state["messages"]:
         invoke_state["messages"] = messages
+    
+    # Inject user_intent into prompt context
+    user_intent = state.get("user_intent")
+    if user_intent:
+        # Pydantic V2 requires model_dump_json instead of json(indent=2)
+        invoke_state["user_intent_context"] = f"User Intent Analysis:\n{user_intent.model_dump_json(indent=2)}"
+    else:
+        invoke_state["user_intent_context"] = "User Intent: Not available."
 
     result = supervisor_chain.invoke(invoke_state)
     

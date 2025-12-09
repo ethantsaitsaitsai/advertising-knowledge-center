@@ -27,3 +27,8 @@ class UserIntent(BaseModel):
     is_ambiguous: bool = Field(
         False, description="True if the entity name seems ambiguous or needs clarification."
     )
+    
+    missing_info: List[str] = Field(
+        default_factory=list,
+        description="List of missing information that needs to be clarified (e.g. ['date_range'])."
+    )

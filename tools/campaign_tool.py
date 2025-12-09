@@ -71,12 +71,14 @@ def query_campaign_data(
         return {
             "error": None,
             "data": exec_result.get("sql_result", []),
-            "columns": exec_result.get("sql_result_columns", [])
+            "columns": exec_result.get("sql_result_columns", []),
+            "generated_sqls": gen_result.get("generated_sqls", []) # Include SQL for debugging
         }
         
     except Exception as e:
         return {
             "error": str(e),
             "data": [],
-            "columns": []
+            "columns": [],
+            "generated_sqls": []
         }
