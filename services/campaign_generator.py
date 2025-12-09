@@ -40,7 +40,7 @@ def sql_generator(state: AgentState) -> dict:
     prompt = ChatPromptTemplate.from_messages([
         ("system", SQL_GENERATOR_PROMPT),
         MessagesPlaceholder(variable_name="conversation_history"),
-        ("user", "篩選條件 (Filters): {filters}\n\n分析指標 (Metrics): {metrics}\n\n         使用者已確認的實體 (Confirmed Entities): {confirmed_entities}\n\nSQL 查詢:")
+        ("user", "查詢層級 (Query Level): {query_level}\n\n篩選條件 (Filters): {filters}\n\n分析指標 (Metrics): {metrics}\n\n         使用者已確認的實體 (Confirmed Entities): {confirmed_entities}\n\nSQL 查詢:")
     ])
 
     chain = prompt | llm

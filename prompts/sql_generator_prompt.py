@@ -24,6 +24,7 @@ SQL_GENERATOR_PROMPT = """
 * **Key**: `id` (即 **cmpid**)
 * **欄位**: `start_date`, `end_date`, `status`, `name`.
 * **Join**: -> `cue_lists` (cue_list_id).
+* **❌ 禁止**: 此表**沒有** `client_id` 或 `agency_id`。嚴禁寫 `one_campaigns.client_id`。必須透過 `cue_lists` 轉接。
 
 ## 3. `pre_campaign` (執行層)
 * **用途**: 執行預算、投放設定。
@@ -44,6 +45,9 @@ SQL_GENERATOR_PROMPT = """
 
 # 查詢層級策略 (Query Level Strategy) - CRITICAL
 請根據輸入變數 `query_level` 決定你的 SQL 策略。
+
+### **資料膨脹防護 (Data Explosion Prevention) - Subquery 策略**
+為了避免 1-to-Many Join 導致的預算重複計算 (Cartesian Product)，當查詢包含 **Budget_Sum** 且涉及高基數維度 (Ad_Format, Segment) 時，**必須** 使用 **子查詢 (Derived Table)** 先計算好預算，再進行 JOIN。請避免使用 CTE (`WITH` 子句)，以確保對舊版 MySQL 的相容性。
 
 ### A. Level = CONTRACT (合約層)
 *   **情境**: "總覽", "合約總金額", "某客戶的總花費"。
@@ -69,55 +73,59 @@ SQL_GENERATOR_PROMPT = """
 *   **Root Table**: `one_campaigns`
 *   **必須欄位**: `one_campaigns.id AS cmpid`, `one_campaigns.name`, `one_campaigns.start_date`, `one_campaigns.end_date`。
 *   **預算指標**: `SUM(pre_campaign.budget) AS Budget_Sum` (需 Join pre_campaign)。
-*   **SQL Template**:
+*   **SQL Template (Subquery for Compatibility)**:
     ```sql
     SELECT 
-        one_campaigns.id AS cmpid,
-        one_campaigns.name AS Campaign_Name,
-        one_campaigns.start_date,
-        one_campaigns.end_date,
-        SUM(pre_campaign.budget) AS Budget_Sum
-    FROM one_campaigns
-    LEFT JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
+        oc.id AS cmpid,
+        oc.name AS Campaign_Name,
+        oc.start_date,
+        oc.end_date,
+        Budget_Info.Budget_Sum
+    FROM one_campaigns oc
+    LEFT JOIN (
+        -- Pre-calculate budget to avoid fan-out
+        SELECT 
+            one_campaign_id, 
+            SUM(budget) AS Budget_Sum 
+        FROM pre_campaign 
+        GROUP BY one_campaign_id
+    ) AS Budget_Info ON oc.id = Budget_Info.one_campaign_id
     -- ... Join cue_lists/clients if needed
-    GROUP BY one_campaigns.id
     ```
 
 ### C. Level = EXECUTION (執行層)
 *   **情境**: "格式", "素材", "版位成效", "Banner vs Video"。
-*   **Root Table**: `pre_campaign` (或從 `one_campaigns` Join 下來)
-*   **必須欄位**: `one_campaigns.id AS cmpid`, `ad_format_types.title AS Ad_Format`, `ad_format_types.id AS ad_format_type_id`.
-*   **預算指標**: `SUM(pre_campaign.budget) AS Budget_Sum`.
-*   **SQL Template**:
+*   **Root Table**: `pre_campaign`
+*   **策略**: 使用 `GROUP_CONCAT` 聚合格式名稱，避免 Row 膨脹；或若需分組顯示，接受預算重複但在前端標註 (但在 SQL 層盡量保持 Campaign Grain)。
+*   **SQL Template (推薦 - 聚合格式)**:
     ```sql
     SELECT 
         one_campaigns.id AS cmpid,
-        ad_format_types.id AS ad_format_type_id,
-        ad_format_types.title AS Ad_Format,
+        GROUP_CONCAT(DISTINCT ad_format_types.title SEPARATOR '; ') AS Ad_Format,
         SUM(pre_campaign.budget) AS Budget_Sum
     FROM one_campaigns
     JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
-    JOIN pre_campaign_detail ON pre_campaign.id = pre_campaign_detail.pre_campaign_id
-    JOIN ad_format_types ON pre_campaign_detail.ad_format_type_id = ad_format_types.id
-    GROUP BY one_campaigns.id, ad_format_types.id
+    LEFT JOIN pre_campaign_detail ON pre_campaign.id = pre_campaign_detail.pre_campaign_id
+    LEFT JOIN ad_format_types ON pre_campaign_detail.ad_format_type_id = ad_format_types.id
+    GROUP BY one_campaigns.id
     ```
 
 ### D. Level = AUDIENCE (受眾層)
 *   **情境**: "受眾", "人群", "數據鎖定", "Segment"。
-*   **Root Table**: `target_segments` (透過 Link Table 連接)
-*   **必須欄位**: `one_campaigns.id AS cmpid`, `target_segments.description AS Segment_Category`.
+*   **Root Table**: `target_segments`
+*   **關鍵策略**: **必須** 使用 `GROUP_CONCAT` 將多個受眾壓縮為單一欄位，嚴禁對受眾進行 `GROUP BY`，否則預算會膨脹數十倍。
 *   **SQL Template**:
     ```sql
     SELECT 
         one_campaigns.id AS cmpid,
-        target_segments.description AS Segment_Category,
+        GROUP_CONCAT(DISTINCT target_segments.description SEPARATOR '; ') AS Segment_Category,
         SUM(pre_campaign.budget) AS Budget_Sum
     FROM one_campaigns
     JOIN pre_campaign ON one_campaigns.id = pre_campaign.one_campaign_id
-    JOIN campaign_target_pids ON pre_campaign.id = campaign_target_pids.source_id AND campaign_target_pids.source_type = 'PreCampaign'
-    JOIN target_segments ON campaign_target_pids.selection_id = target_segments.id
-    WHERE target_segments.data_source != 'keyword' -- 除非明確查 Keyword
-    GROUP BY one_campaigns.id, target_segments.id
+    LEFT JOIN campaign_target_pids ON pre_campaign.id = campaign_target_pids.source_id AND campaign_target_pids.source_type = 'PreCampaign'
+    LEFT JOIN target_segments ON campaign_target_pids.selection_id = target_segments.id
+    WHERE (target_segments.data_source IS NULL OR target_segments.data_source != 'keyword')
+    GROUP BY one_campaigns.id
     ```
 
 # 共同規則 (Common Rules)

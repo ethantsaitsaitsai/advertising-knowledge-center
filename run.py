@@ -1,9 +1,9 @@
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from graph.graph import app
+from graph.graph import hierarchical_app as app # Rename to app
 from dotenv import load_dotenv
-from schemas.state import AgentState
+from schemas.hierarchical_state import AgentState as HierarchicalAgentState # Use hierarchical state
 from langsmith import uuid7  # Import uuid7
-
+import uuid # For uuid4
 
 def main():
     """
@@ -11,22 +11,18 @@ def main():
     """
     load_dotenv()
 
-    state: AgentState = {
+    state: HierarchicalAgentState = {
         "messages": [],
-        "extracted_filters": {},
-        "analysis_needs": {},
-        "missing_slots": [],
-        "ambiguous_terms": [],
-        "candidate_values": [],
-        "confirmed_entities": [],
-        "generated_sql": None,
-        "sql_result": None,
-        "error_message": None,
-        "expecting_user_clarification": False,  # Initialize the flag
-        "intent_type": None,  # Initialize intent_type
+        "next": "", # Supervisor will set this
+        "supervisor_instructions": "", # Supervisor will set this
+        "user_intent": None, # Intent Analyzer will set this
+        "campaign_data": None,
+        "performance_data": None,
+        "extracted_filters": {}, # For Supervisor context
+        "analysis_needs": {}     # For Supervisor context
     }
 
-    thread_id = str(uuid7())  # Generate a single thread_id for the conversation
+    thread_id = str(uuid.uuid4()) # Generate a single thread_id for the conversation
 
     while True:
         user_input = input("您: ")
@@ -36,24 +32,18 @@ def main():
 
         state["messages"].append(HumanMessage(content=user_input))
 
-        # Always start at slot_manager after user input
-        entry_point = "slot_manager"
-
-        # Invoke the graph with the determined entry point
-        final_state = app.invoke(state, {"configurable": {"thread_id": thread_id},
-                                         "recursion_limit": 50, "start": entry_point})  # Use the same thread_id
+        # The hierarchical graph always starts at "Supervisor"
+        final_state = app.invoke(state, {"configurable": {"thread_id": thread_id}})
 
         state = final_state
 
         print("--- Agent Response ---")
-        last_message = state["messages"][-1]
-
-        # Check if it's a dict or an object
-        if isinstance(last_message, dict):
-            print(last_message.get("content", ""))
-        elif isinstance(last_message, (AIMessage, HumanMessage, BaseMessage)):
+        # Print the last message from the updated state
+        if state["messages"]:
+            last_message = state["messages"][-1]
             print(last_message.content)
-
+        else:
+            print("沒有訊息回傳。")
 
 if __name__ == "__main__":
     main()

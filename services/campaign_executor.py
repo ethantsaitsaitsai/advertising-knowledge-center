@@ -41,6 +41,7 @@ def sql_executor(state: AgentState) -> dict:
                 # Fetch and extend data
                 batch_data = result_proxy.fetchall()
                 all_data.extend(batch_data)
+                result_proxy.close() # Explicitly close to prevent "Commands out of sync"
                 print(f"   Batch {i+1} returned {len(batch_data)} rows.")
 
         print(f"✅ All batches completed. Total rows fetched: {len(all_data)}")

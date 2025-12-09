@@ -40,7 +40,8 @@ def search_sql_like(keyword: str, type_filter: Optional[str] = None) -> List[dic
                 query = text(f"SELECT DISTINCT `{col}` FROM `{table}` WHERE `{col}` LIKE :kw AND {condition} LIMIT 3")
                 result = connection.execute(query, {"kw": f"%{keyword}%"})
                 
-                for row in result:
+                rows = result.fetchall() # Fully consume the result
+                for row in rows:
                     val = row[0]
                     if val:
                         candidates.append({
@@ -50,6 +51,7 @@ def search_sql_like(keyword: str, type_filter: Optional[str] = None) -> List[dic
                             "filter_type": f_type,
                             "score": 1.0 # SQL match is considered perfect match
                         })
+                result.close() # Explicitly close (though fetchall should handle it)
     except Exception as e:
         print(f"⚠️ SQL LIKE search failed: {e}")
         # Fallback will happen naturally as candidates will be empty or partial

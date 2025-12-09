@@ -1,194 +1,39 @@
+
 from langgraph.graph import StateGraph, END, START
-from typing import Literal
 from schemas.state import AgentState
+from nodes.supervisor import supervisor_node
+from nodes.campaign_node_wrapper import campaign_node
+from nodes.performance_node_wrapper import performance_node
+from nodes.intent_analyzer import intent_analyzer_node
 
-# --- 原有節點 Imports ---
-from nodes.slot_manager import slot_manager_node
-from nodes.sql_generator import sql_generator
-from nodes.sql_executor import sql_executor
-from nodes.ask_for_clarification import ask_for_clarification_node
-from nodes.response_synthesizer import response_synthesizer_node
-from nodes.error_handler import error_handler
-from nodes.entity_search import entity_search_node
-from nodes.sql_validator import sql_validator_node
-from nodes.clickhouse_generator import clickhouse_generator_node
-from nodes.clickhouse_executor import clickhouse_executor_node
-from nodes.data_fusion import data_fusion_node
-from nodes.clickhouse_validator import clickhouse_validator_node
-from nodes.clickhouse_error_handler import clickhouse_error_handler_node
-from nodes.chitchat import chitchat_node
-
-
-# --- 既有路由函數 ---
-def route_after_slot_manager(state: AgentState) -> Literal["entity_search", "ask_for_clarification",
-                                                           "sql_generator", "chitchat"]:
-    intent = state.get("intent_type", "data_query")
-    if intent in ["greeting", "other"]:
-        return "chitchat"
-    if state.get("ambiguous_terms"):
-        return "entity_search"
-    if state.get("missing_slots"):
-        return "ask_for_clarification"
-    return "sql_generator"
-
-
-def route_after_entity_search(state: AgentState) -> Literal["ask_for_clarification", "sql_generator"]:
-    if state.get("candidate_values"):
-        return "ask_for_clarification"
-    return "sql_generator"
-
-
-def route_after_validation(state: AgentState) -> Literal["sql_executor", "sql_generator"]:
-    if state.get("is_valid_sql"):
-        return "sql_executor"
-    else:
-        return "sql_generator"
-
-
-def route_after_mysql_execution(state: AgentState) -> Literal["error_handler",
-                                                              "clickhouse_generator",
-                                                              "data_fusion"]:
-    """
-    Determines the next path after MySQL execution.
-    Routes to ClickHouse if CH metrics are needed, otherwise goes directly to data fusion.
-    """
-    if state.get("error_message"):
-        return "error_handler"
-
-    # Use the explicit flag set by SlotManager
-    if state.get("needs_performance"):
-        return "clickhouse_generator"
-
-    # If no CH metrics, go straight to data fusion
-    return "data_fusion"
-
-
-def route_after_ch_validation(state: AgentState) -> Literal["clickhouse_executor", "clickhouse_generator", "data_fusion"]:
-    """
-    Routes to the executor if ClickHouse SQL is valid.
-    If invalid, checks retry count. If retries exceeded, skips CH and goes to Data Fusion.
-    Otherwise, returns to generator for retry.
-    """
-    if state.get("is_valid_sql"):
-        return "clickhouse_executor"
-    
-    retry_count = state.get("retry_count", 0) or 0
-    if retry_count >= 3:
-        print("❌ ClickHouse SQL validation failed too many times. Skipping ClickHouse.")
-        return "data_fusion"
-        
-    return "clickhouse_generator"
-
-
-def check_clickhouse_error(state: AgentState) -> Literal["clickhouse_error_handler", "data_fusion"]:
-    """
-    Checks for errors after ClickHouse execution.
-    """
-    if state.get("error_message"):
-        return "clickhouse_error_handler"
-    return "data_fusion"
-
-
-# Create a new state graph
+# Define the graph
 workflow = StateGraph(AgentState)
 
-# --- Add Nodes ---
-workflow.add_node("slot_manager", slot_manager_node)
-workflow.add_node("entity_search", entity_search_node)
-workflow.add_node("ask_for_clarification", ask_for_clarification_node)
-workflow.add_node("sql_generator", sql_generator)
-workflow.add_node("sql_validator", sql_validator_node)
-workflow.add_node("sql_executor", sql_executor)
-workflow.add_node("error_handler", error_handler)
-workflow.add_node("response_synthesizer", response_synthesizer_node)
-workflow.add_node("chitchat", chitchat_node)
-workflow.add_node("clickhouse_generator", clickhouse_generator_node)
-workflow.add_node("clickhouse_validator", clickhouse_validator_node)
-workflow.add_node("clickhouse_executor", clickhouse_executor_node)
-workflow.add_node("clickhouse_error_handler", clickhouse_error_handler_node)
-workflow.add_node("data_fusion", data_fusion_node)
+# Add Nodes
+workflow.add_node("IntentAnalyzer", intent_analyzer_node) # The Brain
+workflow.add_node("Supervisor", supervisor_node)          # The Manager
+workflow.add_node("CampaignAgent", campaign_node)         # Worker A
+workflow.add_node("PerformanceAgent", performance_node)   # Worker B
 
+# Add Edges
+# Entry point
+workflow.add_edge(START, "IntentAnalyzer")
+workflow.add_edge("IntentAnalyzer", "Supervisor")
 
-# --- Set Edges ---
-
-# Entry Point
-workflow.add_edge(START, "slot_manager")
-
-# SlotManager Routing
+# Supervisor Routing
 workflow.add_conditional_edges(
-    "slot_manager",
-    route_after_slot_manager,
+    "Supervisor",
+    lambda x: x["next"],
     {
-        "entity_search": "entity_search",
-        "ask_for_clarification": "ask_for_clarification",
-        "sql_generator": "sql_generator",
-        "chitchat": "chitchat",
-    },
-)
-
-# Entity Search Routing
-workflow.add_conditional_edges(
-    "entity_search",
-    route_after_entity_search,
-    {
-        "ask_for_clarification": "ask_for_clarification",
-        "sql_generator": "sql_generator",
-    },
-)
-
-# MySQL Validator Routing
-workflow.add_conditional_edges(
-    "sql_validator",
-    route_after_validation,
-    {
-        "sql_executor": "sql_executor",
-        "sql_generator": "sql_generator",
-    },
-)
-
-# MySQL Executor Routing
-workflow.add_conditional_edges(
-    "sql_executor",
-    route_after_mysql_execution,
-    {
-        "error_handler": "error_handler",
-        "clickhouse_generator": "clickhouse_generator",
-        "data_fusion": "data_fusion",  # Path for non-CH metrics
-    },
-)
-
-# ClickHouse branch
-workflow.add_edge("clickhouse_generator", "clickhouse_validator")
-workflow.add_conditional_edges(
-    "clickhouse_validator",
-    route_after_ch_validation,
-    {
-        "clickhouse_executor": "clickhouse_executor",
-        "clickhouse_generator": "clickhouse_generator",  # Loop on invalid SQL (until retry limit)
-        "data_fusion": "data_fusion" # Escape route if too many retries
+        "CampaignAgent": "CampaignAgent",
+        "PerformanceAgent": "PerformanceAgent",
+        "FINISH": END
     }
 )
-workflow.add_conditional_edges(
-    "clickhouse_executor",
-    check_clickhouse_error,
-    {
-        "clickhouse_error_handler": "clickhouse_error_handler",
-        "data_fusion": "data_fusion"  # If CH success, go to fusion
-    }
-)
-workflow.add_edge("clickhouse_error_handler", "clickhouse_generator")  # Retry loop
 
-# All data paths converge on Data Fusion before synthesizing a response
-workflow.add_edge("data_fusion", "response_synthesizer")
+# Workers return to Supervisor
+workflow.add_edge("CampaignAgent", "Supervisor")
+workflow.add_edge("PerformanceAgent", "Supervisor")
 
-
-# Standard Edges
-workflow.add_edge("ask_for_clarification", END)
-workflow.add_edge("sql_generator", "sql_validator")
-workflow.add_edge("error_handler", "sql_generator")
-workflow.add_edge("response_synthesizer", END)
-workflow.add_edge("chitchat", END)
-
-
-# Compile the graph
+# Compile
 app = workflow.compile()

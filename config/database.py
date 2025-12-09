@@ -56,7 +56,13 @@ def get_mysql_db():
                 f"@{current_host}:{current_port}/{db_name}"
             )
 
-            engine = create_engine(db_uri)
+            # Add connection pooling settings
+            engine = create_engine(
+                db_uri,
+                pool_recycle=3600,  # Recycle connections every hour
+                pool_pre_ping=True,  # Check connection before usage (Auto-reconnect)
+                connect_args={'consume_results': True} # Ensure previous results are consumed
+            )
             target_tables = [
                 "cue_lists",
                 "one_campaigns",
