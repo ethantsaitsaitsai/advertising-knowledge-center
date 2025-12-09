@@ -53,7 +53,7 @@ def supervisor_node(state: AgentState):
         # If the last message is from an AI (Worker) and is not a tool call request (it's a result),
         # we act as if the worker has reported back.
         if msg_type == 'ai' and not tool_calls:
-             print(f"DEBUG [Supervisor] Last message was from Worker: {content[:50]}...")
+             print(f"DEBUG [Supervisor] Last message from Worker: {content[:100]}...") # Print a bit more content
              # Inject a temporary system hint to break the loop
              # We do this by appending a system message to the context passed to invoke
              # Note: This doesn't change the persistent state, only the prompt context.

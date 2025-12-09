@@ -25,9 +25,22 @@ def campaign_node(state: AgentState):
         {"messages": messages}
     )
     
-    # 1. Handle Message History Update
+    # The result from invoke will be a dict with "messages" key containing the AIMessage
+    # We need to extract the AIMessage itself.
     last_message = result["messages"][-1]
     
+    # --- Fix: Merge Multipart Content to String ---
+    if isinstance(last_message.content, list):
+        merged_text = ""
+        for block in last_message.content:
+            if isinstance(block, dict) and "text" in block:
+                merged_text += block["text"]
+            elif isinstance(block, str):
+                merged_text += block
+            else:
+                merged_text += str(block)
+        last_message.content = merged_text
+
     # Context Window Protection
     MAX_CONTENT_LENGTH = 10000
     if len(last_message.content) > MAX_CONTENT_LENGTH:
@@ -57,6 +70,6 @@ def campaign_node(state: AgentState):
                 print("DEBUG [CampaignNode] Failed to parse tool output JSON.")
     
     return {
-        "messages": state["messages"] + [last_message],
+        "messages": [last_message],
         "campaign_data": campaign_data
     }
