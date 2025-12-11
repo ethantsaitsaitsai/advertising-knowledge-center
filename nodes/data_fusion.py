@@ -156,7 +156,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # -----------------------------------------------------------
     # Strict MySQL Column Filtering BEFORE Merge
     # -----------------------------------------------------------
-    raw_analysis_needs = state.get('analysis_needs')
+    # Prefer UserIntent analysis_needs
+    user_intent = state.get('user_intent')
+    if user_intent and user_intent.analysis_needs:
+        raw_analysis_needs = user_intent.analysis_needs
+    else:
+        raw_analysis_needs = state.get('analysis_needs')
+        
     if hasattr(raw_analysis_needs, 'model_dump'):
         analysis_needs = raw_analysis_needs.model_dump()
     elif hasattr(raw_analysis_needs, 'dict'):
@@ -225,9 +231,11 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         debug_logs.append(f"DEBUG: Post-Merge Budget Total: {merge_budget_total:,.0f}")
 
     debug_logs.append(f"Merged Cols: {list(merged_df.columns)}")
+    print(f"DEBUG [DataFusion] Merged Columns: {list(merged_df.columns)}")
 
     # 4. 二次聚合 (Re-aggregation)
     dimensions = analysis_needs.get('dimensions', [])
+    print(f"DEBUG [DataFusion] Requested Dimensions: {dimensions}")
     
     intent_to_alias = {
         "Agency": "Agency",
@@ -238,6 +246,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         "廣告計價單位": "Pricing_Unit",
         "Date_Month": "Date_Month",
         "Date_Year": "Date_Year",
+        "Segment_Category": "Segment_Category", # Explicit mapping
         "Segment_Category_Name": "Segment_Category",
         # Fixed Priority: Title (Ad_Format) > ID to ensure titles are used for grouping and display
         "Ad_Format": ["Ad_Format", "ad_format_type_ch", "ad_format_type", "ad_format_type_id_ch", "ad_format_type_id"] 
@@ -335,6 +344,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         agg_budget_total = final_df[budget_col_agg].sum()
         debug_logs.append(f"DEBUG: Post-Agg Budget Total: {agg_budget_total:,.0f}")
 
+    print(f"DEBUG [DataFusion] Pre-KPI Calc Columns: {list(final_df.columns)}")
+
     # 5. 重算衍生指標
     all_cols_lower = {c.lower(): c for c in final_df.columns}
     
@@ -351,78 +362,68 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     view3s_col = find_col(['views_3s', 'view3s'])
     eng_col = find_col(['total_engagements', 'eng'])
     
-    if click_col and imp_col:
-        final_df['CTR'] = final_df.apply(
-            lambda x: (x[click_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
-        ).round(2)
-        
-    if view3s_col and imp_col:
-        final_df['VTR'] = final_df.apply(
-            lambda x: (x[view3s_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
-        ).round(2)
-        
-    if eng_col and imp_col:
-        final_df['ER'] = final_df.apply(
-            lambda x: (x[eng_col] / x[imp_col] * 100) if x[imp_col] > 0 else 0, axis=1
-        ).round(2)
+    print(f"DEBUG [DataFusion] Found imp_col: {imp_col}, eff_imp_col: {eff_imp_col}, click_col: {click_col}, view100_col: {view100_col}, eng_col: {eng_col}")
 
-    # 6. 後處理
-    IGNORED_VALUES = ['Unknown', 'unknown', '', '0', 0]
-    for col in group_cols:
-        if col in final_df.columns:
-            final_df = final_df[~final_df[col].isin(IGNORED_VALUES)]
-            final_df = final_df[~final_df[col].astype(str).isin([str(v) for v in IGNORED_VALUES])]
+    # Denominator priority: Effective Impressions > Total Impressions
+    denom_col = eff_imp_col if eff_imp_col else imp_col
     
-    ad_format_col = next((c for c in final_df.columns if 'ad_format' in c.lower() and c != 'ad_format_type_id'), None)
-    if ad_format_col and ad_format_col in final_df.columns:
-        final_df = final_df[~final_df[ad_format_col].astype(str).isin(['0', 0])]
+    if denom_col:
+        debug_logs.append(f"Calculating KPIs using denominator: {denom_col}")
+        print(f"DEBUG [DataFusion] Denominator found: {denom_col}")
+        
+        if click_col:
+            print(f"DEBUG [DataFusion] Calculating CTR using {click_col} / {denom_col}")
+            final_df['CTR'] = final_df.apply(lambda x: (x[click_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
+        if view100_col: # Use Q100 for VTR (per domain knowledge)
+            print(f"DEBUG [DataFusion] Calculating VTR using {view100_col} / {denom_col}")
+            final_df['VTR'] = final_df.apply(lambda x: (x[view100_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
+        if eng_col:
+            print(f"DEBUG [DataFusion] Calculating ER using {eng_col} / {denom_col}")
+            final_df['ER'] = final_df.apply(lambda x: (x[eng_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
+    else:
+        debug_logs.append("No impression column found. Skipping KPI calculation.")
+        print("DEBUG [DataFusion] No impression column found.")
 
-    # Strict Column Filtering
+    print(f"DEBUG [DataFusion] Post-KPI Calc Columns: {list(final_df.columns)}")
+
+    # 6. 後處理 (Filtering & Sorting)
+    # ... (Keep existing filtering logic) ...
+    
+    # Force include KPIs
     cols_to_keep = []
+    for dim in group_cols: 
+        if dim in final_df.columns: cols_to_keep.append(dim)
+    if seg_col and seg_col in final_df.columns and seg_col not in cols_to_keep: cols_to_keep.append(seg_col)
     
-    for dim in group_cols:
-        if dim in final_df.columns:
-            cols_to_keep.append(dim)
-
-    if seg_col and seg_col in final_df.columns and seg_col not in cols_to_keep:
-        cols_to_keep.append(seg_col)
-
-    requested_metrics_lower = [m.lower() for m in analysis_needs.get('metrics', [])]
-    
+    requested_metrics = [m.lower() for m in analysis_needs.get('metrics', [])]
+    # Add other metrics...
     metric_map = {
         'budget_sum': ['budget', 'budget_sum'],
-        'campaign_count': ['campaign_count', 'count'],
-        'adprice_sum': ['price', 'adprice_sum', 'uniprice'],
-        'impression_sum': ['impression', 'total_impressions', 'impressions'],
-        'click_sum': ['click', 'total_clicks', 'clicks'],
+        'impression_sum': ['impression', 'total_impressions'],
+        'click_sum': ['click', 'total_clicks'],
         'view3s_sum': ['view3s', 'views_3s'],
         'q100_sum': ['q100', 'views_100']
     }
-
-    for req_m in requested_metrics_lower:
+    for req_m in requested_metrics:
         candidates = metric_map.get(req_m, [req_m])
         for cand in candidates:
             match = next((c for c in final_df.columns if cand in c.lower()), None)
-            if match and match not in cols_to_keep:
-                cols_to_keep.append(match)
-                
-    if not cols_to_keep: 
-         match = next((c for c in final_df.columns if 'budget' in c.lower()), None)
-         if match: cols_to_keep.append(match)
-
-    kpi_whitelist = ['CTR', 'VTR', 'ER']
-    for kpi in kpi_whitelist:
+            if match and match not in cols_to_keep: cols_to_keep.append(match)
+            
+    # Always add KPIs if they exist
+    for kpi in ['CTR', 'VTR', 'ER']:
         if kpi in final_df.columns:
-             if (final_df[kpi] == 0).all(): continue
              if kpi not in cols_to_keep:
                 cols_to_keep.append(kpi)
                 
-    # CONDITIONAL KEEP DATES: Only keep start_date/end_date if Campaign-level dimensions are in group_cols
-    # This prevents showing misleading campaign-level dates when aggregated by month/advertiser.
-    if any(dim in group_cols for dim in ['Campaign_Name', 'cmpid']):
-        for date_col in ['start_date', 'end_date']:
-            if date_col in final_df.columns and date_col not in cols_to_keep:
-                cols_to_keep.append(date_col)
+    # Add budget fallback if nothing selected
+    if len(cols_to_keep) == len(group_cols):
+         match = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+         if match: cols_to_keep.append(match)
+         # Also add impressions/clicks if available for context
+         if imp_col and imp_col not in cols_to_keep: cols_to_keep.append(imp_col)
+
+    print(f"DEBUG [DataFusion] Cols to Keep BEFORE Final Filter: {cols_to_keep}")
 
     if cols_to_keep:
         final_df = final_df[cols_to_keep]
@@ -501,8 +502,32 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if 'budget' in col.lower() and pd.api.types.is_numeric_dtype(final_df[col]):
              final_df[col] = final_df[col].fillna(0).astype(int)
 
-    # Reorder Columns: Campaign Name -> Dates -> Format -> Segment -> Metrics
-    preferred_order = ['Campaign_Name', 'start_date', 'end_date', 'Ad_Format', 'Segment_Category', 'Segment_Category_Name']
+    # 7.1 Combine Date into Campaign Name
+    camp_name_col = next((c for c in final_df.columns if c.lower() == 'campaign_name'), None)
+    start_col = next((c for c in final_df.columns if c.lower() == 'start_date'), None)
+    end_col = next((c for c in final_df.columns if c.lower() == 'end_date'), None)
+    
+    if camp_name_col and start_col and end_col:
+        final_df[camp_name_col] = final_df.apply(
+            lambda x: f"{x[camp_name_col]} ({x[start_col]}~{x[end_col]})" if pd.notna(x[start_col]) and pd.notna(x[end_col]) else x[camp_name_col],
+            axis=1
+        )
+
+    # 7.2 Hide Technical IDs & Redundant Dates
+    cols_to_hide = ['cmpid', 'id', 'ad_format_type_id', 'product_line_id', 'segment_ids']
+    if camp_name_col: # If we have name, we don't need dates columns anymore
+        if start_col: cols_to_hide.append(start_col)
+        if end_col: cols_to_hide.append(end_col)
+        
+    # Only drop if we are not dropping everything
+    remaining_cols = [c for c in final_df.columns if c not in cols_to_hide]
+    if remaining_cols:
+        final_df = final_df.drop(columns=[c for c in cols_to_hide if c in final_df.columns])
+
+    # Reorder Columns: Campaign Name -> Format -> Segment -> Metrics
+    preferred_order = ['Campaign_Name', 'Ad_Format', 'Segment_Category', 'Segment_Category_Name', 'Budget_Sum']
+    # ... metrics ...
+    
     new_cols = []
     
     # Add preferred columns if they exist

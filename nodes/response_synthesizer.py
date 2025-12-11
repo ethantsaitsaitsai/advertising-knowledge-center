@@ -4,6 +4,7 @@ from config.llm import llm
 from schemas.state import AgentState
 from typing import Dict, Any
 import pandas as pd
+from nodes.data_fusion import data_fusion_node  # Import Fusion Logic
 
 
 def calculate_insights(df: pd.DataFrame) -> Dict[str, Any]:
@@ -80,24 +81,62 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
     then feeding both the data and the insights into an LLM to generate a
     natural language report with actionable suggestions.
     """
-    # 1. 獲取資料並建立 DataFrame
-    final_dataframe = state.get("final_dataframe")
+    
+    # --- Data Fusion Logic ---
+    perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
+    campaign_data = state.get("sql_result")  # From CampaignAgent (MySQL)
+    
+    df = pd.DataFrame()
+    
+    # Case 1: Heterogeneous Fusion (Both Sources Available)
+    # In parallel mode, we might have both. We want to merge them.
+    if perf_data and campaign_data:
+        print(f"DEBUG [Synthesizer] Both Performance and Campaign data detected. Initiating Fusion.")
+        print(f"DEBUG [Synthesizer] Perf Data: {len(perf_data)} rows.")
+        print(f"DEBUG [Synthesizer] Campaign Data: {len(campaign_data)} rows.")
+        
+        # Check if we have columns
+        sql_cols = state.get("sql_result_columns")
+        print(f"DEBUG [Synthesizer] SQL Columns: {sql_cols}")
+        
+        # Temporarily inject 'clickhouse_result' into state for data_fusion_node if not present
+        # data_fusion_node expects 'clickhouse_result' but PerformanceAgent outputs 'final_dataframe'
+        # Let's align them.
+        fusion_state = state.copy()
+        if not fusion_state.get("clickhouse_result"):
+             fusion_state["clickhouse_result"] = perf_data
+        
+        fusion_result = data_fusion_node(fusion_state)
+        fused_data = fusion_result.get("final_dataframe")
+        
+        if fused_data:
+             df = pd.DataFrame(fused_data)
+             print(f"DEBUG [Synthesizer] Fusion Complete. Rows: {len(df)}")
+        else:
+             print(f"DEBUG [Synthesizer] Fusion returned empty. Reason: {fusion_result.get('final_result_text')}")
+             df = pd.DataFrame(perf_data)
 
-    if final_dataframe is None or len(final_dataframe) == 0:
-        # Fallback to sql_result if final_dataframe is not available
-        sql_result = state.get("sql_result")
+    # Case 2: Only Performance Data (Legacy or cached)
+    elif perf_data:
+        print("DEBUG [Synthesizer] Only Performance data detected.")
+        df = pd.DataFrame(perf_data)
+        
+    # Case 3: Only Campaign Data (Metadata query)
+    elif campaign_data:
+        print("DEBUG [Synthesizer] Only Campaign data detected.")
         sql_result_columns = state.get("sql_result_columns")
-        if not sql_result or not sql_result_columns:
-            return {"messages": [AIMessage(content="查無資料，請嘗試調整您的查詢條件。")]}
-        df = pd.DataFrame(sql_result, columns=sql_result_columns)
-    else:
-        df = pd.DataFrame(final_dataframe)
+        if sql_result_columns:
+            df = pd.DataFrame(campaign_data, columns=sql_result_columns)
+        else:
+            df = pd.DataFrame(campaign_data)
+
+    # -------------------------
 
     if state.get("error_message"):
         return {"messages": [AIMessage(content=f"抱歉，執行查詢時發生錯誤：{state['error_message']}")]}
 
     if df.empty:
-        return {"messages": [AIMessage(content="查無資料，請嘗試調整您的查詢條件。")]}
+        return {"messages": [AIMessage(content=f"查無資料，請嘗試調整您的查詢條件。")]}
 
     # 2. 預先計算統計摘要
     stats = calculate_insights(df)
@@ -123,6 +162,15 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
             f"如果您需要更多資料（例如「看前 50 筆」或「全部」），請直接回覆告知，我會為您調整。"
         )
         formatted_table_string += footer_note
+
+    # 4.1 Default Metrics Note
+    was_default = state.get("was_default_metrics", False)
+    if was_default:
+        formatted_table_string += (
+            f"\n\n---\n"
+            f"💡 **預設指標提示**：因未指定特定指標，系統已自動為您抓取 **CTR, VTR, ER**。\n"
+            f"若需要其他成效數據 (如 Impressions, Clicks)，請隨時告知。"
+        )
 
     # 5. 呼叫 LLM 生成最終分析報告
     prompt = RESPONSE_SYNTHESIZER_PROMPT.format(

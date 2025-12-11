@@ -11,95 +11,7 @@ SELECT ...
 ```
 
 # 資料表 Schema (ClickHouse View)
-你將會查詢 `kafka.summing_ad_format_events_view`。其完整的 Schema 定義如下：
-
-```sql
-CREATE VIEW kafka.summing_ad_format_events_view (
-  `day_local` Date,
-  `pid` Int32,
-  `uid` Int32,
-  `plaid` Int32,
-  `cmpid` Int32,
-  `client_id` Int32,
-  `client_company` String,
-  `campaign_name` String,
-  `placement_name` String,
-  `campaign_type` Int32,
-  `campaign_type_name` String,
-  `product_line_id` Int32,
-  `product_line` String,
-  `ad_type_id` Int32,
-  `ad_type` String,
-  `ad_format_type_id` Int32,
-  `ad_format_type` String,
-  `play_mode` String,
-  `player_type` String,
-  `one_category` String,
-  `publisher` String,
-  `video_duration` Int32,
-  `year` UInt16,
-  `month` UInt8,
-  `day` UInt8,
-  `week_local` Date,
-  `month_local` Date,
-  `platform` LowCardinality(String),
-  `bsn` LowCardinality(String),
-  `brd` String,
-  `city` LowCardinality(String),
-  `subdomain` LowCardinality(String),
-  `os` LowCardinality(String),
-  `ver_major` LowCardinality(String),
-  `is_tw` Int8,
-  `vid` Int32,
-  `counts` UInt32,
-  `is_ios` UInt8,
-  `is_desktop` UInt8,
-  `is_android` UInt8,
-  `device_type` UInt8,
-  `q0` UInt32,
-  `q25` UInt32,
-  `q50` UInt32,
-  `q75` UInt32,
-  `q100` UInt32,
-  `view2s` UInt32,
-  `view3s` UInt32,
-  `view5s` UInt32,
-  `view10s` UInt32,
-  `view30s` UInt32,
-  `cv` UInt32,
-  `impression` UInt32,
-  `disp` UInt32,
-  `viewability` UInt32,
-  `tb` UInt32,
-  `bannerClick` UInt32,
-  `videoClick` UInt32,
-  `eng` UInt32,
-  `cpe` UInt32,
-  `skip` UInt32
-)
-```
-
-**重要欄位說明:**
-* `cmpid`: 廣告活動 ID
-* `ad_format_type_id`: 廣告格式類型 ID
-* `day_local`: 日期 (Partition Key)
-
-# 關鍵指標聚合 (Metrics Aggregation)
-請針對傳入的 `cmpid` 列表，查詢以下原始數據的 SUM 值（不要計算比率），**並務必使用指定的 Alias**：
-
-1. **基礎流量**:
-   - `SUM(impression)` AS `total_impressions`
-   - `SUM(CASE WHEN ad_type='dsp-creative' THEN cv ELSE impression END)` AS `effective_impressions`
-
-2. **點擊相關 (Click Metrics)**:
-   - `SUM(bannerClick + videoClick)` AS `total_clicks`
-
-3. **觀看相關 (Video Metrics)**:
-   - `SUM(q100)` AS `views_100`
-   - `SUM(view3s)` AS `views_3s`
-
-4. **互動相關 (Engagement Metrics)**:
-   - `SUM(eng)` AS `total_engagements`
+{schema_context}
 
 # 安全性與語法規範 (Safety Rules)
 1. **強制日期限制**: WHERE 子句**必須**包含 `day_local BETWEEN '{date_start}' AND '{date_end}'`。若上游未提供日期，請預設使用最近 7 天。
@@ -133,6 +45,7 @@ CREATE VIEW kafka.summing_ad_format_events_view (
 - Ad Format Type IDs: {ad_format_type_id_list}
 - Date Range: {date_start} to {date_end}
 - Dimensions: {dimensions}
+- Schema Context: {schema_context}
 
 # SQL 範例
 
