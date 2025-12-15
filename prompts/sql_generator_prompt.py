@@ -134,7 +134,7 @@ SQL_GENERATOR_PROMPT = """
 *   **情境**: "格式", "素材", "版位成效", "Banner vs Video"。
 *   **Root Table**: `one_campaigns` (開始於此，再關聯 pre_campaign)
 *   **策略**:
-    1. **條件前推**: 若有 company / brand 過濾，優先在 clients 層篩選。
+    1. **條件前推**: 若有 company / brand 過濾，在 clients 層篩選 - 但 WHERE 子句必須在所有 JOIN 之後。可使用 JOIN 條件來提前過濾（例如 `JOIN clients c ON cl.client_id = c.id AND c.company = '目標公司'`），或在子查詢內過濾。
     2. **Subquery 聚合**: 先在子查詢中聚合 `pre_campaign_detail` 層的格式資訊，再與主表 JOIN。
     3. **避免 DISTINCT**: 若格式已被 GROUP_CONCAT 預先分組，移除 DISTINCT。
 *   **SQL Template (推薦 - 優化版)**:
@@ -150,8 +150,6 @@ SQL_GENERATOR_PROMPT = """
     FROM one_campaigns oc
     JOIN cue_lists cl ON oc.cue_list_id = cl.id
     JOIN clients c ON cl.client_id = c.id
-    -- 在此層級先篩選公司，減少後續 JOIN 的數據量
-    WHERE c.company = '目標公司' -- 【條件前推】
     LEFT JOIN (
         -- 【Subquery 聚合】先計算格式聚合與預算
         SELECT
@@ -163,6 +161,8 @@ SQL_GENERATOR_PROMPT = """
         LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
         GROUP BY pc.one_campaign_id
     ) AS FormatInfo ON oc.id = FormatInfo.one_campaign_id
+    -- 【條件前推】在此層級篩選公司 (WHERE 必須在所有 JOIN 之後)
+    WHERE c.company = '目標公司'
     ORDER BY oc.id
     ```
 
@@ -186,7 +186,7 @@ SQL_GENERATOR_PROMPT = """
 *   **情境**: "受眾", "人群", "數據鎖定", "Segment"。
 *   **Root Table**: `one_campaigns`
 *   **關鍵策略**:
-    1. **條件前推**: 若有公司過濾，先在 clients 層篩選。
+    1. **條件前推**: 若有公司過濾，在 clients 層篩選 - 但 WHERE 子句必須在所有 JOIN 之後。可使用 JOIN 條件來提前過濾（例如 `JOIN clients c ON cl.client_id = c.id AND c.company = '目標公司'`），或在子查詢內過濾。
     2. **GROUP_CONCAT 優化**: 必須使用 `GROUP_CONCAT` 將多個受眾壓縮為單一欄位，嚴禁對受眾進行 `GROUP BY`。
     3. **Subquery 預聚合**: 先在子查詢中聚合受眾資訊，再與主表 JOIN。
 *   **SQL Template (推薦 - 優化版)**:
@@ -202,8 +202,6 @@ SQL_GENERATOR_PROMPT = """
     FROM one_campaigns oc
     JOIN cue_lists cl ON oc.cue_list_id = cl.id
     JOIN clients c ON cl.client_id = c.id
-    -- 【條件前推】在此層級先篩選公司
-    WHERE c.company = '目標公司'
     LEFT JOIN (
         -- 【Subquery 聚合】計算受眾聚合與預算
         SELECT
@@ -216,6 +214,8 @@ SQL_GENERATOR_PROMPT = """
         WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')
         GROUP BY pc.one_campaign_id
     ) AS SegmentInfo ON oc.id = SegmentInfo.one_campaign_id
+    -- 【條件前推】在此層級篩選公司 (WHERE 必須在所有 JOIN 之後)
+    WHERE c.company = '目標公司'
     ORDER BY oc.id
     ```
 
