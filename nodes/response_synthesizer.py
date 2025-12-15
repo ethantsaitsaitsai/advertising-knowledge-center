@@ -20,6 +20,7 @@ def calculate_insights(df: pd.DataFrame) -> Dict[str, Any]:
     # 1. 總體指標 (Aggregates)
     # 需確保欄位存在且為數值
     if 'Budget_Sum' in df.columns and pd.to_numeric(df['Budget_Sum'], errors='coerce').notna().any():
+        # With granular SQL (pcd.budget), simple sum is correct for the result set.
         insights['total_budget'] = pd.to_numeric(df['Budget_Sum'], errors='coerce').sum()
 
     if (

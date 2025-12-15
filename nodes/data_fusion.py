@@ -583,13 +583,21 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # If user didn't request Ad_Format dimension, don't filter out rows with empty ad_format
     # This is important for Segment_Category queries where ad_format might be NULL/empty
     # Use user's ORIGINAL dimensions (not enriched by PerformanceGenerator)
-    user_requested_ad_format = 'Ad_Format' in user_original_dims or 'ad_format' in [d.lower() for d in user_original_dims]
+    user_requested_ad_format = 'ad_format' in [d.lower() for d in user_original_dims] # Check for lowercased 'ad_format'
+    user_requested_performance = any(m.lower() in ['ctr', 'vtr', 'er', 'impression', 'click'] for m in user_original_metrics)
 
     if ad_format_col and ad_format_col in final_df.columns and user_requested_ad_format:
         initial_count = len(final_df)
-        # CRITICAL: Only filter '0' (obviously invalid), keep empty/nan/none (valid "no data" state)
-        # Reason: In AUDIENCE queries, Ad_Format might be missing but Segment_Category exists
-        mask = ~final_df[ad_format_col].astype(str).str.strip().isin(['0'])
+        
+        if user_requested_performance:
+            # User wants format-specific performance -> strictly filter out rows without valid format
+            print(f"DEBUG [DataFusion] User requested Ad_Format + Performance. Strictly filtering empty/null Ad_Format.")
+            mask = ~final_df[ad_format_col].astype(str).str.strip().isin(['0', 'nan', 'none', '', 'None'])
+        else:
+            # User just wants Ad_Format as a dimension (e.g., for campaign details) -> keep empty/null (represents 'not set')
+            print(f"DEBUG [DataFusion] User requested Ad_Format only. Filtering '0', keeping empty/null.")
+            mask = ~final_df[ad_format_col].astype(str).str.strip().isin(['0'])
+        
         filtered_df = final_df[mask]
         dropped_count = initial_count - len(filtered_df)
 
