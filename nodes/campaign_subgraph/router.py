@@ -53,14 +53,20 @@ def router_node(state: CampaignSubState):
     """
     MAX_STEPS = 8
     current_step = state.get("step_count", 0) + 1
-    
+
     # Extract State
     task = state["task"]
     memory = state.get("internal_thoughts", [])
     campaign_data = state.get("campaign_data")
     sql_error = state.get("sql_error")
     search_results = state.get("search_results") # This is a list or None
-    
+
+    # Check if this is a clarification/disambiguation request from Supervisor
+    is_clarification_request = task.instruction_text and any(
+        keyword in task.instruction_text.lower()
+        for keyword in ["澄清", "clarify", "clarification", "選擇", "choose", "哪一個", "which one"]
+    )
+
     # Helpers
     has_schema_info = any("Schema Inspection Result" in m for m in memory)
     
@@ -73,9 +79,20 @@ def router_node(state: CampaignSubState):
         if campaign_data.get("generated_sqls"):
             executed_but_empty = True
 
-    print(f"DEBUG [CampaignRouter] Step {current_step} Check: Data={has_data}, Empty={executed_but_empty}, SearchResults={len(search_results) if search_results is not None else 'None'}")
+    print(f"DEBUG [CampaignRouter] Step {current_step} Check: Data={has_data}, Empty={executed_but_empty}, SearchResults={len(search_results) if search_results is not None else 'None'}, Clarification={is_clarification_request}")
 
     # --- Deterministic Logic (The "Fast Path") ---
+
+    # 0. Clarification Request -> Return the clarification message directly (HIGHEST PRIORITY)
+    if is_clarification_request:
+        print("DEBUG [CampaignRouter] Logic: Clarification request detected -> FINISH (with clarification message)")
+        # The instruction_text itself IS the clarification message from Supervisor
+        return {
+            "next_action": "finish",
+            "final_response": task.instruction_text,
+            "internal_thoughts": ["Brain (Rule): Supervisor requested clarification. Returning clarification message."],
+            "step_count": current_step
+        }
 
     # 1. Success -> Finish
     if has_data:
