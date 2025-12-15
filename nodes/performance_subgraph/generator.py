@@ -61,20 +61,33 @@ def performance_generator_node(state: PerformanceSubState):
 
     # --- Context Enrichment (Playbook) ---
     if "dimensions" not in needs: needs["dimensions"] = []
-    
+
+    # CRITICAL: Filter out MySQL-only dimensions that don't exist in ClickHouse
+    # ClickHouse summing_ad_format_events_view doesn't have Segment_Category, Budget, etc.
+    # These dimensions come from MySQL (target_segments, pre_campaign tables)
+    mysql_only_dims = ["Segment_Category", "segment_category", "Budget_Sum", "budget_sum", "Ad_Format", "ad_format"]
+    # Note: "ad_format_type" exists in ClickHouse, so we keep it
+
+    original_dims = needs["dimensions"].copy()
+    needs["dimensions"] = [d for d in needs["dimensions"] if d not in mysql_only_dims]
+
+    if len(original_dims) != len(needs["dimensions"]):
+        removed = set(original_dims) - set(needs["dimensions"])
+        print(f"DEBUG [PerfGenerator] Filtered out MySQL-only dimensions: {removed}")
+
     # 1. Base Dimensions
-    base_dims = ["campaign_name", "cmpid"] 
+    base_dims = ["campaign_name", "cmpid"]
     for dim in base_dims:
         if dim not in needs["dimensions"]:
             needs["dimensions"].insert(0, dim)
-            
-    # 2. Format Context
+
+    # 2. Format Context (ad_format_type exists in ClickHouse)
     format_keywords = ["format", "格式", "ad_format_type_id"]
     has_format_intent = any(k in str(needs).lower() for k in format_keywords)
     if has_format_intent or format_ids:
         if "ad_format_type" not in needs["dimensions"]:
             needs["dimensions"].append("ad_format_type")
-            
+
     print(f"DEBUG [PerfGenerator] Enriched Dimensions: {needs['dimensions']}")
 
     # 2. Prompt Construction

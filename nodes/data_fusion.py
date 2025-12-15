@@ -523,10 +523,12 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # User Feedback: "走期可以獨立成start_date和end_date兩個欄位"
     # Solution: Keep start_date and end_date as independent columns, don't merge into name
 
-    # DISABLED: Date merging logic (commented out for reference)
-    # camp_name_col = next((c for c in final_df.columns if c == 'campaign_name'), None)
-    # start_col = next((c for c in final_df.columns if c == 'start_date'), None)
-    # end_col = next((c for c in final_df.columns if c == 'end_date'), None)
+    # Still need to identify column names for later use (filtering invalid names)
+    camp_name_col = next((c for c in final_df.columns if c == 'campaign_name'), None)
+    start_col = next((c for c in final_df.columns if c == 'start_date'), None)
+    end_col = next((c for c in final_df.columns if c == 'end_date'), None)
+
+    # DISABLED: Date merging logic (keep dates separate per user request)
     # if camp_name_col and start_col and end_col:
     #     final_df[camp_name_col] = final_df.apply(lambda row: f"{row[camp_name_col]} ({row[start_col]}~{row[end_col]})", axis=1)
 
