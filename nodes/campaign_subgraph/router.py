@@ -209,48 +209,34 @@ def router_node(state: CampaignSubState):
                  "step_count": current_step
              }
 
-    # 4. Zero Rows + No Search History -> Search
-    # Check if we ever searched. 'search_results' is None if we haven't searched yet (initially).
-    # But wait, search_results stays in state? 
-    # Actually, in LangGraph, state persists. So if we searched step 1, step 2 search_results is still there.
-    # So we need to be careful. 
-    # My logic above: "if search_results is not None". This implies we check it every step.
-    # This might cause a loop if we went Search -> Unique -> SQL -> Error/Empty -> Router.
-    # If SQL failed, we come back here. 'search_results' is still not None (1 match).
-    # We would hit logic #2 again and go back to SQL. Loop!
-    
-    # FIX: We should only handle search results if we *Just* came from search.
-    # Or, we consume 'search_results' (set to None)? No, immutable state usually.
-    # Better: Check if we successfully generated SQL *after* search.
-    # If 'executed_but_empty' is True, it means we tried SQL.
-    
+    # 4. SQL Empty Results -> Ask for Filter Clarification (CRITICAL FIX)
+    # When SQL executes but returns 0 rows, it means:
+    # - The entity/table exists (SQL is valid)
+    # - But the data doesn't match the filters (likely date range issue)
+    # In this case, ALWAYS ask for clarification instead of searching again
     if executed_but_empty:
-        # We tried SQL and failed to get data.
-        # If we ALREADY searched (search_results is not None), then searching again won't help unless we change term.
-        # So if searched -> Ask for clarification about filters (date, etc.)
-        if search_results is not None:
-             print("DEBUG [CampaignRouter] Logic: SQL Empty + Already Searched -> Ask for clarification on filters")
-             # Entity found but no data - likely a date range or filter issue
-             clarification_msg = (
-                 "我找到了相關的項目，但根據您提供的條件（例如時間範圍）查無數據。\n\n"
-                 "請檢查：\n"
-                 "- 時間範圍是否正確？(例如：該活動是否在您指定的時間範圍內執行)\n"
-                 "- 是否需要調整其他篩選條件？\n\n"
-                 "請確認或修改查詢條件，我會為您重新檢索。"
-             )
-             return {
-                "next_action": "finish",
-                "final_response": clarification_msg,
-                "internal_thoughts": ["Brain: SQL returned empty. Asking for filter clarification (date, etc.)."],
-                "step_count": current_step
-             }
-        else:
-             print("DEBUG [CampaignRouter] Logic: SQL Empty + Never Searched -> SEARCH_ENTITY")
-             return {
-                "next_action": "search_entity",
-                "internal_thoughts": ["Brain (Rule): SQL returned 0 rows. Searching entity."],
-                "step_count": current_step
-             }
+        print("DEBUG [CampaignRouter] Logic: SQL Empty Results -> Ask for filter clarification")
+
+        # Helpful message explaining the issue and asking for filter refinement
+        clarification_msg = (
+            "我找到了相關的項目，但根據您提供的條件（例如時間範圍）查無數據。\n\n"
+            "這可能是因為：\n"
+            "- 該活動/公司在您指定的時間範圍內沒有數據\n"
+            "- 您指定的指標(如'投遞格式')可能在該期間沒有記錄\n"
+            "- 數據庫中該條件組合不存在\n\n"
+            "請嘗試：\n"
+            "- 調整時間範圍（例如：改為上個月或去年同期）\n"
+            "- 確認指定的實體名稱是否正確\n"
+            "- 嘗試查詢其他指標\n\n"
+            "您想調整查詢條件嗎？"
+        )
+
+        return {
+            "next_action": "finish",
+            "final_response": clarification_msg,
+            "internal_thoughts": ["Brain (Rule): SQL returned 0 rows. Asking user to refine filters."],
+            "step_count": current_step
+        }
 
     # 5. Safety Brake
     if current_step > MAX_STEPS:

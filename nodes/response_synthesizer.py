@@ -93,11 +93,29 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
         if hasattr(last_message, "name") and last_message.name == "CampaignAgent":
             # This is a clarification or intermediate message from CampaignAgent
             # Return it as-is without further processing
-            print("DEBUG [Synthesizer] Clarification message detected. Passing through to user.")
+            print(f"DEBUG [Synthesizer] Clarification message detected from CampaignAgent: {last_message.content[:100]}...")
             return {
                 "messages": [last_message],
                 "clarification_pending": True  # Mark that clarification is pending and waiting for user response
             }
+
+    # Also check if there's campaign_data but it's empty
+    # In this case, CampaignAgent should have returned a clarification message
+    # If it didn't make it to messages list, check the raw state
+    campaign_data = state.get("campaign_data")
+    if campaign_data and not campaign_data.get("data"):
+        # Data exists but is empty - this shouldn't reach here if Router did its job
+        # But just in case, ask for clarification instead of showing "No data"
+        print("DEBUG [Synthesizer] Campaign data is empty. Asking for clarification.")
+        return {
+            "messages": [AIMessage(content=(
+                "根據您的查詢條件，我暫時找不到相符的數據。\n\n"
+                "這可能是因為：\n"
+                "- 時間範圍內沒有相關數據\n"
+                "- 實體名稱或條件組合不存在\n\n"
+                "您想調整查詢條件或嘗試其他時間範圍嗎？"
+            ))]
+        }
 
     # --- Data Fusion Logic ---
     perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
@@ -138,7 +156,17 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
         return {"messages": [AIMessage(content=f"抱歉，執行查詢時發生錯誤：{state['error_message']}")]}
 
     if df.empty:
-        return {"messages": [AIMessage(content=f"查無資料，請嘗試調整您的查詢條件。")]}
+        # If we reach here with empty data, it means CampaignAgent Router didn't catch it
+        # This shouldn't happen with the new router logic, but provide helpful message
+        print("DEBUG [Synthesizer] DataFrame is empty. Showing clarification message.")
+        return {"messages": [AIMessage(content=(
+            "根據您的查詢條件，我暫時找不到相符的數據。\n\n"
+            "請嘗試：\n"
+            "- 調整時間範圍（例如：查詢其他月份或年份）\n"
+            "- 確認實體名稱是否正確\n"
+            "- 嘗試查詢其他指標\n\n"
+            "您想修改查詢條件嗎？"
+        ))]}
 
     # 2. 預先計算統計摘要
     stats = calculate_insights(df)
