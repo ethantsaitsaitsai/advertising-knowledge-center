@@ -39,6 +39,7 @@ def campaign_node(state: AgentState):
         }
 
     print(f"DEBUG [CampaignNode] Invoking SubGraph with Task Level: {task.query_level}")
+    print(f"DEBUG [CampaignNode] is_ambiguous: {task.is_ambiguous}")
     print(f"DEBUG [CampaignNode] Manager Instructions: {task.instruction_text}")
 
     # 2. Invoke SubGraph with Initial State
