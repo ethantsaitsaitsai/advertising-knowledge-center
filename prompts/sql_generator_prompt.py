@@ -160,13 +160,13 @@ SQL_GENERATOR_PROMPT = """
         -- 【Subquery 聚合】先計算格式聚合與預算
         SELECT
             pc.one_campaign_id,
-            GROUP_CONCAT(aft.title SEPARATOR '; ') AS Ad_Format,
-            GROUP_CONCAT(aft.id SEPARATOR '; ') AS ad_format_type_id,
+            aft.title AS Ad_Format,
+            aft.id AS ad_format_type_id,
             SUM(pc.budget) AS Budget_Sum
         FROM pre_campaign pc
         LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
         LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
-        GROUP BY pc.one_campaign_id
+        GROUP BY pc.one_campaign_id, aft.title, aft.id
     ) AS FormatInfo ON oc.id = FormatInfo.one_campaign_id
     -- 【條件前推】在此層級篩選公司 (WHERE 必須在所有 JOIN 之後)
     WHERE c.company = '目標公司'
@@ -205,6 +205,7 @@ SQL_GENERATOR_PROMPT = """
         oc.start_date,
         oc.end_date,
         SegmentInfo.Segment_Category,
+        SegmentInfo.Ad_Format,
         SegmentInfo.ad_format_type_id,
         SegmentInfo.Budget_Sum
     FROM one_campaigns oc
@@ -215,15 +216,16 @@ SQL_GENERATOR_PROMPT = """
         SELECT
             pc.one_campaign_id,
             GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category,
-            -- 若需同時查格式，可在此加入
-            GROUP_CONCAT(DISTINCT pcd.ad_format_type_id SEPARATOR '; ') AS ad_format_type_id,
+            aft.title AS Ad_Format,
+            aft.id AS ad_format_type_id,
             SUM(pc.budget) AS Budget_Sum
         FROM pre_campaign pc
         LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
+        LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
         LEFT JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
         LEFT JOIN target_segments ts ON ctp.selection_id = ts.id
         WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')
-        GROUP BY pc.one_campaign_id
+        GROUP BY pc.one_campaign_id, aft.title, aft.id
     ) AS SegmentInfo ON oc.id = SegmentInfo.one_campaign_id
     -- 【條件前推】在此層級篩選公司 (WHERE 必須在所有 JOIN 之後)
     WHERE c.company = '目標公司'

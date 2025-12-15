@@ -39,7 +39,8 @@ def get_mysql_db():
                 "ssh_address_or_host": (ssh_host, ssh_port),
                 "ssh_username": ssh_user,
                 "remote_bind_address": (db_host, db_port),
-                "ssh_password": ssh_password
+                "ssh_password": ssh_password,
+                "set_keepalive": 30.0, # Send keepalive packets every 30 seconds
             }
 
             _ssh_tunnel = SSHTunnelForwarder(**ssh_args)
