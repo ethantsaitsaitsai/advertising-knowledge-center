@@ -44,6 +44,8 @@ INTENT_ANALYZER_PROMPT = """
    - **數據鎖定/受眾** -> `dimensions: ["Segment_Category"]`
    - **預算/金額/花費** -> `metrics: ["Budget_Sum"]`
    - **走期** -> `dimensions: ["Date_Month"]`
+   - **代理商/Agency** -> `dimensions: ["Agency"]`
+   - **廣告主/Advertiser** -> `dimensions: ["Advertiser"]`
 4. **Format as Entity**:
    - 若使用者明確指定特定格式名稱 (如 "Video", "Banner", "影音", "圖像")，請將其加入 `entities` 列表，以便 Resolver 解析其 ID。
 5. **Missing Info**:
@@ -55,30 +57,33 @@ INTENT_ANALYZER_PROMPT = """
 
 1. **實體驗證**:
    - 當使用者提到任何品牌、活動或公司名稱時 (例如 "悠遊卡", "Nike")，**在輸出最終 UserIntent 之前，務必先呼叫 `search_ambiguous_term` 工具驗證該實體名稱**。
+   - **例外 (Exception)**: 若使用者提到的是通用維度詞彙（如「代理商」、「廣告主」、「品牌」、「客戶」），請將其視為 `dimensions` (加入 `analysis_needs`)，**不要** 視為 Entity，也不要呼叫 Search 工具。
    - 目的：確保實體名稱在資料庫中是精確的。
 
 2. **處理工具回傳結果**:
    - 工具會回傳一個字串列表，格式為 `["名稱 (Table: Column)", ...]`。
+   - **「精確匹配且唯一」定義**: 實體名稱 (括號前的部分) **完全相同**於使用者輸入的關鍵字，**且搜尋結果中只有這一筆**（沒有其他相關結果）。例如: 若使用者說「悠遊卡」，必須搜尋結果為 `["悠遊卡 (clients: product)"]`，才能直接通過。如果有其他相關結果如 `["悠遊卡 (clients: product)", "悠遊卡股份有限公司 (clients: company)"]`，即使第一筆是精確匹配，也必須詢問使用者。
    - **Case A: 0 個結果** (工具回傳空列表):
      - 將 `UserIntent.is_ambiguous` 設為 `True`。
      - 將 `UserIntent.ambiguous_options` 設為 `["找不到精確匹配，請提供更多資訊。"]`。
      - 告知使用者找不到，並建議重新輸入。
-   - **Case B: 1 個結果** (工具回傳 `["精確名稱 (Table: Column)"]`):
-     - **將工具回傳的原始字串 (例如 "悠遊卡股份有限公司 (clients: company)")，直接填入 `UserIntent.entities` 中的實體**。
+   - **Case B: 精確匹配且唯一** (工具回傳結果 **剛好 1 筆**，且名稱完全相同):
+     - 例如: 搜尋「悠遊卡」，結果為 `["悠遊卡 (clients: product)"]`。
+     - **將工具回傳的原始字串直接填入 `UserIntent.entities` 中的實體**。
      - 將 `UserIntent.is_ambiguous` 設為 `False`。
      - 清空 `UserIntent.ambiguous_options`。
-   - **Case C: 多個結果** (工具回傳 `["名稱A (Table: Column)", "名稱B (Table: Column)", ...]`):
-     - **絕對規則**: 只要結果超過 1 個，**無論是否包含完全匹配的詞**，都**必須**將 `UserIntent.is_ambiguous` 設為 `True`。
-     - **嚴禁自行選擇**: 即使你覺得某個選項最合理，也不要自作聰明。
+   - **Case C: 其他所有情況 (多於 1 個結果，或精確匹配有其他相關結果)**:
+     - **絕對規則**: 將 `UserIntent.is_ambiguous` 設為 `True`，**必須詢問使用者**。
+     - **嚴禁自行選擇**: 即使看起來只有一個最合理的選項，也不能自作聰明。
      - **輸出方式 (關鍵)**:
        1. **在 JSON 區塊之外的文字中**：請使用以下範本列出選項：
           ```
           您好！根據您提到的「[關鍵字]」，我在資料庫中找到了幾個相關項目：
-          
+
           * 在「品牌」中，找到了：「[候選A]」...
           * 在「公司」中，找到了：「[候選B]」...
           * 在「廣告案件名稱」中，找到了：「[候選C]」...
-          
+
           請問您是想查詢哪一個呢？
           ```
           **重要**: 在填充 `[候選A]`, `[候選B]`, `[候選C]` 等項目時，務必將名稱後方 `(Table: Column)` 的括號內容移除，只顯示乾淨的實體名稱。

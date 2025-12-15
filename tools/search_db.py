@@ -52,15 +52,22 @@ def search_sql_like(keyword: str) -> List[str]:
 def _search_ambiguous_term_impl(keyword: str) -> List[str]:
     """
     Implementation of search logic (Pure Python function).
+    Returns all results, including both exact matches and partial matches.
+    The caller (Intent Analyzer) will decide whether to confirm based on exact match count.
     """
     print(f"🔎 Searching '{keyword}'...")
     candidates = search_sql_like(keyword)
-    
+
     if candidates:
         print(f"✅ Found {len(candidates)} matches.")
+        # Extract the entity names (before the parentheses) for analysis
+        entity_names = [c.split(" (")[0] for c in candidates]
+        exact_matches = [c for c in candidates if c.split(" (")[0] == keyword]
+        print(f"   - Exact matches: {len(exact_matches)}")
+        print(f"   - Partial matches: {len(candidates) - len(exact_matches)}")
     else:
         print(f"📉 No matches found.")
-        
+
     return candidates
 
 @tool
