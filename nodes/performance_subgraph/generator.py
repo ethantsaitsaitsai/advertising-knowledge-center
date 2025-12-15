@@ -100,6 +100,7 @@ def performance_generator_node(state: PerformanceSubState):
         "date_start": str(d_start),
         "date_end": str(d_end),
         "dimensions": str(needs.get("dimensions", [])),
+        "metrics": str(needs.get("metrics", [])),
         "instruction_text": instruction_text, # Pass instruction
         "schema_context": schema_md
     }

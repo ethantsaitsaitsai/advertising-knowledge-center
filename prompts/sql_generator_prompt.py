@@ -35,6 +35,11 @@ SQL_GENERATOR_PROMPT = """
    - 禁止: `WHERE DATE(one_campaigns.start_date) = '2024-01-01'`
    - 應改為: `WHERE one_campaigns.start_date >= '2024-01-01' AND one_campaigns.start_date < '2024-01-02'`
 
+### 7. **Format ID 必選 (Format ID Requirement)**
+   - 若查詢涉及 `Ad_Format` 維度或 `Format` 關鍵字，**必須** 在 SELECT 中包含 `ad_format_type_id`。
+   - 若使用了 `GROUP BY` 或 `GROUP_CONCAT`，請同樣對 ID 進行 `GROUP_CONCAT(pcd.ad_format_type_id SEPARATOR '; ') AS ad_format_type_id`。
+   - 這是為了讓後端能正確串接 ClickHouse 的成效數據。
+
 0. **ID 絕對優先原則 (ID Priority)**:
    - 如果輸入變數 `campaign_ids` 不為空 (例如 `[101, 102]`)，則 **必須** 在 WHERE 子句中使用 `one_campaigns.id IN ({campaign_ids})` 進行過濾。
    - 此時 **忽略** `filters` 中關於品牌、活動名稱的模糊搜尋條件 (`LIKE`)，因為 ID 已經鎖定了範圍。
@@ -146,6 +151,7 @@ SQL_GENERATOR_PROMPT = """
         oc.start_date,
         oc.end_date,
         FormatInfo.Ad_Format,
+        FormatInfo.ad_format_type_id,
         FormatInfo.Budget_Sum
     FROM one_campaigns oc
     JOIN cue_lists cl ON oc.cue_list_id = cl.id
@@ -155,6 +161,7 @@ SQL_GENERATOR_PROMPT = """
         SELECT
             pc.one_campaign_id,
             GROUP_CONCAT(aft.title SEPARATOR '; ') AS Ad_Format,
+            GROUP_CONCAT(aft.id SEPARATOR '; ') AS ad_format_type_id,
             SUM(pc.budget) AS Budget_Sum
         FROM pre_campaign pc
         LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
@@ -198,6 +205,7 @@ SQL_GENERATOR_PROMPT = """
         oc.start_date,
         oc.end_date,
         SegmentInfo.Segment_Category,
+        SegmentInfo.ad_format_type_id,
         SegmentInfo.Budget_Sum
     FROM one_campaigns oc
     JOIN cue_lists cl ON oc.cue_list_id = cl.id
@@ -207,8 +215,11 @@ SQL_GENERATOR_PROMPT = """
         SELECT
             pc.one_campaign_id,
             GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category,
+            -- 若需同時查格式，可在此加入
+            GROUP_CONCAT(DISTINCT pcd.ad_format_type_id SEPARATOR '; ') AS ad_format_type_id,
             SUM(pc.budget) AS Budget_Sum
         FROM pre_campaign pc
+        LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
         LEFT JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
         LEFT JOIN target_segments ts ON ctp.selection_id = ts.id
         WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')

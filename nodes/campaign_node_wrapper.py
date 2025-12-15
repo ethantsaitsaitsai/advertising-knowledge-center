@@ -67,6 +67,18 @@ def campaign_node(state: AgentState):
     result = {
         "campaign_data": campaign_data
     }
+    
+    # Extract IDs for Supervisor State
+    if campaign_data and "data" in campaign_data:
+        ids = []
+        for row in campaign_data["data"]:
+            # Check common ID keys
+            cid = row.get("cmpid") or row.get("id") or row.get("one_campaign_id")
+            if cid:
+                ids.append(cid)
+        if ids:
+            result["campaign_ids"] = ids
+            print(f"DEBUG [CampaignNode] Extracted {len(ids)} IDs: {ids}")
 
     # Only add a message if there's a user-facing response (e.g., clarification or final answer)
     if final_response_text:

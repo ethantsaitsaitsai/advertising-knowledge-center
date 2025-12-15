@@ -109,6 +109,20 @@ END) AS `effective_impressions`
   * **Total Engagements**: `SUM(eng)`
       * 包含滑鼠互動、開啟聲音、展開全螢幕等定義在 `eng` 事件中的總和。
 
+### 3.4 衍生指標 (Derived Metrics)
+
+以下指標必須在 SQL 中動態計算：
+
+  * **CTR (Click-Through Rate)**:
+      * `(SUM(bannerClick + videoClick) / SUM(CASE WHEN ad_type = 'dsp-creative' THEN cv ELSE impression END)) * 100`
+      * 公式: `Total Clicks / Effective Impressions * 100`
+  * **VTR (View-Through Rate)**:
+      * `(SUM(q100) / SUM(CASE WHEN ad_type = 'dsp-creative' THEN cv ELSE impression END)) * 100`
+      * 公式: `Total Q100 Views / Effective Impressions * 100`
+  * **ER (Engagement Rate)**:
+      * `(SUM(eng) / SUM(CASE WHEN ad_type = 'dsp-creative' THEN cv ELSE impression END)) * 100`
+      * 公式: `Total Engagements / Effective Impressions * 100`
+
 -----
 
 ## 4\. 查詢過濾條件範例 (Where Clause Context)

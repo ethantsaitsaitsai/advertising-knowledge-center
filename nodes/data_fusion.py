@@ -36,17 +36,28 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     df_ch = pd.DataFrame(ch_data) if ch_data else pd.DataFrame()
 
     # -----------------------------------------------------------
+    # Column Name Standardization (Global Lowercase)
+    # -----------------------------------------------------------
+    # Force all columns to lowercase to prevent duplicates (e.g. 'CTR' vs 'ctr')
+    # and ensure consistent mapping logic.
+    df_mysql.columns = df_mysql.columns.str.lower()
+    if not df_ch.empty:
+        df_ch.columns = df_ch.columns.str.lower()
+    
+    debug_logs.append(f"Standardized MySQL Cols: {list(df_mysql.columns)}")
+
+    # -----------------------------------------------------------
     # Column Name Normalization (Fix for KeyError: 'cmpid')
     # -----------------------------------------------------------
     # Normalize MySQL columns
     mysql_rename_map = {}
     for col in df_mysql.columns:
-        if col.lower() == 'cmpid':
+        if col == 'cmpid': # Already lowercased
             mysql_rename_map[col] = 'cmpid'
-        elif col.lower() == 'id' and 'cmpid' not in [c.lower() for c in df_mysql.columns]:
+        elif col == 'id' and 'cmpid' not in df_mysql.columns:
              mysql_rename_map[col] = 'cmpid'
         # Normalize ad_format_type_id if present
-        elif 'ad_format_type_id' in col.lower():
+        elif 'ad_format_type_id' in col:
              mysql_rename_map[col] = 'ad_format_type_id'
              
     if mysql_rename_map:
@@ -55,9 +66,9 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if not df_ch.empty:
         ch_rename_map = {}
         for col in df_ch.columns:
-            if col.lower() == 'cmpid':
+            if col == 'cmpid':
                 ch_rename_map[col] = 'cmpid'
-            elif 'ad_format_type_id' in col.lower():
+            elif 'ad_format_type_id' in col:
                 ch_rename_map[col] = 'ad_format_type_id'
         if ch_rename_map:
             df_ch.rename(columns=ch_rename_map, inplace=True)
@@ -65,11 +76,11 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # Helper: 安全的數值轉型函式
     def safe_numeric_convert(df, name="df"):
         for col in df.columns:
-            col_lower = col.lower()
-            if col_lower in ['cmpid', 'id', 'ad_format_type_id']: continue
+            # col is already lowercase
+            if col in ['cmpid', 'id', 'ad_format_type_id']: continue
             
             # 強制嘗試轉換包含 'budget', 'sum', 'price', 'count' 的欄位
-            is_metric_candidate = any(k in col_lower for k in ['budget', 'sum', 'price', 'count', 'impression', 'click', 'view'])
+            is_metric_candidate = any(k in col for k in ['budget', 'sum', 'price', 'count', 'impression', 'click', 'view'])
             
             if is_metric_candidate:
                  # 先移除可能的千分位逗號
@@ -237,26 +248,24 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     
     # --- Consolidate Campaign Name ---
     # Priority: MySQL (Campaign_Name) > ClickHouse (campaign_name)
-    name_cols = [c for c in merged_df.columns if c.lower() == 'campaign_name']
-    if name_cols:
-        # Sort to prioritize 'Campaign_Name' (MySQL usually) over 'campaign_name' or '_ch'
-        # Heuristic: Upper case C usually from MySQL prompt alias
-        name_cols.sort(key=lambda x: (x != 'Campaign_Name', x))
-        
-        primary_name_col = name_cols[0]
-        merged_df['Campaign_Name'] = merged_df[primary_name_col]
-        
-        for other_col in name_cols[1:]:
-            if other_col != 'Campaign_Name':
-                merged_df['Campaign_Name'] = merged_df['Campaign_Name'].combine_first(merged_df[other_col])
-        
-        # Sync back to all variants to ensure GroupBy works regardless of which col is picked
-        for col in name_cols:
-            merged_df[col] = merged_df['Campaign_Name']
+    # Since we lowercased everything, we look for 'campaign_name'
+    name_cols = [c for c in merged_df.columns if c == 'campaign_name']
+    
+    # Check for '_ch' suffix variants if they exist from merge
+    name_cols_ch = [c for c in merged_df.columns if 'campaign_name' in c and c != 'campaign_name']
+    
+    # Primary is usually 'campaign_name' (from MySQL which kept it or renamed it)
+    if 'campaign_name' in merged_df.columns:
+        # If we have multiple (e.g. campaign_name_ch), coalesce them
+        for other_col in name_cols_ch:
+             merged_df['campaign_name'] = merged_df['campaign_name'].combine_first(merged_df[other_col])
+    
+    # Restore Capitalized Output for Display (Optional, but good for UI)
+    # We will do this at the very end in reorder step.
     
     # DEBUG: Check Budget After Merge
     merge_budget_total = 0
-    budget_col_merge = next((c for c in merged_df.columns if 'budget' in c.lower()), None)
+    budget_col_merge = next((c for c in merged_df.columns if 'budget' in c), None)
     if budget_col_merge:
         merge_budget_total = merged_df[budget_col_merge].sum()
         debug_logs.append(f"DEBUG: Post-Merge Budget Total: {merge_budget_total:,.0f}")
@@ -271,7 +280,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     intent_to_alias = config.get_intent_to_alias_map()
 
     group_cols = []
-    col_lower_map = {c.lower(): c for c in merged_df.columns}
+    # Since all cols are lowercase, map is simple
+    col_lower_map = {c: c for c in merged_df.columns}
     
     concat_cols = []
 
@@ -291,13 +301,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     debug_logs.append(f"Final Group Cols: {group_cols}")
 
-    exclude_cols_lower = {c.lower() for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates']}
+    exclude_cols_lower = {c for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates']}
     for gc in group_cols:
-        exclude_cols_lower.add(gc.lower())
+        exclude_cols_lower.add(gc)
         
     numeric_cols = [c for c in merged_df.columns 
                     if pd.api.types.is_numeric_dtype(merged_df[c]) 
-                    and c.lower() not in exclude_cols_lower]
+                    and c not in exclude_cols_lower]
     
     debug_logs.append(f"Numeric Cols: {numeric_cols}")
 
@@ -331,7 +341,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             
             # Explicitly force SUM for known metric columns if they exist, regardless of type detection
             for col in merged_df.columns:
-                col_lower = col.lower()
+                col_lower = col # already lower
                 if 'budget' in col_lower or 'sum' in col_lower:
                      if col not in group_cols and col not in agg_dict:
                          # Try to convert again just in case
@@ -357,7 +367,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     # DEBUG: Check Budget After Aggregation
     agg_budget_total = 0
-    budget_col_agg = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+    budget_col_agg = next((c for c in final_df.columns if 'budget' in c), None)
     if budget_col_agg:
         agg_budget_total = final_df[budget_col_agg].sum()
         debug_logs.append(f"DEBUG: Post-Agg Budget Total: {agg_budget_total:,.0f}")
@@ -365,7 +375,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     print(f"DEBUG [DataFusion] Pre-KPI Calc Columns: {list(final_df.columns)}")
 
     # 5. 重算衍生指標
-    all_cols_lower = {c.lower(): c for c in final_df.columns}
+    all_cols_lower = {c: c for c in final_df.columns}
 
     def find_col(metric_key: str):
         """Find column by metric key using config-defined keywords."""
@@ -393,13 +403,14 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         
         if click_col:
             print(f"DEBUG [DataFusion] Calculating CTR using {click_col} / {denom_col}")
-            final_df['CTR'] = final_df.apply(lambda x: (x[click_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
+            # Use 'ctr' lowercase
+            final_df['ctr'] = final_df.apply(lambda x: (x[click_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
         if view100_col: # Use Q100 for VTR (per domain knowledge)
             print(f"DEBUG [DataFusion] Calculating VTR using {view100_col} / {denom_col}")
-            final_df['VTR'] = final_df.apply(lambda x: (x[view100_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
+            final_df['vtr'] = final_df.apply(lambda x: (x[view100_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
         if eng_col:
             print(f"DEBUG [DataFusion] Calculating ER using {eng_col} / {denom_col}")
-            final_df['ER'] = final_df.apply(lambda x: (x[eng_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
+            final_df['er'] = final_df.apply(lambda x: (x[eng_col] / x[denom_col] * 100) if x[denom_col] > 0 else 0, axis=1).round(2)
     else:
         debug_logs.append("No impression column found. Skipping KPI calculation.")
         print("DEBUG [DataFusion] No impression column found.")
@@ -427,18 +438,18 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     for req_m in requested_metrics:
         candidates = metric_map.get(req_m, [req_m])
         for cand in candidates:
-            match = next((c for c in final_df.columns if cand in c.lower()), None)
+            match = next((c for c in final_df.columns if cand in c), None)
             if match and match not in cols_to_keep: cols_to_keep.append(match)
             
-    # Always add KPIs if they exist
-    for kpi in ['CTR', 'VTR', 'ER']:
+    # Always add KPIs if they exist (using lowercase)
+    for kpi in ['ctr', 'vtr', 'er']:
         if kpi in final_df.columns:
              if kpi not in cols_to_keep:
                 cols_to_keep.append(kpi)
                 
     # Add budget fallback if nothing selected
     if len(cols_to_keep) == len(group_cols):
-         match = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+         match = next((c for c in final_df.columns if 'budget' in c), None)
          if match: cols_to_keep.append(match)
          # Also add impressions/clicks if available for context
          if imp_col and imp_col not in cols_to_keep: cols_to_keep.append(imp_col)
@@ -461,14 +472,14 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         # ... (Existing Ranking Logic) ...
         # Strategy 4: Budget Fallback
         if not sort_col:
-            sort_col = next((c for c in final_df.columns if 'budget' in c.lower()), None)
+            sort_col = next((c for c in final_df.columns if 'budget' in c), None)
             
         if sort_col:
             debug_logs.append(f"Sorting by {sort_col} (Descending) for Ranking")
             final_df = final_df.sort_values(by=sort_col, ascending=False)
             
     elif calc_type == 'Trend':
-        date_col = next((c for c in final_df.columns if 'date' in c.lower() or 'month' in c.lower()), None)
+        date_col = next((c for c in final_df.columns if 'date' in c or 'month' in c), None)
         if date_col:
             debug_logs.append(f"Sorting by {date_col} (Ascending) for Trend")
             final_df = final_df.sort_values(by=date_col, ascending=True)
@@ -483,13 +494,13 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     # 7. Final Formatting
     for col in final_df.columns:
-        if 'budget' in col.lower() and pd.api.types.is_numeric_dtype(final_df[col]):
+        if 'budget' in col and pd.api.types.is_numeric_dtype(final_df[col]):
              final_df[col] = final_df[col].fillna(0).astype(int)
 
     # 7.1 Combine Date into Campaign Name
-    camp_name_col = next((c for c in final_df.columns if c.lower() == 'campaign_name'), None)
-    start_col = next((c for c in final_df.columns if c.lower() == 'start_date'), None)
-    end_col = next((c for c in final_df.columns if c.lower() == 'end_date'), None)
+    camp_name_col = next((c for c in final_df.columns if c == 'campaign_name'), None)
+    start_col = next((c for c in final_df.columns if c == 'start_date'), None)
+    end_col = next((c for c in final_df.columns if c == 'end_date'), None)
     
     if camp_name_col and start_col and end_col:
         def format_name(row):
@@ -553,30 +564,66 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = final_df[final_df[camp_name_col].astype(str) != '0']
         
     # Find ad_format column again just to be safe
-    ad_format_col = next((c for c in final_df.columns if 'ad_format' in c.lower() and c != 'ad_format_type_id'), None)
+    ad_format_col = next((c for c in final_df.columns if 'ad_format' in c and c != 'ad_format_type_id'), None)
 
     # Filter out rows with invalid Ad Format (0 or empty) if ad_format column exists
     if ad_format_col and ad_format_col in final_df.columns:
-        final_df = final_df[~final_df[ad_format_col].astype(str).isin(['0', ''])]
+        initial_count = len(final_df)
+        # Relaxed Filter: Check for '0', 'nan', '' case-insensitive
+        mask = ~final_df[ad_format_col].astype(str).str.lower().isin(['0', 'nan', '', 'none'])
+        final_df = final_df[mask]
+        dropped_count = initial_count - len(final_df)
+        if dropped_count > 0:
+            debug_logs.append(f"Dropped {dropped_count} rows with invalid Ad Format.")
+            print(f"DEBUG [DataFusion] Dropped {dropped_count} rows due to invalid Ad Format in col '{ad_format_col}'.")
         
     # Filter out rows where Agency is None or empty string (for Agency grouping)
-    agency_col = next((c for c in final_df.columns if c.lower() == 'agency'), None)
+    agency_col = next((c for c in final_df.columns if c == 'agency'), None)
     if agency_col and agency_col in final_df.columns:
         # Filter out 'None', 'nan', and empty strings (case-insensitive check for None/nan if needed, but explicit list is safer)
         final_df = final_df[~final_df[agency_col].astype(str).isin(['None', 'nan', ''])]
         final_df = final_df[final_df[agency_col].notna()]
 
     # Filter out rows where Advertiser is None (similar to Agency)
-    adv_col = next((c for c in final_df.columns if c.lower() == 'advertiser'), None)
+    adv_col = next((c for c in final_df.columns if c == 'advertiser'), None)
     if adv_col and adv_col in final_df.columns:
         final_df = final_df[~final_df[adv_col].astype(str).isin(['None', 'nan', ''])]
         final_df = final_df[final_df[adv_col].notna()]
         
     # Hide All-Zero Metrics
-    for metric in ['CTR', 'VTR', 'ER']:
+    for metric in ['ctr', 'vtr', 'er']:
         if metric in final_df.columns:
             if (final_df[metric] == 0).all():
                 final_df = final_df.drop(columns=[metric])
+
+    # --- 8. Final Renaming (Restore Capitalization for Display) ---
+    # Restore capitalization based on intent_to_alias (backward mapping) or config
+    display_map = {}
+    valid_dims_map = config.get_valid_dimensions() # e.g. {'agency': 'Agency'}
+    
+    # Map metrics
+    metric_display_map = {
+        'ctr': 'CTR',
+        'vtr': 'VTR',
+        'er': 'ER',
+        'budget_sum': 'Budget_Sum',
+        'impression': 'Impression',
+        'click': 'Click'
+    }
+    
+    for col in final_df.columns:
+        if col in valid_dims_map:
+            display_map[col] = valid_dims_map[col]
+        elif col in metric_display_map:
+            display_map[col] = metric_display_map[col]
+        # Ad-hoc fixes
+        elif 'ad_format' in col and 'type' in col:
+             display_map[col] = 'Ad_Format'
+        elif 'segment' in col:
+             display_map[col] = 'Segment_Category'
+             
+    if display_map:
+        final_df.rename(columns=display_map, inplace=True)
 
     return {
         "final_dataframe": final_df.to_dict('records'),

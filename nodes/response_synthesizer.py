@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage
 from prompts.response_synthesizer_prompt import RESPONSE_SYNTHESIZER_PROMPT
 from config.llm import llm
+from config.registry import config
 from schemas.state import AgentState
 from typing import Dict, Any
 import pandas as pd
@@ -147,10 +148,17 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
         else:
              print(f"DEBUG [Synthesizer] Fusion returned empty. Reason: {fusion_result.get('final_result_text')}")
              # Fallback: Try to use whatever raw data we have
-             if perf_data: df = pd.DataFrame(perf_data)
+             if perf_data: 
+                 df = pd.DataFrame(perf_data)
              elif campaign_data: 
                  cols = state.get("sql_result_columns") or state.get("campaign_data", {}).get("columns")
                  df = pd.DataFrame(campaign_data, columns=cols) if cols else pd.DataFrame(campaign_data)
+                 
+             # Safety: Hide technical columns even in fallback
+             hidden_cols = config.get_hidden_columns()
+             if not df.empty:
+                 print(f"DEBUG [Synthesizer] Applying Fallback Column Hiding: {hidden_cols}")
+                 df = df.drop(columns=[c for c in df.columns if c.lower() in hidden_cols], errors='ignore')
 
     # -------------------------
 

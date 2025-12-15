@@ -49,6 +49,7 @@ SELECT ...
 - Ad Format Type IDs: {ad_format_type_id_list}
 - Date Range: {date_start} to {date_end}
 - Dimensions: {dimensions}
+- Metrics: {metrics}
 - Schema Context: {schema_context}
 
 # SQL 範例
@@ -78,6 +79,27 @@ FROM kafka.summing_ad_format_events_view
 WHERE cmpid IN (101, 102)
   AND day_local BETWEEN '2023-01-01' AND '2023-01-31'
 GROUP BY cmpid, ad_format_type_id, ad_format_type -- 必須分組
+LIMIT 100
+```
+
+## 範例 3: 成效指標查詢 (CTR, VTR, ER)
+```sql
+SELECT
+    cmpid,
+    SUM(impression) AS total_impressions,
+    SUM(bannerClick + videoClick) AS total_clicks,
+    -- Effective Impressions logic (from schema)
+    SUM(multiIf(ad_type = 'dsp-creative', cv, impression)) AS effective_impressions,
+    -- CTR: Clicks / Effective Impressions * 100
+    (SUM(bannerClick + videoClick) / SUM(multiIf(ad_type = 'dsp-creative', cv, impression))) * 100 AS ctr,
+    -- VTR: Q100 / Effective Impressions * 100
+    (SUM(q100) / SUM(multiIf(ad_type = 'dsp-creative', cv, impression))) * 100 AS vtr,
+    -- ER: Engagement / Effective Impressions * 100
+    (SUM(eng) / SUM(multiIf(ad_type = 'dsp-creative', cv, impression))) * 100 AS er
+FROM kafka.summing_ad_format_events_view
+WHERE cmpid IN (101, 102)
+  AND day_local BETWEEN '2023-01-01' AND '2023-01-31'
+GROUP BY cmpid
 LIMIT 100
 ```
 
