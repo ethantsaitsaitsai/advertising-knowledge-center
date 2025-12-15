@@ -299,6 +299,18 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if found_col and found_col not in group_cols:
             group_cols.append(found_col)
 
+    # ============================================================
+    # CRITICAL FIX: Always include campaign_name in group_cols for campaign-level queries
+    # ============================================================
+    # For strategy/audience/execution queries, campaign_name should always be a grouping dimension
+    # to maintain campaign identity. Otherwise, campaigns get aggregated together incorrectly.
+    query_level = state.get('query_level', 'strategy')
+    if query_level in ['strategy', 'audience', 'execution']:
+        if 'campaign_name' in merged_df.columns and 'campaign_name' not in group_cols:
+            # Insert at beginning for better display order
+            group_cols.insert(0, 'campaign_name')
+            print(f"DEBUG [DataFusion] Auto-added campaign_name to group_cols for {query_level} level query")
+
     debug_logs.append(f"Final Group Cols: {group_cols}")
 
     exclude_cols_lower = {c for c in ['cmpid', 'id', 'start_date', 'end_date', 'schedule_dates']}
@@ -586,16 +598,27 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # Find ad_format column again just to be safe
     ad_format_col = next((c for c in final_df.columns if 'ad_format' in c and c != 'ad_format_type_id'), None)
 
-    # Filter out rows with invalid Ad Format (0 or empty) if ad_format column exists
-    if ad_format_col and ad_format_col in final_df.columns:
+    # ============================================================
+    # CRITICAL FIX: Only filter invalid Ad Format if user requested it as dimension
+    # ============================================================
+    # If user didn't request Ad_Format dimension, don't filter out rows with empty ad_format
+    # This is important for Segment_Category queries where ad_format might be NULL/empty
+    user_requested_ad_format = 'Ad_Format' in dimensions or 'ad_format' in [d.lower() for d in dimensions]
+
+    if ad_format_col and ad_format_col in final_df.columns and user_requested_ad_format:
         initial_count = len(final_df)
         # Relaxed Filter: Check for '0', 'nan', '' case-insensitive
         mask = ~final_df[ad_format_col].astype(str).str.lower().isin(['0', 'nan', '', 'none'])
         final_df = final_df[mask]
         dropped_count = initial_count - len(final_df)
         if dropped_count > 0:
-            debug_logs.append(f"Dropped {dropped_count} rows with invalid Ad Format.")
+            debug_logs.append(f"Dropped {dropped_count} rows with invalid Ad Format (user requested Ad_Format dimension).")
             print(f"DEBUG [DataFusion] Dropped {dropped_count} rows due to invalid Ad Format in col '{ad_format_col}'.")
+    elif ad_format_col and ad_format_col in final_df.columns and not user_requested_ad_format:
+        # User didn't request Ad_Format, but it exists in merged data
+        # Drop the ad_format column instead of filtering rows
+        print(f"DEBUG [DataFusion] User didn't request Ad_Format. Dropping column '{ad_format_col}' instead of filtering rows.")
+        final_df = final_df.drop(columns=[ad_format_col], errors='ignore')
         
     # Filter out rows where Agency is None or empty string (for Agency grouping)
     agency_col = next((c for c in final_df.columns if c == 'agency'), None)
