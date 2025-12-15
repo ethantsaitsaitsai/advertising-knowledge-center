@@ -124,6 +124,22 @@ def validator_node(state: SupervisorSubState):
         if user_intent:
             decision_payload["is_ambiguous"] = user_intent.is_ambiguous
 
+        # ============================================================
+        # CRITICAL FIX: Pass analysis_needs from user_intent to task
+        # ============================================================
+        # CampaignGenerator and PerformanceGenerator need dimensions/metrics to generate correct SQL
+        # Without this, CampaignAgent only queries basic cmpid, missing Budget_Sum, Segment_Category, etc.
+        if user_intent and user_intent.analysis_needs:
+            if hasattr(user_intent.analysis_needs, "model_dump"):
+                decision_payload["analysis_needs"] = user_intent.analysis_needs.model_dump()
+            elif hasattr(user_intent.analysis_needs, "dict"):
+                decision_payload["analysis_needs"] = user_intent.analysis_needs.dict()
+            elif isinstance(user_intent.analysis_needs, dict):
+                decision_payload["analysis_needs"] = user_intent.analysis_needs
+            else:
+                # Fallback: try to convert to dict
+                decision_payload["analysis_needs"] = dict(user_intent.analysis_needs)
+
     return {
         "next": next_node, # Update Global 'next'
         "supervisor_payload": decision_payload, # Update Global payload
