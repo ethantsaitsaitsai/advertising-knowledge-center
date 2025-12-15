@@ -83,14 +83,16 @@ def router_node(state: CampaignSubState):
 
     # --- Deterministic Logic (The "Fast Path") ---
 
-    # 0. Clarification Request -> Return the clarification message directly (HIGHEST PRIORITY)
+    # 0. Clarification Request -> Pass through to final user (HIGHEST PRIORITY)
     if is_clarification_request:
         print("DEBUG [CampaignRouter] Logic: Clarification request detected -> FINISH (with clarification message)")
-        # The instruction_text itself IS the clarification message from Supervisor
+        # Do NOT process this as a normal query.
+        # Return the instruction_text as a clarification message for the user.
+        # The Supervisor already crafted the clarification message, so just pass it through.
         return {
             "next_action": "finish",
             "final_response": task.instruction_text,
-            "internal_thoughts": ["Brain (Rule): Supervisor requested clarification. Returning clarification message."],
+            "internal_thoughts": ["Brain (Rule): Supervisor requested clarification. Passing message to user."],
             "step_count": current_step
         }
 

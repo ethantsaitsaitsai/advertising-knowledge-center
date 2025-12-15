@@ -83,7 +83,19 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
     """
     print(f"DEBUG [Synthesizer] State Keys: {list(state.keys())}")
     print(f"DEBUG [Synthesizer] Campaign Data Present: {bool(state.get('campaign_data'))}")
-    
+
+    # --- Check for Clarification Messages ---
+    # If the last message is a clarification/question from CampaignAgent,
+    # just pass it through without trying to synthesize data
+    messages = state.get("messages", [])
+    if messages:
+        last_message = messages[-1]
+        if hasattr(last_message, "name") and last_message.name == "CampaignAgent":
+            # This is a clarification or intermediate message from CampaignAgent
+            # Return it as-is without further processing
+            print("DEBUG [Synthesizer] Clarification message detected. Passing through to user.")
+            return {"messages": [last_message]}
+
     # --- Data Fusion Logic ---
     perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
     campaign_data = state.get("sql_result")  # From CampaignAgent (MySQL)

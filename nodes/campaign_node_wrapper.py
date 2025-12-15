@@ -57,23 +57,21 @@ def campaign_node(state: AgentState):
     sql_error = result_state.get("sql_error")
     final_response_text = result_state.get("final_response")
     step_count = result_state.get("step_count", 0)
-    
+
     print(f"DEBUG [CampaignNode] SubGraph finished in {step_count} steps.")
-    
-    # Construct a response message for the Supervisor
-    if sql_error:
-        response_msg = AIMessage(content=f"查詢失敗 (經過 {step_count} 步嘗試)。錯誤訊息: {sql_error}")
-    elif campaign_data and campaign_data.get("data"):
-        count = len(campaign_data["data"])
-        response_msg = AIMessage(content=f"查詢成功，已找到 {count} 筆資料。請檢查 state['campaign_data']。")
-    else:
-        # No data case
-        msg_content = final_response_text or "查無資料 (No Data Found)."
-        response_msg = AIMessage(content=msg_content)
 
-    response_msg.name = "CampaignAgent"
-
-    return {
-        "messages": [response_msg],
+    # Only return user-facing messages (final_response).
+    # Do NOT return internal status messages like "查詢成功" or "查詢失敗".
+    # The supervisor/synthesizer should only see final user-facing content.
+    result = {
         "campaign_data": campaign_data
     }
+
+    # Only add a message if there's a user-facing response (e.g., clarification or final answer)
+    if final_response_text:
+        # This is a clarification message or final response from the router
+        response_msg = AIMessage(content=final_response_text)
+        response_msg.name = "CampaignAgent"
+        result["messages"] = [response_msg]
+
+    return result
