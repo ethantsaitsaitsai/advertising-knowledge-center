@@ -100,13 +100,34 @@ def router_node(state: CampaignSubState):
     # 0. Clarification Request -> Pass through to final user (HIGHEST PRIORITY)
     if is_clarification_request:
         print("DEBUG [CampaignRouter] Logic: Clarification request detected -> FINISH (with clarification message)")
-        # Do NOT process this as a normal query.
-        # Return the instruction_text as a clarification message for the user.
-        # The Supervisor already crafted the clarification message, so just pass it through.
+        # CRITICAL FIX: Do NOT use task.instruction_text (Supervisor's internal instructions)
+        # Instead, generate a proper user-facing clarification message
+        # The Supervisor's instruction_text like "使用者想查詢悠遊卡相關的活動，但意圖不明確..."
+        # is internal routing logic, NOT a user-facing message!
+
+        # Generate a proper clarification message based on context
+        # If we have search results, show them to the user
+        if search_results and len(search_results) > 0:
+            options_str = "\n".join([f"- {opt}" for opt in search_results[:10]])
+            clarification_msg = (
+                f"我找到了多個相關項目。請問您是指以下哪一個？\n\n"
+                f"{options_str}\n\n"
+                f"如果上述選項都不符合，請提供更多細節，我會為您重新搜尋。"
+            )
+        else:
+            clarification_msg = (
+                "我需要您提供更多信息，以便更精確地查詢數據。\n\n"
+                "請確認或提供：\n"
+                "- 您要查詢的具體實體/活動名稱\n"
+                "- 具體想查詢的指標（例如：成效、投資金額、格式等）\n"
+                "- 查詢的時間範圍（如適用）\n\n"
+                "請提供更多細節，我會為您檢索相應的數據。"
+            )
+
         return {
             "next_action": "finish",
-            "final_response": task.instruction_text,
-            "internal_thoughts": ["Brain (Rule): Supervisor requested clarification. Passing message to user."],
+            "final_response": clarification_msg,
+            "internal_thoughts": ["Brain (Rule): is_ambiguous=True or clarification keyword detected. Generating user-facing clarification instead of internal instruction."],
             "step_count": current_step
         }
 
@@ -147,11 +168,24 @@ def router_node(state: CampaignSubState):
                 "step_count": current_step
             }
         elif count == 0:
-            # No results at all
+            # No results found - ask for clarification instead of just giving up
+            # This handles cases where the entity name might be spelled differently or doesn't exist
+            clarification_msg = (
+                "我無法找到符合您描述的項目。\n\n"
+                "這可能是因為：\n"
+                "- 實體名稱拼寫不同\n"
+                "- 項目名稱可能已更改\n"
+                "- 該項目不存在於目前的數據庫中\n\n"
+                "請嘗試：\n"
+                "- 提供完整的項目名稱\n"
+                "- 使用部分關鍵字進行搜尋\n"
+                "- 確認時間範圍是否正確\n\n"
+                "您可以重新描述想查詢的內容嗎？"
+            )
             return {
-                "next_action": "finish_no_data",
-                "final_response": "找不到相關的活動名稱或品牌。",
-                "internal_thoughts": ["Brain (Rule): Search returned no results."],
+                "next_action": "finish",
+                "final_response": clarification_msg,
+                "internal_thoughts": ["Brain (Rule): Search returned no results. Asking for clarification instead of giving up."],
                 "step_count": current_step
             }
         else:
@@ -193,12 +227,21 @@ def router_node(state: CampaignSubState):
     if executed_but_empty:
         # We tried SQL and failed to get data.
         # If we ALREADY searched (search_results is not None), then searching again won't help unless we change term.
-        # So if searched -> Fail.
+        # So if searched -> Ask for clarification about filters (date, etc.)
         if search_results is not None:
-             print("DEBUG [CampaignRouter] Logic: SQL Empty + Already Searched -> FINISH_NO_DATA")
+             print("DEBUG [CampaignRouter] Logic: SQL Empty + Already Searched -> Ask for clarification on filters")
+             # Entity found but no data - likely a date range or filter issue
+             clarification_msg = (
+                 "我找到了相關的項目，但根據您提供的條件（例如時間範圍）查無數據。\n\n"
+                 "請檢查：\n"
+                 "- 時間範圍是否正確？(例如：該活動是否在您指定的時間範圍內執行)\n"
+                 "- 是否需要調整其他篩選條件？\n\n"
+                 "請確認或修改查詢條件，我會為您重新檢索。"
+             )
              return {
-                "next_action": "finish_no_data",
-                "internal_thoughts": ["Brain: SQL returned empty even after search."],
+                "next_action": "finish",
+                "final_response": clarification_msg,
+                "internal_thoughts": ["Brain: SQL returned empty. Asking for filter clarification (date, etc.)."],
                 "step_count": current_step
              }
         else:
