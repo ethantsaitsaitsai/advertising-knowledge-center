@@ -587,13 +587,23 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     if ad_format_col and ad_format_col in final_df.columns and user_requested_ad_format:
         initial_count = len(final_df)
-        # Relaxed Filter: Check for '0', 'nan', '' case-insensitive
-        mask = ~final_df[ad_format_col].astype(str).str.lower().isin(['0', 'nan', '', 'none'])
-        final_df = final_df[mask]
-        dropped_count = initial_count - len(final_df)
-        if dropped_count > 0:
-            debug_logs.append(f"Dropped {dropped_count} rows with invalid Ad Format (user requested Ad_Format dimension).")
-            print(f"DEBUG [DataFusion] Dropped {dropped_count} rows due to invalid Ad Format in col '{ad_format_col}'.")
+        # CRITICAL: Only filter '0' (obviously invalid), keep empty/nan/none (valid "no data" state)
+        # Reason: In AUDIENCE queries, Ad_Format might be missing but Segment_Category exists
+        mask = ~final_df[ad_format_col].astype(str).str.strip().isin(['0'])
+        filtered_df = final_df[mask]
+        dropped_count = initial_count - len(filtered_df)
+
+        # Safety Check: If filtering would remove ALL data, keep original (don't filter)
+        # This prevents losing all data when Ad_Format legitimately doesn't exist
+        if dropped_count == initial_count and initial_count > 0:
+            print(f"DEBUG [DataFusion] Ad_Format filter would remove all {initial_count} rows. Keeping data with empty Ad_Format.")
+            # Keep ad_format_col but replace invalid values with empty string for display
+            final_df[ad_format_col] = final_df[ad_format_col].astype(str).replace(['0', 'nan', 'None'], '')
+        else:
+            final_df = filtered_df
+            if dropped_count > 0:
+                debug_logs.append(f"Dropped {dropped_count} rows with invalid Ad Format (user requested Ad_Format dimension).")
+                print(f"DEBUG [DataFusion] Dropped {dropped_count} rows due to invalid Ad Format in col '{ad_format_col}'.")
     elif ad_format_col and ad_format_col in final_df.columns and not user_requested_ad_format:
         # User didn't request Ad_Format, but it exists in merged data
         # Drop the ad_format column instead of filtering rows

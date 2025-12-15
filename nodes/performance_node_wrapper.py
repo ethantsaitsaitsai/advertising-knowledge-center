@@ -79,16 +79,16 @@ def performance_node(state: AgentState):
     was_default = result.get("was_default_metrics", False)
     sql_error = result.get("sql_error")
     generated_sql = result.get("generated_sql")
-    
+
+    # CRITICAL: Only output message on ERROR, not on success
+    # Success case will be handled by ResponseSynthesizer with proper analysis
     if sql_error:
         msg_content = f"成效查詢失敗: {sql_error}"
-    elif final_dataframe:
-        count = len(final_dataframe)
-        msg_content = f"成效查詢成功，已找到 {count} 筆數據。"
+        response_msg = AIMessage(content=msg_content, name="PerformanceAgent")
     else:
-        msg_content = "成效查詢無資料。"
-        
-    response_msg = AIMessage(content=msg_content, name="PerformanceAgent")
+        # Silent success - data will be processed by DataFusion and Synthesizer
+        # No redundant "成效查詢成功，已找到 X 筆數據。" message
+        response_msg = AIMessage(content="", name="PerformanceAgent")
     
     # Construct Performance Data Wrapper (similar to Campaign Data)
     performance_data_wrapper = {
