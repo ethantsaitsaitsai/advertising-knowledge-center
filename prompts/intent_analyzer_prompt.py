@@ -15,6 +15,13 @@ INTENT_ANALYZER_PROMPT = """
    - 例子: 上一輪缺日期，使用者只回 "2025年" -> 保留 Entity="悠遊卡"，更新 Date="2025"。
    - 例子: 上一輪問 "你是說 A 還是 B?"，使用者回 "A" -> 更新 Entities=["A"]，清除 `is_ambiguous`。
 
+**澄清回答特殊處理 (Clarification Response Handling)**:
+當 `is_ambiguous=True` 且使用者回應澄清問題時：
+1. **識別選擇**: 使用者可能回答「我要查詢品牌部分的悠遊卡」、「我要選擇第3個」或「我是指那個活動」。
+2. **自動驗證**: 如果使用者給出了具體實體名稱（如「悠遊卡 (clients: product)」），呼叫 `search_ambiguous_term` 驗證。
+3. **清除模糊**: 一旦確認使用者的選擇，設置 `is_ambiguous=False`。
+4. **保留其他**: 保留 `query_level`, `date_range`, `analysis_needs` 等其他信息。
+
 # 查詢層級判斷規則 (Query Level Classification)
 **Output Value 必須是以下小寫英文單字之一**:
 1. **`contract`** (合約層/總覽): "總覽", "合約", "總預算".
