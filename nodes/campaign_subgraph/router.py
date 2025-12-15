@@ -62,10 +62,24 @@ def router_node(state: CampaignSubState):
     search_results = state.get("search_results") # This is a list or None
 
     # Check if this is a clarification/disambiguation request from Supervisor
-    is_clarification_request = task.instruction_text and any(
-        keyword in task.instruction_text.lower()
-        for keyword in ["澄清", "clarify", "clarification", "選擇", "choose", "哪一個", "which one"]
-    )
+    # NEW: Also check for is_ambiguous flag OR intent mismatch indicators
+    is_clarification_request = False
+
+    if task.instruction_text:
+        instruction_lower = task.instruction_text.lower()
+        # Original keyword detection
+        if any(keyword in instruction_lower
+               for keyword in ["澄清", "clarify", "clarification", "選擇", "choose", "哪一個", "which one"]):
+            is_clarification_request = True
+        # NEW: Strong indicators that Supervisor wants clarification, not SQL execution
+        elif any(keyword in instruction_lower
+                 for keyword in ["詢問", "ask", "問", "list", "列出", "options", "哪一個", "which", "具體"]):
+            is_clarification_request = True
+
+    # CRITICAL: If IntentAnalyzer says it's ambiguous, this should be clarification step
+    if hasattr(task, 'is_ambiguous') and task.is_ambiguous:
+        print("DEBUG [CampaignRouter] is_ambiguous=True in task -> treating as clarification request")
+        is_clarification_request = True
 
     # Helpers
     has_schema_info = any("Schema Inspection Result" in m for m in memory)

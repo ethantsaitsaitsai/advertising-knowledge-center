@@ -7,30 +7,35 @@ class CampaignTask(BaseModel):
     Use this when you need to query campaign metadata, contracts, budgets, or strategy details from MySQL.
     """
     task_type: str = "campaign_query"
-    
+
     query_level: Literal["contract", "strategy", "execution", "audience"] = Field(
-        ..., 
+        ...,
         description="The hierarchical level of the query (contract/strategy/execution/audience)."
     )
-    
+
     campaign_ids: Optional[List[int]] = Field(
         None,
         description="Optional list of known Campaign IDs to filter by."
     )
-    
+
     filters: Dict[str, Any] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         description="Filtering conditions extracted from user intent (e.g., {'brands': ['Nike'], 'date_range': 'This Year'})."
     )
-    
+
     analysis_needs: Dict[str, List[str]] = Field(
         default_factory=dict,
         description="Metrics (SELECT) and Dimensions (GROUP BY) required by the user."
     )
-    
+
     instruction_text: str = Field(
-        ..., 
+        ...,
         description="Clear, natural language instructions for the Campaign Agent."
+    )
+
+    is_ambiguous: Optional[bool] = Field(
+        False,
+        description="Whether the user intent is ambiguous and requires clarification (from IntentAnalyzer)."
     )
 
 class PerformanceTask(BaseModel):

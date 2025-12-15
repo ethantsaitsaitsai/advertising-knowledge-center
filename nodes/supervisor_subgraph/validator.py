@@ -104,6 +104,11 @@ def validator_node(state: SupervisorSubState):
         if user_intent:
             decision_payload["query_level"] = user_intent.query_level
 
+        # 【CRITICAL】Pass is_ambiguous flag from user_intent to task
+        # CampaignAgent Router needs to know if this is a clarification step
+        if user_intent:
+            decision_payload["is_ambiguous"] = user_intent.is_ambiguous
+
     return {
         "next": next_node, # Update Global 'next'
         "supervisor_payload": decision_payload, # Update Global payload
