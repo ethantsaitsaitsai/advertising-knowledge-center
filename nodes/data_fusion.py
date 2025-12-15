@@ -166,61 +166,43 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         # CRITICAL FIX: dropna=False is required to keep rows where ad_format_type_id is NaN/NULL
         df_mysql = df_mysql.groupby(group_keys, as_index=False, dropna=False).agg(agg_dict_pre)
 
-    # -----------------------------------------------------------
-    # Strict MySQL Column Filtering BEFORE Merge
-    # -----------------------------------------------------------
-    # Prefer UserIntent analysis_needs
+    # ============================================================
+    # CRITICAL REFACTOR: Extract UserIntent ONCE (avoid pollution from enriched state)
+    # ============================================================
+    # Get user's ORIGINAL intent (not enriched by PerformanceGenerator or others)
     user_intent = state.get('user_intent')
     if user_intent and user_intent.analysis_needs:
         raw_analysis_needs = user_intent.analysis_needs
     else:
         raw_analysis_needs = state.get('analysis_needs')
-        
+
     if hasattr(raw_analysis_needs, 'model_dump'):
-        analysis_needs = raw_analysis_needs.model_dump()
+        user_original_analysis_needs = raw_analysis_needs.model_dump()
     elif hasattr(raw_analysis_needs, 'dict'):
-        analysis_needs = raw_analysis_needs.dict()
+        user_original_analysis_needs = raw_analysis_needs.dict()
     elif isinstance(raw_analysis_needs, dict):
-        analysis_needs = raw_analysis_needs
+        user_original_analysis_needs = raw_analysis_needs
     else:
-        analysis_needs = {}
-    
-    requested_dims = analysis_needs.get('dimensions', [])
-    dim_protection_list = [d.lower() for d in requested_dims]
-    if 'campaign_name' in dim_protection_list: dim_protection_list.append('campaign_name')
-    if 'date_month' in dim_protection_list: dim_protection_list.append('date_month')
-    if 'date_year' in dim_protection_list: dim_protection_list.append('date_year')
+        user_original_analysis_needs = {}
 
-    mysql_cols_to_keep_for_merge = ['cmpid']
-    if 'ad_format_type_id' in df_mysql.columns:
-        mysql_cols_to_keep_for_merge.append('ad_format_type_id')
-    if seg_col and seg_col in df_mysql.columns:
-        mysql_cols_to_keep_for_merge.append(seg_col)
-    
-    strict_exclude_keywords = config.get_strict_exclude_keywords() 
-    
-    for col in df_mysql.columns:
-        if col in mysql_cols_to_keep_for_merge: continue
-        col_lower = col.lower()
-        
-        if col_lower in dim_protection_list:
-            mysql_cols_to_keep_for_merge.append(col)
-            continue
+    # Store original user dimensions/metrics for later use (after aggregation)
+    user_original_dims = user_original_analysis_needs.get('dimensions', [])
+    user_original_metrics = user_original_analysis_needs.get('metrics', [])
 
-        if any(k in col_lower for k in strict_exclude_keywords) and col_lower != 'cmpid':
-            continue
-            
-        if pd.api.types.is_numeric_dtype(df_mysql[col]):
-            mysql_cols_to_keep_for_merge.append(col)
-            continue
-            
-        mysql_cols_to_keep_for_merge.append(col)
-    
-    # Ensure we only keep columns that exist
-    mysql_cols_to_keep_for_merge = [c for c in mysql_cols_to_keep_for_merge if c in df_mysql.columns]
-    
-    df_mysql = df_mysql[mysql_cols_to_keep_for_merge]
-    debug_logs.append(f"MySQL Cols After Pre-Merge Filter: {list(df_mysql.columns)}")
+    debug_logs.append(f"User Original Dimensions: {user_original_dims}")
+    debug_logs.append(f"User Original Metrics: {user_original_metrics}")
+
+    # -----------------------------------------------------------
+    # REMOVED: Pre-Merge Column Filtering (causes data loss)
+    # -----------------------------------------------------------
+    # Previously: Filtered MySQL columns before merge based on user dimensions
+    # Problem: PerformanceGenerator enriches dimensions (adds cmpid, campaign_name, etc.)
+    #          This pollutes the dimension list, causing wrong columns to be filtered
+    # Solution: Keep ALL columns through merge and aggregation, filter at the end
+    #
+    # New Architecture: Merge ALL → Aggregate ALL → Filter for Display
+
+    debug_logs.append(f"MySQL Cols Before Merge (ALL): {list(df_mysql.columns)}")
 
     # ============================================================
     # 3. 合併 (Merge) - Dynamic Merge Keys
@@ -274,8 +256,9 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     print(f"DEBUG [DataFusion] Merged Columns: {list(merged_df.columns)}")
 
     # 4. 二次聚合 (Re-aggregation)
-    dimensions = analysis_needs.get('dimensions', [])
-    print(f"DEBUG [DataFusion] Requested Dimensions: {dimensions}")
+    # CRITICAL: Use user's ORIGINAL dimensions (not enriched by PerformanceGenerator)
+    dimensions = user_original_dims  # Use the extracted original dims, not polluted state
+    print(f"DEBUG [DataFusion] User Original Dimensions (for grouping): {dimensions}")
     
     intent_to_alias = config.get_intent_to_alias_map()
 
@@ -429,16 +412,20 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     print(f"DEBUG [DataFusion] Post-KPI Calc Columns: {list(final_df.columns)}")
 
-    # 6. 後處理 (Filtering & Sorting)
-    # ... (Keep existing filtering logic) ...
-    
-    # Force include KPIs
+    # ============================================================
+    # 6. 後處理 (Column Filtering) - AFTER Aggregation
+    # ============================================================
+    # CRITICAL: This is where we filter columns based on user's ORIGINAL request
+    # (not enriched dimensions from PerformanceGenerator)
+
+    # Start with group columns (these are based on user's original dimensions)
     cols_to_keep = []
-    for dim in group_cols: 
+    for dim in group_cols:
         if dim in final_df.columns: cols_to_keep.append(dim)
     if seg_col and seg_col in final_df.columns and seg_col not in cols_to_keep: cols_to_keep.append(seg_col)
-    
-    requested_metrics = [m.lower() for m in analysis_needs.get('metrics', [])]
+
+    # Add user-requested metrics (from ORIGINAL intent, not enriched)
+    requested_metrics = [m.lower() for m in user_original_metrics]
     # Add other metrics...
     metric_map = {
         'budget_sum': ['budget', 'budget_sum'],
@@ -492,7 +479,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = final_df[cols_to_keep]
     
     # 6.5 排序 & Limit
-    calc_type = analysis_needs.get('calculation_type', 'Total')
+    calc_type = user_original_analysis_needs.get('calculation_type', 'Total')
     
     # Smart Sorting: If rows > 20 and no specific sort requested, force Ranking to show top items
     if len(final_df) > 20 and calc_type == 'Total':
@@ -603,7 +590,8 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # ============================================================
     # If user didn't request Ad_Format dimension, don't filter out rows with empty ad_format
     # This is important for Segment_Category queries where ad_format might be NULL/empty
-    user_requested_ad_format = 'Ad_Format' in dimensions or 'ad_format' in [d.lower() for d in dimensions]
+    # Use user's ORIGINAL dimensions (not enriched by PerformanceGenerator)
+    user_requested_ad_format = 'Ad_Format' in user_original_dims or 'ad_format' in [d.lower() for d in user_original_dims]
 
     if ad_format_col and ad_format_col in final_df.columns and user_requested_ad_format:
         initial_count = len(final_df)
