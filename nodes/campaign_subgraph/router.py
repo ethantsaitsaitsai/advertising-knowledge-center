@@ -67,14 +67,13 @@ def router_node(state: CampaignSubState):
 
     if task.instruction_text:
         instruction_lower = task.instruction_text.lower()
-        # Original keyword detection
+        # Detect clarification keywords (STRICT - avoid false positives)
+        # Only detect when Supervisor explicitly asks to clarify or ask user
         if any(keyword in instruction_lower
-               for keyword in ["澄清", "clarify", "clarification", "選擇", "choose", "哪一個", "which one"]):
+               for keyword in ["澄清", "clarify", "clarification", "請問使用者", "詢問使用者", "ask user", "ask the user"]):
             is_clarification_request = True
-        # NEW: Strong indicators that Supervisor wants clarification, not SQL execution
-        elif any(keyword in instruction_lower
-                 for keyword in ["詢問", "ask", "問", "list", "列出", "options", "哪一個", "which", "具體"]):
-            is_clarification_request = True
+        # Removed overly broad keywords: "詢問", "ask", "問", "list", "列出", "options", "哪一個", "which", "具體"
+        # These caused false positives when Supervisor gives normal query instructions
 
     # CRITICAL: If IntentAnalyzer says it's ambiguous, this should be clarification step
     if hasattr(task, 'is_ambiguous') and task.is_ambiguous:
