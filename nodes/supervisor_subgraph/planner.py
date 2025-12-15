@@ -90,14 +90,21 @@ def planner_node(state: SupervisorSubState):
                 payload_context["last_worker_report"] = f"{last_msg.name} reported: {last_msg.content}"
     
     user_intent_str = f"User Intent Analysis:\n{user_intent.model_dump_json(indent=2)}" if user_intent else "User Intent: Not available."
-    
+
     # --- 2. Generate Decision (Draft) ---
-    
+
+    # Add current date context to prevent future date misunderstanding
+    from datetime import datetime
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    current_year = datetime.now().year
+
     chain_input = {
         "messages": messages,
         "internal_feedback": internal_feedback,
         "user_intent_context": user_intent_str,
-        "payload_context": str(payload_context)
+        "payload_context": str(payload_context),
+        "current_date": current_date,
+        "current_year": current_year
     }
     
     try:

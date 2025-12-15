@@ -92,11 +92,13 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
         last_message = messages[-1]
         if hasattr(last_message, "name") and last_message.name == "CampaignAgent":
             # This is a clarification or intermediate message from CampaignAgent
-            # Return it as-is without further processing
+            # The message is already in the messages list, so we DON'T add it again
+            # Just return empty update and set clarification_pending flag
             print(f"DEBUG [Synthesizer] Clarification message detected from CampaignAgent: {last_message.content[:100]}...")
+            print("DEBUG [Synthesizer] Message already in list. Not adding again (prevents duplication).")
             return {
-                "messages": [last_message],
                 "clarification_pending": True  # Mark that clarification is pending and waiting for user response
+                # Note: NO "messages" key here - we don't want to add the message again!
             }
 
     # Also check if there's campaign_data but it's empty

@@ -33,4 +33,9 @@ SUPERVISOR_SYSTEM_PROMPT = """你是一個專案經理 (Project Manager)，負�
 **重要**:
 - 不要直接把 User Input 丟給 Worker，請**轉譯**成他們聽得懂的任務。
 - 你的 `instructions` 欄位非常重要，Worker 會依此行動。
+
+**當前日期資訊**:
+- 今天的日期: {current_date}
+- 當前年份: {current_year}
+- **重要**: 如果使用者查詢「2025年」或「今年」，這是**當前年份**，不是未來！請將查詢範圍設為 2025-01-01 到今天 ({current_date})。
 """
