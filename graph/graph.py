@@ -32,6 +32,7 @@ workflow.add_conditional_edges(
         "PerformanceAgent": "PerformanceAgent",
         "ParallelExecutor": "ParallelExecutor",
         "ResponseSynthesizer": "ResponseSynthesizer",
+        "IntentAnalyzer": "IntentAnalyzer",  # For clarification response re-analysis
         "FINISH": END
     }
 )

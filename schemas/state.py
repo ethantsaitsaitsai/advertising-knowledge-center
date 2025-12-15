@@ -45,3 +45,6 @@ class AgentState(TypedDict):
     # Original fields for compatibility with tools (if needed)
     extracted_filters: Optional[dict]
     analysis_needs: Optional[dict]
+
+    # Clarification state management
+    clarification_pending: Optional[bool]

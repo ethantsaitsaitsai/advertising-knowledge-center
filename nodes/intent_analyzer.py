@@ -23,6 +23,28 @@ def intent_analyzer_node(state: AgentState):
     """
     # 1. Prepare Input
     messages = list(state.get("messages", []))
+
+    # Check if this is a clarification response (user responding to a disambiguation question)
+    clarification_pending = state.get("clarification_pending", False)
+    if clarification_pending and messages:
+        # Find the most recent HumanMessage (user's clarification response)
+        from langchain_core.messages import HumanMessage
+        user_response = None
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                user_response = msg.content
+                break
+
+        if user_response:
+            print(f"DEBUG [IntentAnalyzer] Clarification response detected: {user_response}")
+            # In clarification context, extract entity names from user response
+            # This will be used to resolve which option user meant
+            prev_intent = state.get("user_intent")
+            if prev_intent:
+                # Update entities based on user response (the user picked one or clarified)
+                # For now, keep the previous intent but mark is_ambiguous as False
+                # The LLM will extract the selected entity from user response
+                pass
     
     # Inject System Prompt
     now = datetime.now().strftime("%Y-%m-%d")

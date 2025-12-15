@@ -21,6 +21,7 @@ def main():
         "performance_data": None,
         "extracted_filters": {},
         "analysis_needs": {},
+        "clarification_pending": False,
     }
 
     thread_id = str(uuid.uuid4())  # Generate a single thread_id for the conversation

@@ -21,6 +21,24 @@ def supervisor_node(state: AgentState):
                 "supervisor_instructions": None
             }
 
+    # Check if we're in a clarification waiting state
+    # (last CampaignAgent message is clarification, and now we have a new HumanMessage following it)
+    clarification_pending = state.get("clarification_pending", False)
+    if clarification_pending and messages and len(messages) >= 2:
+        last_message = messages[-1]
+        # If last message is from user (HumanMessage), it's a clarification response
+        from langchain_core.messages import HumanMessage
+        if isinstance(last_message, HumanMessage):
+            print("DEBUG [SupervisorWrapper] Clarification response detected. Routing to IntentAnalyzer for re-analysis.")
+            # Update the flag and let IntentAnalyzer process the user's clarification response
+            # This will update the entities and clear is_ambiguous
+            return {
+                "next": "IntentAnalyzer",
+                "supervisor_payload": None,
+                "supervisor_instructions": None,
+                "clarification_pending": False  # Clear the flag
+            }
+
     # Initialize SubState variables not present in Global State
     sub_input = state.copy()
     sub_input["draft_decision"] = None

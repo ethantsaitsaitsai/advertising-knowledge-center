@@ -74,4 +74,8 @@ def campaign_node(state: AgentState):
         response_msg.name = "CampaignAgent"
         result["messages"] = [response_msg]
 
+        # If this is a clarification message (contains keywords), mark clarification_pending
+        if any(keyword in final_response_text.lower() for keyword in ["澄清", "clarify", "選擇", "which", "哪一個"]):
+            result["clarification_pending"] = True
+
     return result
