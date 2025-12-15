@@ -94,7 +94,10 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
             # This is a clarification or intermediate message from CampaignAgent
             # Return it as-is without further processing
             print("DEBUG [Synthesizer] Clarification message detected. Passing through to user.")
-            return {"messages": [last_message]}
+            return {
+                "messages": [last_message],
+                "clarification_pending": True  # Mark that clarification is pending and waiting for user response
+            }
 
     # --- Data Fusion Logic ---
     perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
