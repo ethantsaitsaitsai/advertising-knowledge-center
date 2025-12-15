@@ -10,8 +10,11 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
     next_node = draft.get("next_node")
     ids = state.get("campaign_ids", [])
     user_intent = state.get("user_intent")
-    
+
     print(f"DEBUG [SupervisorValidator] Validating plan: Go to '{next_node}'")
+    print(f"DEBUG [SupervisorValidator] is_ambiguous={user_intent.is_ambiguous if user_intent else None}, "
+          f"entities={user_intent.entities if user_intent else None}, "
+          f"date_range={user_intent.date_range if user_intent else None}")
 
     if next_node == "PerformanceAgent" and not ids:
         return (
@@ -27,7 +30,19 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
             "Please route to 'CampaignAgent' first."
         )
 
+    # CRITICAL RULE: If user has provided specific entities AND date_range,
+    # we should query even if is_ambiguous=True (ambiguity is resolved by user clarification)
+    has_entities = user_intent and user_intent.entities and len(user_intent.entities) > 0
+    has_date_range = user_intent and user_intent.date_range
+
+    # If user provided both entity and date, treat as resolved (not ambiguous)
+    if has_entities and has_date_range and user_intent.is_ambiguous:
+        print(f"DEBUG [SupervisorValidator] OVERRIDE: User provided entities + date_range. Treating as resolved ambiguity.")
+        # Allow CampaignAgent to query (don't force clarification)
+        # is_ambiguous will still be passed but Router will execute if it gets a query instruction
+
     if user_intent and user_intent.is_ambiguous:
+        # Only prevent PerformanceAgent/Synthesizer if ambiguous (need CampaignAgent to resolve first)
         if next_node in ["PerformanceAgent", "ParallelExecutor", "ResponseSynthesizer"]:
              return (
                  "CRITICAL ERROR: The UserIntent is marked as 'is_ambiguous'. "

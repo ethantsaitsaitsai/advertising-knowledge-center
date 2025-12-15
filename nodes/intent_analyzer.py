@@ -37,14 +37,12 @@ def intent_analyzer_node(state: AgentState):
 
         if user_response:
             print(f"DEBUG [IntentAnalyzer] Clarification response detected: {user_response}")
-            # In clarification context, extract entity names from user response
-            # This will be used to resolve which option user meant
-            prev_intent = state.get("user_intent")
-            if prev_intent:
-                # Update entities based on user response (the user picked one or clarified)
-                # For now, keep the previous intent but mark is_ambiguous as False
-                # The LLM will extract the selected entity from user response
-                pass
+            print(f"DEBUG [IntentAnalyzer] User clarifying with: {user_response}")
+            # 【CRITICAL】User has responded to clarification question
+            # They likely provided entity/date, so we should resolve ambiguity
+            # Don't override yet - let LLM analyze the response first
+            # But flag that this is clarification context so LLM knows
+            pass
     
     # Inject System Prompt
     now = datetime.now().strftime("%Y-%m-%d")
@@ -248,6 +246,14 @@ def intent_analyzer_node(state: AgentState):
             if not final_intent.date_range:
                 missing.append("date_range")
         final_intent.missing_info = missing
+
+    # 【CRITICAL FIX】 If user has provided BOTH entities and date_range,
+    # clear is_ambiguous flag - ambiguity is resolved by user clarification!
+    # This prevents Supervisor from asking for more clarification
+    if clarification_pending and final_intent.entities and final_intent.date_range:
+        print(f"DEBUG [IntentAnalyzer] User provided entities + date_range during clarification.")
+        print(f"DEBUG [IntentAnalyzer] CLEARING is_ambiguous: True → False (ambiguity resolved by user)")
+        final_intent.is_ambiguous = False
 
     # Return the intent AND the clean message
     return {
