@@ -78,6 +78,7 @@ def performance_node(state: AgentState):
     final_dataframe = result.get("final_dataframe", [])
     was_default = result.get("was_default_metrics", False)
     sql_error = result.get("sql_error")
+    generated_sql = result.get("generated_sql")
     
     if sql_error:
         msg_content = f"成效查詢失敗: {sql_error}"
@@ -88,9 +89,16 @@ def performance_node(state: AgentState):
         msg_content = "成效查詢無資料。"
         
     response_msg = AIMessage(content=msg_content, name="PerformanceAgent")
+    
+    # Construct Performance Data Wrapper (similar to Campaign Data)
+    performance_data_wrapper = {
+        "data": final_dataframe,
+        "generated_sqls": [generated_sql] if generated_sql else []
+    }
 
     return {
         "messages": [response_msg],
         "final_dataframe": final_dataframe,
-        "was_default_metrics": was_default
+        "was_default_metrics": was_default,
+        "performance_data": performance_data_wrapper
     }
