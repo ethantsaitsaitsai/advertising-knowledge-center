@@ -516,38 +516,28 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if 'budget' in col and pd.api.types.is_numeric_dtype(final_df[col]):
              final_df[col] = final_df[col].fillna(0).astype(int)
 
-    # 7.1 Combine Date into Campaign Name
-    camp_name_col = next((c for c in final_df.columns if c == 'campaign_name'), None)
-    start_col = next((c for c in final_df.columns if c == 'start_date'), None)
-    end_col = next((c for c in final_df.columns if c == 'end_date'), None)
-    
-    if camp_name_col and start_col and end_col:
-        def format_name(row):
-            name = str(row[camp_name_col])
-            start = row[start_col]
-            end = row[end_col]
-            
-            # If name became '0' due to fillna, keep it for later filtering
-            if name == '0': return name
-            
-            # Check for valid dates (not 0, not NaN)
-            if pd.notna(start) and pd.notna(end) and str(start) != '0' and str(end) != '0':
-                return f"{name} ({start}~{end})"
-            
-            # Debug why it failed
-            print(f"DEBUG [DataFusion] Date Format Failed: {name}, Start={start}, End={end}")
-            return name
+    # ============================================================
+    # 7.1 Date Display (DISABLED - keep start_date and end_date separate)
+    # ============================================================
+    # Previously: Combined dates into campaign_name as "Name (2025-01-01~2025-03-31)"
+    # User Feedback: "走期可以獨立成start_date和end_date兩個欄位"
+    # Solution: Keep start_date and end_date as independent columns, don't merge into name
 
-        print(f"DEBUG [DataFusion] Formatting Name with cols: {camp_name_col}, {start_col}, {end_col}")
-        final_df[camp_name_col] = final_df.apply(format_name, axis=1)
+    # DISABLED: Date merging logic (commented out for reference)
+    # camp_name_col = next((c for c in final_df.columns if c == 'campaign_name'), None)
+    # start_col = next((c for c in final_df.columns if c == 'start_date'), None)
+    # end_col = next((c for c in final_df.columns if c == 'end_date'), None)
+    # if camp_name_col and start_col and end_col:
+    #     final_df[camp_name_col] = final_df.apply(lambda row: f"{row[camp_name_col]} ({row[start_col]}~{row[end_col]})", axis=1)
 
-    # 7.2 Hide Technical IDs & Redundant Dates
+    print(f"DEBUG [DataFusion] Keeping start_date and end_date as separate columns (not merging into campaign_name)")
+
+    # 7.2 Hide Technical IDs (but NOT dates - keep them visible)
     cols_to_hide = list(config.get_hidden_columns())  # Copy to avoid mutating config
-    if camp_name_col:  # If we have name, we don't need dates columns anymore
-        if start_col:
-            cols_to_hide.append(start_col.lower())
-        if end_col:
-            cols_to_hide.append(end_col.lower())
+
+    # REMOVED: Don't hide start_date and end_date anymore
+    # Previously: if camp_name_col: cols_to_hide.append(start_col); cols_to_hide.append(end_col)
+    # Now: Keep start_date and end_date visible as independent columns
         
     # Drop columns using case-insensitive match
     final_df = final_df.drop(columns=[c for c in final_df.columns if c.lower() in cols_to_hide], errors='ignore')
@@ -621,11 +611,21 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = final_df[~final_df[adv_col].astype(str).isin(['None', 'nan', ''])]
         final_df = final_df[final_df[adv_col].notna()]
         
-    # Hide All-Zero Metrics
+    # ============================================================
+    # Hide All-Zero Metrics (ONLY if user didn't explicitly request them)
+    # ============================================================
+    # If user requested CTR/VTR/ER, show them even if all values are 0
+    # (0 is meaningful data - indicates no clicks/views/engagement)
     for metric in ['ctr', 'vtr', 'er']:
         if metric in final_df.columns:
-            if (final_df[metric] == 0).all():
+            # Check if user explicitly requested this metric
+            user_requested_metric = metric.upper() in [m.upper() for m in user_original_metrics]
+            if not user_requested_metric and (final_df[metric] == 0).all():
+                # User didn't request it AND all values are 0 → hide it
                 final_df = final_df.drop(columns=[metric])
+                print(f"DEBUG [DataFusion] Hiding all-zero metric '{metric}' (user didn't request it)")
+            elif user_requested_metric:
+                print(f"DEBUG [DataFusion] Keeping metric '{metric}' (user requested it, even if all zeros)")
 
     # --- 8. Final Renaming (Restore Capitalization for Display) ---
     # Restore capitalization based on intent_to_alias (backward mapping) or config

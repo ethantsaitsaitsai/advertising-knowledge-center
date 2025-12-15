@@ -21,7 +21,16 @@ def performance_generator_node(state: PerformanceSubState):
     ids = state.get("campaign_ids", [])
     format_ids = state.get("format_ids", []) or state.get("filters", {}).get("ad_format_ids", [])
     filters = state.get("filters", {})
-    needs = state.get("analysis_needs", {})
+
+    # CRITICAL FIX: Deep copy analysis_needs to avoid polluting original user_intent
+    # If we modify the reference directly, user_intent.analysis_needs gets enriched dimensions
+    # This breaks DataFusion's ability to extract user's ORIGINAL requirements
+    original_needs = state.get("analysis_needs", {})
+    if isinstance(original_needs, dict):
+        import copy
+        needs = copy.deepcopy(original_needs)  # Create independent copy
+    else:
+        needs = {}
     
     # Extract Instruction
     instruction_text = "None"
