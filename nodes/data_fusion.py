@@ -446,11 +446,31 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         if kpi in final_df.columns:
              if kpi not in cols_to_keep:
                 cols_to_keep.append(kpi)
-                
-    # Add budget fallback if nothing selected
+
+    # ============================================================
+    # CRITICAL FIX: Always include fundamental identification columns
+    # ============================================================
+    # 1. Campaign Name - Essential for identifying campaigns
+    if 'campaign_name' in final_df.columns and 'campaign_name' not in cols_to_keep:
+        # Insert at beginning for better display order
+        cols_to_keep.insert(0, 'campaign_name')
+
+    # 2. Start/End Date - Provides timeline context
+    #    Note: These will be merged into campaign_name later (Lines 500-524) and then hidden (Lines 526-534)
+    #    But we need them in cols_to_keep now so they survive the filter
+    for date_col in ['start_date', 'end_date']:
+        if date_col in final_df.columns and date_col not in cols_to_keep:
+            cols_to_keep.append(date_col)
+
+    # 3. Budget - Fundamental financial data (always useful for audience/execution queries)
+    budget_col_match = next((c for c in final_df.columns if 'budget' in c), None)
+    if budget_col_match and budget_col_match not in cols_to_keep:
+        cols_to_keep.append(budget_col_match)
+
+    # Add budget fallback if nothing selected (LEGACY - now redundant with above logic)
     if len(cols_to_keep) == len(group_cols):
          match = next((c for c in final_df.columns if 'budget' in c), None)
-         if match: cols_to_keep.append(match)
+         if match and match not in cols_to_keep: cols_to_keep.append(match)
          # Also add impressions/clicks if available for context
          if imp_col and imp_col not in cols_to_keep: cols_to_keep.append(imp_col)
 
