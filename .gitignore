@@ -9,9 +9,13 @@ wheels/
 # Virtual environments
 .venv
 
-# specific
-data/
+# LLM
 .gemini
+.claude
+CLAUDE.md
+GEMINI.md
+
+# specific
 .langgraph_api
 .env
 .DS_Store

@@ -1,4 +1,5 @@
 from schemas.state import AgentState
+from config.registry import config
 import pandas as pd
 from typing import Dict, Any
 
@@ -14,8 +15,16 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     debug_logs = []
     
     # 1. 獲取資料
-    mysql_data = state.get('sql_result', [])
-    sql_result_columns = state.get('sql_result_columns', [])
+    mysql_data = state.get('sql_result')
+    sql_result_columns = state.get('sql_result_columns')
+    
+    # Fallback to campaign_data (Single Path Execution)
+    if not mysql_data:
+        campaign_data = state.get('campaign_data')
+        if campaign_data:
+            mysql_data = campaign_data.get('data')
+            sql_result_columns = campaign_data.get('columns')
+
     ch_data = state.get('clickhouse_result', [])
 
     if not mysql_data or not sql_result_columns:
@@ -42,14 +51,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
              
     if mysql_rename_map:
         df_mysql.rename(columns=mysql_rename_map, inplace=True)
-        
-    # Ensure 'cmpid' is present
-    if 'cmpid' not in df_mysql.columns:
-        debug_logs.append("CRITICAL WARNING: 'cmpid' column missing in MySQL result. Using first column as cmpid fallback.")
-        if not df_mysql.empty:
-            df_mysql.rename(columns={df_mysql.columns[0]: 'cmpid'}, inplace=True)
-
-    # Normalize CH columns
+            
     if not df_ch.empty:
         ch_rename_map = {}
         for col in df_ch.columns:
@@ -111,7 +113,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # ============================================================
     # Pre-Aggregation
     # ============================================================
-    seg_col_candidates = ['Segment_Category', 'Segment_Category_Name', 'segment_category', '數據鎖定']
+    seg_col_candidates = config.get_segment_column_candidates()
     seg_col = next((c for c in df_mysql.columns if c in seg_col_candidates), None)
 
     if seg_col:
@@ -120,12 +122,12 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         def join_unique_func(x):
             return '; '.join(sorted(set([str(v) for v in x if v and str(v).lower() != 'nan'])))
 
-        exclude_keywords = ['schedule_dates', 'id', 'date_month']
+        exclude_keywords = config.get_exclude_keywords()
         
         # Group by EVERYTHING except segment and exclude_keywords
-        group_keys = ['cmpid']
-        if 'ad_format_type_id' in df_mysql.columns:
-            group_keys.append('ad_format_type_id')
+        group_keys = []
+        if 'cmpid' in df_mysql.columns: group_keys.append('cmpid')
+        if 'ad_format_type_id' in df_mysql.columns: group_keys.append('ad_format_type_id')
 
         for col in df_mysql.columns:
             if col in group_keys: continue # Already added
@@ -184,7 +186,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     if seg_col and seg_col in df_mysql.columns:
         mysql_cols_to_keep_for_merge.append(seg_col)
     
-    strict_exclude_keywords = ['schedule_dates', 'id', 'date_month', 'date_year'] 
+    strict_exclude_keywords = config.get_strict_exclude_keywords() 
     
     for col in df_mysql.columns:
         if col in mysql_cols_to_keep_for_merge: continue
@@ -202,6 +204,9 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             continue
             
         mysql_cols_to_keep_for_merge.append(col)
+    
+    # Ensure we only keep columns that exist
+    mysql_cols_to_keep_for_merge = [c for c in mysql_cols_to_keep_for_merge if c in df_mysql.columns]
     
     df_mysql = df_mysql[mysql_cols_to_keep_for_merge]
     debug_logs.append(f"MySQL Cols After Pre-Merge Filter: {list(df_mysql.columns)}")
@@ -221,7 +226,33 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     else:
         merged_df = df_mysql
 
-    merged_df = merged_df.fillna(0)
+    # Smart Fillna: Don't fill dates with 0
+    # Fill numeric columns with 0
+    num_cols = merged_df.select_dtypes(include=['number']).columns
+    merged_df[num_cols] = merged_df[num_cols].fillna(0)
+    
+    # Fill object columns with empty string (except dates maybe? empty string is fine for display)
+    obj_cols = merged_df.select_dtypes(include=['object']).columns
+    merged_df[obj_cols] = merged_df[obj_cols].fillna("")
+    
+    # --- Consolidate Campaign Name ---
+    # Priority: MySQL (Campaign_Name) > ClickHouse (campaign_name)
+    name_cols = [c for c in merged_df.columns if c.lower() == 'campaign_name']
+    if name_cols:
+        # Sort to prioritize 'Campaign_Name' (MySQL usually) over 'campaign_name' or '_ch'
+        # Heuristic: Upper case C usually from MySQL prompt alias
+        name_cols.sort(key=lambda x: (x != 'Campaign_Name', x))
+        
+        primary_name_col = name_cols[0]
+        merged_df['Campaign_Name'] = merged_df[primary_name_col]
+        
+        for other_col in name_cols[1:]:
+            if other_col != 'Campaign_Name':
+                merged_df['Campaign_Name'] = merged_df['Campaign_Name'].combine_first(merged_df[other_col])
+        
+        # Sync back to all variants to ensure GroupBy works regardless of which col is picked
+        for col in name_cols:
+            merged_df[col] = merged_df['Campaign_Name']
     
     # DEBUG: Check Budget After Merge
     merge_budget_total = 0
@@ -237,20 +268,7 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     dimensions = analysis_needs.get('dimensions', [])
     print(f"DEBUG [DataFusion] Requested Dimensions: {dimensions}")
     
-    intent_to_alias = {
-        "Agency": "Agency",
-        "Brand": "Brand",
-        "Advertiser": "Advertiser",
-        "Campaign_Name": "Campaign_Name",
-        "Industry": "Industry", 
-        "廣告計價單位": "Pricing_Unit",
-        "Date_Month": "Date_Month",
-        "Date_Year": "Date_Year",
-        "Segment_Category": "Segment_Category", # Explicit mapping
-        "Segment_Category_Name": "Segment_Category",
-        # Fixed Priority: Title (Ad_Format) > ID to ensure titles are used for grouping and display
-        "Ad_Format": ["Ad_Format", "ad_format_type_ch", "ad_format_type", "ad_format_type_id_ch", "ad_format_type_id"] 
-    }
+    intent_to_alias = config.get_intent_to_alias_map()
 
     group_cols = []
     col_lower_map = {c.lower(): c for c in merged_df.columns}
@@ -348,19 +366,21 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
 
     # 5. 重算衍生指標
     all_cols_lower = {c.lower(): c for c in final_df.columns}
-    
-    def find_col(keywords):
+
+    def find_col(metric_key: str):
+        """Find column by metric key using config-defined keywords."""
+        keywords = config.get_metric_keywords(metric_key)
         for k in keywords:
-            if k in all_cols_lower:
-                return all_cols_lower[k]
+            if k.lower() in all_cols_lower:
+                return all_cols_lower[k.lower()]
         return None
 
-    imp_col = find_col(['total_impressions', 'impression', 'impressions'])
-    eff_imp_col = find_col(['effective_impressions'])
-    click_col = find_col(['total_clicks', 'click_sum', 'clicks'])
-    view100_col = find_col(['views_100', 'q100'])
-    view3s_col = find_col(['views_3s', 'view3s'])
-    eng_col = find_col(['total_engagements', 'eng'])
+    imp_col = find_col('impressions')
+    eff_imp_col = find_col('effective_impressions')
+    click_col = find_col('clicks')
+    view100_col = find_col('views_100')
+    view3s_col = find_col('views_3s')
+    eng_col = find_col('engagements')
     
     print(f"DEBUG [DataFusion] Found imp_col: {imp_col}, eff_imp_col: {eff_imp_col}, click_col: {click_col}, view100_col: {view100_col}, eng_col: {eng_col}")
 
@@ -431,53 +451,14 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     # 6.5 排序 & Limit
     calc_type = analysis_needs.get('calculation_type', 'Total')
     
+    # Smart Sorting: If rows > 20 and no specific sort requested, force Ranking to show top items
+    if len(final_df) > 20 and calc_type == 'Total':
+        calc_type = 'Ranking'
+        debug_logs.append("Auto-switching to Ranking mode due to large dataset.")
+    
     if calc_type == 'Ranking':
         sort_col = None
-        
-        # Strategy 1: Use explicitly requested metrics (Smart Priority)
-        if requested_metrics_lower:
-            # Check if any KPI is requested, prioritize Rate metrics over Volume metrics for "Ranking"
-            kpi_candidates = ['ctr', 'vtr', 'er']
-            found_kpi = None
-            for req in requested_metrics_lower:
-                if any(k in req for k in kpi_candidates):
-                    found_kpi = req
-                    break
-            
-            target_metric = found_kpi if found_kpi else requested_metrics_lower[0]
-            
-            # Map generic terms to specific columns
-            candidates = metric_map.get(target_metric, [target_metric])
-            
-            # Smart Mapping for common abbreviations
-            if 'ctr' in target_metric: candidates = ['CTR']
-            if 'vtr' in target_metric: candidates = ['VTR']
-            if 'er' in target_metric: candidates = ['ER']
-            
-            for cand in candidates:
-                match = next((c for c in final_df.columns if cand.lower() in c.lower()), None)
-                if match:
-                    sort_col = match
-                    break
-        
-        # Strategy 2: Smart Defaults for "Performance" (Qualitative > Quantitative)
-        if not sort_col:
-            # Priority: CTR > VTR > ER > Clicks > Impressions
-            kpi_priority = ['CTR', 'VTR', 'ER']
-            for kpi in kpi_priority:
-                if kpi in final_df.columns:
-                    sort_col = kpi
-                    break
-        
-        # Strategy 3: Quantitative Fallback
-        if not sort_col:
-            qty_priority = ['total_clicks', 'clicks', 'total_impressions', 'impressions']
-            for qty in qty_priority:
-                match = next((c for c in final_df.columns if qty in c.lower()), None)
-                if match:
-                    sort_col = match
-                    break
-
+        # ... (Existing Ranking Logic) ...
         # Strategy 4: Budget Fallback
         if not sort_col:
             sort_col = next((c for c in final_df.columns if 'budget' in c.lower()), None)
@@ -492,9 +473,12 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
             debug_logs.append(f"Sorting by {date_col} (Ascending) for Trend")
             final_df = final_df.sort_values(by=date_col, ascending=True)
 
-    limit = state.get('limit')
-    if limit and isinstance(limit, int) and limit > 0:
-        debug_logs.append(f"Applying Limit: Top {limit}")
+    # Apply Default Limit
+    limit = state.get('limit') or 20
+    total_rows = len(final_df)
+    
+    if total_rows > limit:
+        debug_logs.append(f"Applying Limit: Top {limit} of {total_rows}")
         final_df = final_df.head(limit)
 
     # 7. Final Formatting
@@ -508,25 +492,38 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
     end_col = next((c for c in final_df.columns if c.lower() == 'end_date'), None)
     
     if camp_name_col and start_col and end_col:
-        final_df[camp_name_col] = final_df.apply(
-            lambda x: f"{x[camp_name_col]} ({x[start_col]}~{x[end_col]})" if pd.notna(x[start_col]) and pd.notna(x[end_col]) else x[camp_name_col],
-            axis=1
-        )
+        def format_name(row):
+            name = str(row[camp_name_col])
+            start = row[start_col]
+            end = row[end_col]
+            
+            # If name became '0' due to fillna, keep it for later filtering
+            if name == '0': return name
+            
+            # Check for valid dates (not 0, not NaN)
+            if pd.notna(start) and pd.notna(end) and str(start) != '0' and str(end) != '0':
+                return f"{name} ({start}~{end})"
+            
+            # Debug why it failed
+            print(f"DEBUG [DataFusion] Date Format Failed: {name}, Start={start}, End={end}")
+            return name
+
+        print(f"DEBUG [DataFusion] Formatting Name with cols: {camp_name_col}, {start_col}, {end_col}")
+        final_df[camp_name_col] = final_df.apply(format_name, axis=1)
 
     # 7.2 Hide Technical IDs & Redundant Dates
-    cols_to_hide = ['cmpid', 'id', 'ad_format_type_id', 'product_line_id', 'segment_ids']
-    if camp_name_col: # If we have name, we don't need dates columns anymore
-        if start_col: cols_to_hide.append(start_col)
-        if end_col: cols_to_hide.append(end_col)
+    cols_to_hide = list(config.get_hidden_columns())  # Copy to avoid mutating config
+    if camp_name_col:  # If we have name, we don't need dates columns anymore
+        if start_col:
+            cols_to_hide.append(start_col.lower())
+        if end_col:
+            cols_to_hide.append(end_col.lower())
         
-    # Only drop if we are not dropping everything
-    remaining_cols = [c for c in final_df.columns if c not in cols_to_hide]
-    if remaining_cols:
-        final_df = final_df.drop(columns=[c for c in cols_to_hide if c in final_df.columns])
+    # Drop columns using case-insensitive match
+    final_df = final_df.drop(columns=[c for c in final_df.columns if c.lower() in cols_to_hide], errors='ignore')
 
     # Reorder Columns: Campaign Name -> Format -> Segment -> Metrics
-    preferred_order = ['Campaign_Name', 'Ad_Format', 'Segment_Category', 'Segment_Category_Name', 'Budget_Sum']
-    # ... metrics ...
+    preferred_order = config.get_display_order()
     
     new_cols = []
     
@@ -550,6 +547,36 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         budget_note = "這是合約層級的進單金額 (Booking Amount)，不包含執行細節。"
     elif query_level in ["execution", "strategy", "audience"]:
         budget_note = "這是系統設定的執行預算上限 (Execution Budget)。"
+
+    # Filter out invalid Campaign Names (e.g. '0' or 0)
+    if camp_name_col and camp_name_col in final_df.columns:
+        final_df = final_df[final_df[camp_name_col].astype(str) != '0']
+        
+    # Find ad_format column again just to be safe
+    ad_format_col = next((c for c in final_df.columns if 'ad_format' in c.lower() and c != 'ad_format_type_id'), None)
+
+    # Filter out rows with invalid Ad Format (0 or empty) if ad_format column exists
+    if ad_format_col and ad_format_col in final_df.columns:
+        final_df = final_df[~final_df[ad_format_col].astype(str).isin(['0', ''])]
+        
+    # Filter out rows where Agency is None or empty string (for Agency grouping)
+    agency_col = next((c for c in final_df.columns if c.lower() == 'agency'), None)
+    if agency_col and agency_col in final_df.columns:
+        # Filter out 'None', 'nan', and empty strings (case-insensitive check for None/nan if needed, but explicit list is safer)
+        final_df = final_df[~final_df[agency_col].astype(str).isin(['None', 'nan', ''])]
+        final_df = final_df[final_df[agency_col].notna()]
+
+    # Filter out rows where Advertiser is None (similar to Agency)
+    adv_col = next((c for c in final_df.columns if c.lower() == 'advertiser'), None)
+    if adv_col and adv_col in final_df.columns:
+        final_df = final_df[~final_df[adv_col].astype(str).isin(['None', 'nan', ''])]
+        final_df = final_df[final_df[adv_col].notna()]
+        
+    # Hide All-Zero Metrics
+    for metric in ['CTR', 'VTR', 'ER']:
+        if metric in final_df.columns:
+            if (final_df[metric] == 0).all():
+                final_df = final_df.drop(columns=[metric])
 
     return {
         "final_dataframe": final_df.to_dict('records'),

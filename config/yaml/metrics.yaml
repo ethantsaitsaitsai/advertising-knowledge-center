@@ -1,0 +1,260 @@
+# Metrics & Dimensions Whitelist Configuration
+# This file defines valid metrics and dimensions for the Text-to-SQL system
+# Last Updated: 2025-12-12
+
+version: "1.0"
+
+# ============================================================
+# DIMENSIONS
+# ============================================================
+dimensions:
+  agency:
+    display_name: "Agency"
+    aliases:
+      - "agency"
+      - "Agency"
+      - "代理商"
+    mysql_column: "agency.agencyname"
+    clickhouse_column: null
+    description: "Agency/advertising agency"
+
+  advertiser:
+    display_name: "Advertiser"
+    aliases:
+      - "advertiser"
+      - "Advertiser"
+      - "advert"
+      - "廣告主"
+    mysql_column: "clients.company"
+    clickhouse_column: null
+    description: "Advertiser company name"
+
+  brand:
+    display_name: "Brand"
+    aliases:
+      - "brand"
+      - "Brand"
+      - "品牌"
+    mysql_column: "clients.product"
+    clickhouse_column: null
+    description: "Brand/product name"
+
+  campaign_name:
+    display_name: "Campaign_Name"
+    aliases:
+      - "campaign_name"
+      - "Campaign_Name"
+      - "活動名稱"
+      - "Campaign"
+      - "活動"
+    mysql_column: "one_campaigns.name"
+    clickhouse_column: "campaign_name"
+    description: "Campaign/activity name"
+
+  ad_format:
+    display_name: "Ad_Format"
+    aliases:
+      - "ad_format"
+      - "Ad_Format"
+      - "ad_format_type_ch"
+      - "ad_format_type"
+      - "ad_format_type_id_ch"
+      - "ad_format_type_id"
+      - "格式"
+      - "Format"
+    mysql_column: "ad_format_types.title"
+    clickhouse_column: "ad_format_type"
+    description: "Advertisement format type"
+
+  segment_category:
+    display_name: "Segment_Category"
+    aliases:
+      - "segment_category"
+      - "Segment_Category"
+      - "Segment_Category_Name"
+      - "數據鎖定"
+      - "受眾"
+      - "Segment"
+    mysql_column: "target_segments.description"
+    clickhouse_column: null
+    description: "Target audience segment"
+
+  date_month:
+    display_name: "Date_Month"
+    aliases:
+      - "date_month"
+      - "Date_Month"
+      - "月份"
+    mysql_column: null
+    clickhouse_column: "toStartOfMonth(day_local)"
+    description: "Month aggregation"
+
+  date_year:
+    display_name: "Date_Year"
+    aliases:
+      - "date_year"
+      - "Date_Year"
+      - "年份"
+    mysql_column: null
+    clickhouse_column: "toYear(day_local)"
+    description: "Year aggregation"
+
+  industry:
+    display_name: "Industry"
+    aliases:
+      - "industry"
+      - "Industry"
+      - "產業"
+    mysql_column: "pre_campaign_categories.name"
+    clickhouse_column: null
+    description: "Industry category"
+
+  pricing_unit:
+    display_name: "Pricing_Unit"
+    aliases:
+      - "廣告計價單位"
+      - "Pricing_Unit"
+      - "pricing_unit"
+    mysql_column: "pricing_models.name"
+    clickhouse_column: null
+    description: "Pricing unit/model"
+
+# ============================================================
+# METRICS
+# ============================================================
+metrics:
+  budget_sum:
+    display_name: "Budget_Sum"
+    aliases:
+      - "budget_sum"
+      - "Budget_Sum"
+      - "budget"
+      - "預算"
+      - "金額"
+      - "Budget"
+    keywords:
+      - "budget"
+      - "sum"
+      - "預算"
+    formula: null
+    aggregation: "sum"
+    description: "Total budget amount"
+
+  impression:
+    display_name: "Impression"
+    aliases:
+      - "impression"
+      - "Impression"
+      - "impressions"
+      - "total_impressions"
+      - "曝光"
+    keywords:
+      - "impression"
+      - "impressions"
+      - "total_impressions"
+    formula: "SUM(impression)"
+    aggregation: "sum"
+    description: "Total impressions"
+
+  click:
+    display_name: "Click"
+    aliases:
+      - "click"
+      - "Click"
+      - "clicks"
+      - "total_clicks"
+      - "click_sum"
+      - "點擊"
+    keywords:
+      - "click"
+      - "clicks"
+      - "total_clicks"
+      - "click_sum"
+    formula: "SUM(bannerClick + videoClick)"
+    aggregation: "sum"
+    description: "Total clicks"
+
+  ctr:
+    display_name: "CTR"
+    aliases:
+      - "ctr"
+      - "CTR"
+      - "點擊率"
+    keywords:
+      - "ctr"
+    formula: "Total Clicks / Effective Impressions * 100"
+    aggregation: "calculate"
+    description: "Click-through rate (percentage)"
+
+  vtr:
+    display_name: "VTR"
+    aliases:
+      - "vtr"
+      - "VTR"
+      - "觀看率"
+      - "完整觀看率"
+    keywords:
+      - "vtr"
+      - "q100"
+      - "views_100"
+    formula: "SUM(q100) / Effective Impressions * 100"
+    aggregation: "calculate"
+    description: "View-through rate (percentage)"
+
+  er:
+    display_name: "ER"
+    aliases:
+      - "er"
+      - "ER"
+      - "互動率"
+    keywords:
+      - "er"
+      - "engagement"
+    formula: "Total Engagements / Effective Impressions * 100"
+    aggregation: "calculate"
+    description: "Engagement rate (percentage)"
+
+  view3s:
+    display_name: "View3s"
+    aliases:
+      - "view3s"
+      - "views_3s"
+      - "View3s"
+    keywords:
+      - "view3s"
+      - "views_3s"
+    formula: "SUM(view3s)"
+    aggregation: "sum"
+    description: "3-second video views"
+
+  q100:
+    display_name: "Q100"
+    aliases:
+      - "q100"
+      - "Q100"
+      - "views_100"
+    keywords:
+      - "q100"
+      - "views_100"
+    formula: "SUM(q100)"
+    aggregation: "sum"
+    description: "100% video completion views"
+
+# ============================================================
+# DEFAULTS
+# ============================================================
+defaults:
+  # Default metrics when user asks generic "performance" queries
+  performance_metrics:
+    - "Impression"
+    - "Click"
+    - "CTR"
+    - "VTR"
+    - "ER"
+
+  # Keywords that trigger default performance metrics
+  generic_keywords:
+    - "成效"
+    - "成效數據"
+    - "performance"
+    - "metrics"

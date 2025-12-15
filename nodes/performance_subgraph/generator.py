@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from config.llm import llm
+from config.registry import config
 from nodes.performance_subgraph.state import PerformanceSubState
 from prompts.clickhouse_generator_prompt import CLICKHOUSE_GENERATOR_PROMPT
 from utils.document_loader import load_clickhouse_schema
@@ -16,14 +17,20 @@ def performance_generator_node(state: PerformanceSubState):
     Generates ClickHouse SQL based on state context.
     """
     # 1. State Prep
+    task = state.get("task")
     ids = state.get("campaign_ids", [])
     format_ids = state.get("format_ids", []) or state.get("filters", {}).get("ad_format_ids", [])
     filters = state.get("filters", {})
     needs = state.get("analysis_needs", {})
     
+    # Extract Instruction
+    instruction_text = "None"
+    if task and hasattr(task, "instruction_text"):
+        instruction_text = task.instruction_text
+    
     # Logic: Auto-fill Metrics if missing
     was_default = False
-    generic_keywords = ["成效", "成效數據", "performance", "metrics"]
+    generic_keywords = config.get_generic_keywords()
     requested_metrics = needs.get("metrics", [])
     
     # Simple check for specific metrics
@@ -38,7 +45,7 @@ def performance_generator_node(state: PerformanceSubState):
         # Actually, SQL generation depends on what we ask.
         # If user asks for nothing specific, we give them the basics.
         # But 'needs' might be empty dict.
-        default_metrics = ["Impression", "Click", "CTR", "VTR", "ER"]
+        default_metrics = config.get_default_performance_metrics()
         for m in default_metrics:
             if m not in needs["metrics"]: needs["metrics"].append(m)
         was_default = True
@@ -93,6 +100,7 @@ def performance_generator_node(state: PerformanceSubState):
         "date_start": str(d_start),
         "date_end": str(d_end),
         "dimensions": str(needs.get("dimensions", [])),
+        "instruction_text": instruction_text, # Pass instruction
         "schema_context": schema_md
     }
     

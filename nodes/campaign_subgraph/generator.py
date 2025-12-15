@@ -54,8 +54,10 @@ def generator_node(state: CampaignSubState):
         "query_level": task.query_level,
         "filters": str(task.filters),
         "metrics": str(task.analysis_needs.get("metrics", [])),
+        "dimensions": str(task.analysis_needs.get("dimensions", [])),
         "confirmed_entities": str(task.filters.get("brands", []) + task.filters.get("entities", [])), # Legacy support
         "campaign_ids": str(ids),
+        "instruction_text": task.instruction_text or "None", # Pass instruction
         "internal_memory": memory_str,
         "sql_error": str(sql_error) if sql_error else "None",
         "schema_context": schema_md

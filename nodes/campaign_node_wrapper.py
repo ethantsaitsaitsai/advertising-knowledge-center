@@ -10,6 +10,7 @@ def campaign_node(state: AgentState):
     """
     # 1. Adapt Input
     payload = state.get("supervisor_payload")
+    instructions = state.get("supervisor_instructions")
     
     # Validation
     if not payload:
@@ -25,6 +26,10 @@ def campaign_node(state: AgentState):
         print(f"DEBUG [CampaignNode] Invalid task_type '{payload.get('task_type')}' for CampaignNode. Skipping.")
         return {}
 
+    # Update payload with the explicit instruction text if present
+    if instructions:
+        payload["instruction_text"] = instructions
+
     try:
         task = CampaignTask(**payload)
     except Exception as e:
@@ -33,14 +38,15 @@ def campaign_node(state: AgentState):
             "messages": [AIMessage(content="系統錯誤：無法解析查詢指令 (Payload Error).")]
         }
 
-    print(f"DEBUG [CampaignNode] Invoking SubGraph with Task: {task.query_level}")
+    print(f"DEBUG [CampaignNode] Invoking SubGraph with Task Level: {task.query_level}")
+    print(f"DEBUG [CampaignNode] Manager Instructions: {task.instruction_text}")
 
     # 2. Invoke SubGraph with Initial State
     sub_state_input = {
         "task": task,
         "retry_count": 0,
         "step_count": 0, # Initialize step count
-        "messages": [],
+        "messages": [], # Start fresh for the subgraph, or pass filtered history
         "internal_thoughts": []
     }
     
@@ -62,7 +68,6 @@ def campaign_node(state: AgentState):
         response_msg = AIMessage(content=f"查詢成功，已找到 {count} 筆資料。請檢查 state['campaign_data']。")
     else:
         # No data case
-        # Check if final_response was set by fallback logic or router
         msg_content = final_response_text or "查無資料 (No Data Found)."
         response_msg = AIMessage(content=msg_content)
 

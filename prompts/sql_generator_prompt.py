@@ -10,10 +10,14 @@ SQL_GENERATOR_PROMPT = """
    - 此時 **忽略** `filters` 中關於品牌、活動名稱的模糊搜尋條件 (`LIKE`)，因為 ID 已經鎖定了範圍。
    - 這是最高指令，優於所有其他過濾規則。
 
-1. **ID 必選原則**:
-   - 若 Query Level = `CONTRACT`: 必須 `SELECT cue_lists.id AS cue_list_id`。
-   - 若 Query Level = `STRATEGY` / `EXECUTION`: 必須 `SELECT one_campaigns.id AS cmpid`。
-   - 若 Query Level = `AUDIENCE`: 必須 `SELECT target_segments.id AS segment_id`。
+1. **ID 與核心欄位必選原則**:
+   - 若 Query Level = `CONTRACT`: 必須 `SELECT cue_lists.id AS cue_list_id, cue_lists.campaign_name`.
+   - 若 Query Level = `STRATEGY` / `EXECUTION` / `AUDIENCE`: 
+     - **必須** `SELECT one_campaigns.id AS cmpid`
+     - **必須** `SELECT one_campaigns.name AS Campaign_Name`
+     - **必須** `SELECT one_campaigns.start_date, one_campaigns.end_date`
+   - 若 Query Level = `AUDIENCE`: 額外必須 `SELECT target_segments.id AS segment_id`。
+
 2. **細粒度聚合**: 嚴禁為了 "Top N" 或 "Ranking" 而自行在 SQL 中做總數聚合。請保持細粒度 (Per Campaign/Item)，讓後端 Python 處理加總。
 3. **禁止使用 LIMIT**: 除非是測試，否則禁止在 SQL 層使用 LIMIT，以免截斷聚合數據。
 
@@ -27,13 +31,21 @@ SQL_GENERATOR_PROMPT = """
 為了避免 1-to-Many Join 導致的預算重複計算 (Cartesian Product)，當查詢包含 **Budget_Sum** 且涉及高基數維度 (Ad_Format, Segment) 時，**必須** 使用 **子查詢 (Derived Table)** 先計算好預算，再進行 JOIN。請避免使用 CTE (`WITH` 子句)，以確保對舊版 MySQL 的相容性。
 
 ### A. Level = CONTRACT (合約層)
-*   **情境**: "總覽", "合約總金額", "某客戶的總花費"。
+*   **情境**: "總覽", "合約總金額", "某客戶的總花費", "代理商業績".
 *   **Root Table**: `cue_lists`
-*   **必須欄位**: `cue_lists.id AS cue_list_id`, `cue_lists.campaign_name`
+*   **必須欄位**: `cue_lists.id AS cue_list_id` (預設), `cue_lists.campaign_name` (預設).
 *   **預算指標**: `SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum`。
+*   **Join**: 
+    - -> `clients` (ON `cue_lists.client_id = clients.id`)
+    - -> `agency` (ON `cue_lists.agency_id = agency.id`)  <-- **重要：Agency 直接關聯至 Cue List**。
 *   **禁止**: 不要 Join `one_campaigns` 或 `pre_campaign`，除非使用者明確要求 "執行細節"。
+*   **動態分組 (Dynamic Grouping) - CRITICAL**: 
+    - **預設**: `GROUP BY cue_lists.id`。
+    - **若 `dimensions` 包含 Agency**: **必須** 改為 `GROUP BY agency.agencyname`，並在 SELECT 中包含 `agency.agencyname AS Agency`，且 **移除** `cue_lists.id` 和 `campaign_name`。
+    - **若 `dimensions` 包含 Advertiser**: 改為 `GROUP BY clients.company`。
 *   **SQL Template**:
     ```sql
+    -- 範例 1: 預設查詢 (By Contract ID) - 當 dimensions 為空時
     SELECT 
         cue_lists.id AS cue_list_id,
         cue_lists.campaign_name,
@@ -41,8 +53,26 @@ SQL_GENERATOR_PROMPT = """
         MAX(clients.company) AS Advertiser
     FROM cue_lists
     JOIN clients ON cue_lists.client_id = clients.id
-    -- ... WHERE conditions
     GROUP BY cue_lists.id
+
+    -- 範例 2: 依代理商排名 (By Agency) - 當 dimensions=['Agency']
+    SELECT 
+        agency.agencyname AS Agency,
+        SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum
+    FROM cue_lists
+    JOIN clients ON cue_lists.client_id = clients.id
+    JOIN agency ON cue_lists.agency_id = agency.id -- 注意 Join Path
+    GROUP BY agency.agencyname
+    ORDER BY Budget_Sum DESC
+
+    -- 範例 3: 依廣告主排名 (By Advertiser) - 當 dimensions=['Advertiser']
+    SELECT 
+        clients.company AS Advertiser,
+        SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum
+    FROM cue_lists
+    JOIN clients ON cue_lists.client_id = clients.id
+    GROUP BY clients.company
+    ORDER BY Budget_Sum DESC
     ```
 
 ### B. Level = STRATEGY (策略層)
@@ -132,10 +162,15 @@ SQL_GENERATOR_PROMPT = """
 * `industries` -> `pre_campaign_categories.name`
 * `target_segments` -> `target_segments.description`
 
+# 專案經理指令 (Manager Instructions) - PRIORITY
+以下是來自 Supervisor 的直接指令，請優先遵循：
+{instruction_text}
+
 # 輸入變數
 - Query Level: {query_level}
 - Filters: {filters}
 - Metrics: {metrics}
+- Dimensions: {dimensions}
 - Confirmed Entities: {confirmed_entities}
 - Campaign IDs: {campaign_ids}
 - Schema Context: {schema_context}

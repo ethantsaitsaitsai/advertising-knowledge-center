@@ -14,6 +14,9 @@ class CampaignSubState(TypedDict):
     sql_error: Optional[str]
     retry_count: int
     
+    # Store structured search results for decision making
+    search_results: Optional[List[str]]
+    
     campaign_data: Optional[Dict[str, Any]]
     final_response: Optional[str]
     

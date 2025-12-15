@@ -1,0 +1,136 @@
+# Query Level Configuration
+# Defines the mapping between query levels and database tables/strategies
+# Last Updated: 2025-12-12
+
+version: "1.0"
+
+# ============================================================
+# QUERY LEVELS
+# ============================================================
+query_levels:
+  contract:
+    display_name: "Contract"
+    aliases:
+      - "contract"
+      - "合約"
+      - "總覽"
+      - "合約總金額"
+    description: "Contract/overview level - total budgets, agency performance"
+    root_table: "cue_lists"
+    required_tables:
+      - "cue_lists"
+      - "clients"
+    optional_tables:
+      - "agency"
+    required_select:
+      - "cue_lists.id AS cue_list_id"
+      - "cue_lists.campaign_name"
+    budget_formula: "SUM(cue_lists.total_budget + cue_lists.external_budget)"
+    budget_alias: "Budget_Sum"
+    default_group_by: "cue_lists.id"
+
+  strategy:
+    display_name: "Strategy"
+    aliases:
+      - "strategy"
+      - "策略"
+      - "波段"
+      - "Campaign"
+    description: "Strategy/wave level - campaign list, wave budgets"
+    root_table: "one_campaigns"
+    required_tables:
+      - "one_campaigns"
+    optional_tables:
+      - "pre_campaign"
+      - "cue_lists"
+      - "clients"
+    required_select:
+      - "one_campaigns.id AS cmpid"
+      - "one_campaigns.name AS Campaign_Name"
+      - "one_campaigns.start_date"
+      - "one_campaigns.end_date"
+    budget_formula: "SUM(pre_campaign.budget)"
+    budget_alias: "Budget_Sum"
+    default_group_by: "one_campaigns.id"
+
+  execution:
+    display_name: "Execution"
+    aliases:
+      - "execution"
+      - "執行"
+      - "格式"
+      - "素材"
+      - "Ad Format"
+    description: "Execution level - placements, ad formats, creatives"
+    root_table: "pre_campaign"
+    required_tables:
+      - "one_campaigns"
+      - "pre_campaign"
+    optional_tables:
+      - "pre_campaign_detail"
+      - "ad_format_types"
+    required_select:
+      - "one_campaigns.id AS cmpid"
+      - "one_campaigns.name AS Campaign_Name"
+    budget_formula: "SUM(pre_campaign.budget)"
+    budget_alias: "Budget_Sum"
+    default_group_by: "one_campaigns.id"
+    supports_format_grouping: true
+
+  audience:
+    display_name: "Audience"
+    aliases:
+      - "audience"
+      - "受眾"
+      - "人群"
+      - "數據鎖定"
+      - "Target"
+    description: "Audience level - target segments, audience data"
+    root_table: "target_segments"
+    required_tables:
+      - "one_campaigns"
+      - "pre_campaign"
+      - "campaign_target_pids"
+      - "target_segments"
+    optional_tables: []
+    required_select:
+      - "one_campaigns.id AS cmpid"
+      - "target_segments.id AS segment_id"
+    budget_formula: "SUM(pre_campaign.budget)"
+    budget_alias: "Budget_Sum"
+    default_group_by: "one_campaigns.id"
+    segment_aggregation: "GROUP_CONCAT(DISTINCT target_segments.description SEPARATOR '; ')"
+
+  chitchat:
+    display_name: "Chitchat"
+    aliases:
+      - "chitchat"
+      - "閒聊"
+    description: "Non-data conversational queries"
+    root_table: null
+    required_tables: []
+    optional_tables: []
+    required_select: []
+    budget_formula: null
+    budget_alias: null
+    default_group_by: null
+
+# ============================================================
+# PRIORITY & VALIDATION
+# ============================================================
+
+# Priority order for classification when multiple keywords match
+priority_order:
+  - "audience"
+  - "execution"
+  - "strategy"
+  - "contract"
+  - "chitchat"
+
+# Valid query level literals for type checking
+valid_levels:
+  - "contract"
+  - "strategy"
+  - "execution"
+  - "audience"
+  - "chitchat"

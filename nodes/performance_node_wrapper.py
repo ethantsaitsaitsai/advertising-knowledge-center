@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage
 from nodes.performance_subgraph.graph import performance_subgraph
 from schemas.state import AgentState
+from schemas.agent_tasks import PerformanceTask
 import json
 
 def performance_node(state: AgentState):
@@ -9,6 +10,7 @@ def performance_node(state: AgentState):
     """
     messages = list(state["messages"])
     payload = state.get("supervisor_payload") or {}
+    instructions = state.get("supervisor_instructions") or "Execute performance query."
     
     # 1. Extract Context (IDs, Filters, Needs)
     explicit_ids = payload.get("campaign_ids", [])
@@ -40,12 +42,25 @@ def performance_node(state: AgentState):
         }
 
     print(f"DEBUG [PerformanceNode] Invoking Subgraph. IDs={len(explicit_ids)}, Filters={filters}")
+    print(f"DEBUG [PerformanceNode] Manager Instructions: {instructions}")
 
-    # 2. Invoke Subgraph
+    # 2. Construct Task Object (for consistent instruction passing)
+    task = None
+    try:
+        task = PerformanceTask(
+            task_type="performance_query",
+            campaign_ids=explicit_ids,
+            analysis_needs=analysis_needs,
+            instruction_text=instructions # Pass the explicit instructions
+        )
+    except Exception as e:
+        print(f"DEBUG [PerformanceNode] Could not create PerformanceTask object: {e}. Proceeding with loose params.")
+
+    # 3. Invoke Subgraph
     # We pass only necessary fields. 
     # Important: 'messages' should be passed so the LLM sees the chat history.
     sub_input = {
-        "task": None,
+        "task": task, # Now passing the structured task
         "campaign_ids": explicit_ids,
         "format_ids": filters.get("ad_format_ids", []),
         "filters": filters,
@@ -54,12 +69,12 @@ def performance_node(state: AgentState):
         "step_count": 0,
         "was_default_metrics": False,
         "internal_thoughts": [],
-        "messages": messages, # Keep for context if needed, though PerformanceAgent uses structured prompt
+        "messages": messages, # Keep for context
     }
     
     result = performance_subgraph.invoke(sub_input)
     
-    # 3. Adapt Output back to Global State
+    # 4. Adapt Output back to Global State
     final_dataframe = result.get("final_dataframe", [])
     was_default = result.get("was_default_metrics", False)
     sql_error = result.get("sql_error")

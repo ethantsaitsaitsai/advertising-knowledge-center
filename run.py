@@ -1,9 +1,10 @@
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from graph.graph import app  # Rename to app
 from dotenv import load_dotenv
-from schemas.state import AgentState as HierarchicalAgentState # Fixed import
+from schemas.state import AgentState as HierarchicalAgentState  # Fixed import
 from langsmith import uuid7  # Import uuid7
-import uuid # For uuid4
+import uuid  # For uuid4
+
 
 def main():
     """
@@ -13,16 +14,16 @@ def main():
 
     state: HierarchicalAgentState = {
         "messages": [],
-        "next": "IntentAnalyzer", # Explicitly set initial next step, though START edge handles it
+        "next": "IntentAnalyzer",  # Explicitly set initial next step, though START edge handles it
         "supervisor_instructions": "",
         "user_intent": None,
         "campaign_data": None,
         "performance_data": None,
         "extracted_filters": {},
-        "analysis_needs": {}
+        "analysis_needs": {},
     }
 
-    thread_id = str(uuid.uuid4()) # Generate a single thread_id for the conversation
+    thread_id = str(uuid.uuid4())  # Generate a single thread_id for the conversation
 
     while True:
         user_input = input("您: ")
@@ -41,7 +42,7 @@ def main():
         if state["messages"]:
             last_message = state["messages"][-1]
             content = last_message.content
-            
+
             # Debug: Print raw structure to understand why part is missing
             # print(f"DEBUG [Run] Content Type: {type(content)}")
             # if isinstance(content, list):
@@ -55,7 +56,7 @@ def main():
                     # Debug:
                     # print(f"DEBUG [Run] Block {i} Type: {type(block)}")
                     # print(f"DEBUG [Run] Block {i} Content: {block}")
-                    
+
                     if isinstance(block, dict):
                         if "text" in block:
                             full_text += block["text"]
@@ -68,6 +69,7 @@ def main():
                 print(content)
         else:
             print("沒有訊息回傳。")
+
 
 if __name__ == "__main__":
     main()

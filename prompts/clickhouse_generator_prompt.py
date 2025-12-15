@@ -40,6 +40,10 @@ SELECT ...
      - **必須** 將其加入 `GROUP BY` 子句中 (e.g., `GROUP BY cmpid, ad_format_type_id, ad_format_type`)。
      - *原因*: 為了確保後續數據合併時，不同廣告格式的數據不會被錯誤加總。
 
+# 專案經理指令 (Manager Instructions) - PRIORITY
+以下是來自 Supervisor 的直接指令，請優先遵循：
+{instruction_text}
+
 # 輸入資料
 - Campaign IDs: {cmpid_list}
 - Ad Format Type IDs: {ad_format_type_id_list}

@@ -1,0 +1,188 @@
+# Column Mapping and Processing Configuration
+# Defines column aliases, exclusions, and display preferences
+# Last Updated: 2025-12-12
+
+version: "1.0"
+
+# ============================================================
+# INTENT TO COLUMN MAPPING
+# ============================================================
+# Maps user intent dimensions to actual database column names
+# Used by DataFusion for flexible column matching
+
+intent_to_column:
+  Agency:
+    target: "Agency"
+    alternatives: []
+
+  Brand:
+    target: "Brand"
+    alternatives: []
+
+  Advertiser:
+    target: "Advertiser"
+    alternatives: []
+
+  Campaign_Name:
+    target: "Campaign_Name"
+    alternatives:
+      - "campaign_name"
+
+  Industry:
+    target: "Industry"
+    alternatives: []
+
+  Pricing_Unit:
+    target: "Pricing_Unit"
+    alternatives:
+      - "廣告計價單位"
+
+  Date_Month:
+    target: "Date_Month"
+    alternatives: []
+
+  Date_Year:
+    target: "Date_Year"
+    alternatives: []
+
+  Segment_Category:
+    target: "Segment_Category"
+    alternatives:
+      - "Segment_Category_Name"
+
+  # Priority order: Title (Ad_Format) > ID
+  # Ensures titles are used for grouping and display
+  Ad_Format:
+    target: "Ad_Format"
+    alternatives:
+      - "ad_format_type_ch"
+      - "ad_format_type"
+      - "ad_format_type_id_ch"
+      - "ad_format_type_id"
+
+# ============================================================
+# METRIC COLUMN DISCOVERY
+# ============================================================
+# Keywords for discovering metric columns in query results
+
+metric_column_discovery:
+  impressions:
+    keywords:
+      - "total_impressions"
+      - "impression"
+      - "impressions"
+    prefer_first: true
+
+  effective_impressions:
+    keywords:
+      - "effective_impressions"
+    prefer_first: true
+
+  clicks:
+    keywords:
+      - "total_clicks"
+      - "click_sum"
+      - "clicks"
+    prefer_first: true
+
+  views_100:
+    keywords:
+      - "views_100"
+      - "q100"
+    prefer_first: true
+
+  views_3s:
+    keywords:
+      - "views_3s"
+      - "view3s"
+    prefer_first: true
+
+  engagements:
+    keywords:
+      - "total_engagements"
+      - "eng"
+    prefer_first: true
+
+# ============================================================
+# COLUMN EXCLUSIONS
+# ============================================================
+# Columns to exclude from grouping operations
+
+exclude_from_grouping:
+  # Basic exclusions for pre-aggregation
+  keywords:
+    - "schedule_dates"
+    - "id"
+    - "date_month"
+
+  # Strict exclusions (includes date_year)
+  strict_keywords:
+    - "schedule_dates"
+    - "id"
+    - "date_month"
+    - "date_year"
+
+# ============================================================
+# HIDDEN COLUMNS
+# ============================================================
+# Technical ID columns to hide from final display output
+
+hidden_columns:
+  - "cmpid"
+  - "id"
+  - "ad_format_type_id"
+  - "product_line_id"
+  - "segment_ids"
+
+# ============================================================
+# SEGMENT COLUMNS
+# ============================================================
+# Segment column candidates for special aggregation
+
+segment_column_candidates:
+  - "Segment_Category"
+  - "Segment_Category_Name"
+  - "segment_category"
+  - "數據鎖定"
+
+# ============================================================
+# DISPLAY ORDER
+# ============================================================
+# Preferred column display order in output
+
+display_order:
+  - "Campaign_Name"
+  - "Ad_Format"
+  - "Segment_Category"
+  - "Segment_Category_Name"
+  - "Budget_Sum"
+  - "Impression"
+  - "Click"
+  - "CTR"
+  - "VTR"
+  - "ER"
+
+# ============================================================
+# METRIC AGGREGATION RULES
+# ============================================================
+# Rules for how to aggregate different column types
+
+metric_aggregation_rules:
+  # Keywords that indicate SUM aggregation
+  sum_keywords:
+    - "budget"
+    - "sum"
+    - "price"
+    - "count"
+    - "impression"
+    - "click"
+    - "view"
+
+  # Default aggregation for numeric columns
+  default_numeric: "sum"
+
+  # Default aggregation for text columns
+  default_text: "first"
+
+  # Special handling for budget (MAX to avoid duplication)
+  budget_special: "max"

@@ -81,29 +81,26 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
     then feeding both the data and the insights into an LLM to generate a
     natural language report with actionable suggestions.
     """
+    print(f"DEBUG [Synthesizer] State Keys: {list(state.keys())}")
+    print(f"DEBUG [Synthesizer] Campaign Data Present: {bool(state.get('campaign_data'))}")
     
     # --- Data Fusion Logic ---
     perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
     campaign_data = state.get("sql_result")  # From CampaignAgent (MySQL)
     
+    # Fallback for Single Path (Contract Level) where ParallelExecutor didn't run
+    if not campaign_data and state.get("campaign_data"):
+        campaign_data = state.get("campaign_data", {}).get("data")
+    
     df = pd.DataFrame()
     
-    # Case 1: Heterogeneous Fusion (Both Sources Available)
-    # In parallel mode, we might have both. We want to merge them.
-    if perf_data and campaign_data:
-        print(f"DEBUG [Synthesizer] Both Performance and Campaign data detected. Initiating Fusion.")
-        print(f"DEBUG [Synthesizer] Perf Data: {len(perf_data)} rows.")
-        print(f"DEBUG [Synthesizer] Campaign Data: {len(campaign_data)} rows.")
-        
-        # Check if we have columns
-        sql_cols = state.get("sql_result_columns")
-        print(f"DEBUG [Synthesizer] SQL Columns: {sql_cols}")
+    # Unified Fusion Logic: Always use DataFusion for consistency (Sorting, Limiting, Formatting)
+    if perf_data or campaign_data:
+        print(f"DEBUG [Synthesizer] Data detected. Initiating Fusion.")
         
         # Temporarily inject 'clickhouse_result' into state for data_fusion_node if not present
-        # data_fusion_node expects 'clickhouse_result' but PerformanceAgent outputs 'final_dataframe'
-        # Let's align them.
         fusion_state = state.copy()
-        if not fusion_state.get("clickhouse_result"):
+        if not fusion_state.get("clickhouse_result") and perf_data:
              fusion_state["clickhouse_result"] = perf_data
         
         fusion_result = data_fusion_node(fusion_state)
@@ -114,21 +111,11 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
              print(f"DEBUG [Synthesizer] Fusion Complete. Rows: {len(df)}")
         else:
              print(f"DEBUG [Synthesizer] Fusion returned empty. Reason: {fusion_result.get('final_result_text')}")
-             df = pd.DataFrame(perf_data)
-
-    # Case 2: Only Performance Data (Legacy or cached)
-    elif perf_data:
-        print("DEBUG [Synthesizer] Only Performance data detected.")
-        df = pd.DataFrame(perf_data)
-        
-    # Case 3: Only Campaign Data (Metadata query)
-    elif campaign_data:
-        print("DEBUG [Synthesizer] Only Campaign data detected.")
-        sql_result_columns = state.get("sql_result_columns")
-        if sql_result_columns:
-            df = pd.DataFrame(campaign_data, columns=sql_result_columns)
-        else:
-            df = pd.DataFrame(campaign_data)
+             # Fallback: Try to use whatever raw data we have
+             if perf_data: df = pd.DataFrame(perf_data)
+             elif campaign_data: 
+                 cols = state.get("sql_result_columns") or state.get("campaign_data", {}).get("columns")
+                 df = pd.DataFrame(campaign_data, columns=cols) if cols else pd.DataFrame(campaign_data)
 
     # -------------------------
 

@@ -1,4 +1,3 @@
-
 from typing import Annotated, List, Optional, Union, Sequence, Dict, Any
 from typing_extensions import TypedDict
 import operator
@@ -16,6 +15,9 @@ class AgentState(TypedDict):
     
     # Structured payload from Supervisor to Workers
     supervisor_payload: Optional[Dict[str, Any]]
+    
+    # Explicit Instructions from Supervisor (The "Manager's Command")
+    supervisor_instructions: Optional[str]
     
     # Structured Intent from Intent Analyzer
     user_intent: Optional[UserIntent]

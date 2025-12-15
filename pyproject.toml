@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=2.3.3",
     "paramiko>=4.0.0",
     "python-dotenv>=1.2.1",
+    "pyyaml>=6.0.3",
     "qdrant-client>=1.16.1",
     "sentence-transformers>=5.1.2",
     "sqlalchemy>=2.0.44",

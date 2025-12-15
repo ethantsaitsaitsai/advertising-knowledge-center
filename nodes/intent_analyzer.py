@@ -2,6 +2,7 @@ from datetime import datetime
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from config.llm import llm
+from config.registry import config
 from schemas.state import AgentState
 from schemas.intent import UserIntent
 from prompts.intent_analyzer_prompt import INTENT_ANALYZER_PROMPT
@@ -111,7 +112,6 @@ def intent_analyzer_node(state: AgentState):
     # Safety Check: If extraction failed completely
     if final_intent is None:
         print("CRITICAL WARNING [IntentAgent] Failed to extract Intent. Defaulting to Chitchat.")
-        # Create a safe default to prevent crash
         final_intent = UserIntent(
             query_level='chitchat',
             entities=[],
@@ -122,7 +122,77 @@ def intent_analyzer_node(state: AgentState):
             missing_info=[],
             analysis_needs={}
         )
-    
+
+    # --- Heuristic Recovery (Salvage Analysis Needs) ---
+    # If JSON parsing failed to get analysis_needs, try regex scanning for patterns
+    if not final_intent.analysis_needs:
+        try:
+            print("DEBUG [IntentAgent] Attempting Heuristic Recovery for Analysis Needs...")
+            
+            # Use finditer to catch ALL occurrences (handling duplicate keys)
+            dims_matches = re.finditer(r'"dimensions":\s*\[([^\]]*)\]', final_content, re.DOTALL)
+            metrics_matches = re.finditer(r'"metrics":\s*\[([^\]]*)\]', final_content, re.DOTALL)
+            
+            recovered_needs = {}
+            
+            # Whitelist for sanitization - loaded from config
+            VALID_DIMENSIONS = config.get_valid_dimensions()
+            VALID_METRICS = config.get_valid_metrics()
+            
+            # Process all Dimensions blocks
+            clean_dims = []
+            for match in dims_matches:
+                raw_dims = re.findall(r'"([^"]+)"', match.group(1))
+                for d in raw_dims:
+                    d_lower = d.lower()
+                    if d_lower in VALID_DIMENSIONS:
+                        clean_dims.append(VALID_DIMENSIONS[d_lower])
+                    else:
+                        for valid_k, valid_v in VALID_DIMENSIONS.items():
+                            if d_lower in valid_k or valid_k in d_lower:
+                                clean_dims.append(valid_v)
+                                break
+            if clean_dims: recovered_needs["dimensions"] = list(set(clean_dims))
+            
+            # Process all Metrics blocks
+            clean_metrics = []
+            for match in metrics_matches:
+                raw_metrics = re.findall(r'"([^"]+)"', match.group(1))
+                for m in raw_metrics:
+                    if any(vm in m.lower() for vm in VALID_METRICS):
+                        clean_metrics.append(m)
+            if clean_metrics: recovered_needs["metrics"] = list(set(clean_metrics))
+                
+            if recovered_needs:
+                print(f"DEBUG [IntentAgent] Heuristic Recovery for Analysis Needs: {recovered_needs}")
+                final_intent.analysis_needs = recovered_needs
+        except Exception as e:
+            print(f"DEBUG [IntentAgent] Heuristic Recovery failed: {e}")
+
+    # --- Last Resort: Keyword Scan on User Input ---
+    if not final_intent.analysis_needs and messages:
+        last_msg = messages[-1]
+        if hasattr(last_msg, "content"):
+            text = last_msg.content
+            print(f"DEBUG [IntentAgent] Scanning User Input for Keywords: {text[:50]}...")
+            
+            needs = {"dimensions": [], "metrics": []}
+            
+            # Dimensions
+            if "廣告主" in text or "Advertiser" in text: needs["dimensions"].append("Advertiser")
+            if "代理商" in text or "Agency" in text: needs["dimensions"].append("Agency")
+            if "活動" in text or "Campaign" in text: needs["dimensions"].append("Campaign_Name")
+            if "格式" in text or "Format" in text: needs["dimensions"].append("Ad_Format")
+            if "受眾" in text or "Segment" in text: needs["dimensions"].append("Segment_Category")
+            
+            # Metrics (Basic)
+            if "預算" in text or "金額" in text or "Budget" in text: needs["metrics"].append("Budget_Sum")
+            if "成效" in text or "CTR" in text: needs["metrics"].extend(["CTR", "VTR", "ER"])
+            
+            if needs["dimensions"] or needs["metrics"]:
+                print(f"DEBUG [IntentAgent] Keyword Scan found: {needs}")
+                final_intent.analysis_needs = needs
+
     print(f"DEBUG [IntentAgent] Final Structured Intent: {final_intent}")
     
     # --- 5. Clean up for User ---

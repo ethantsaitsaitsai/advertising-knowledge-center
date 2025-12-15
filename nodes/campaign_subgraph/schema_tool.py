@@ -4,6 +4,7 @@ from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from nodes.campaign_subgraph.state import CampaignSubState
 from config.database import get_mysql_db
 from config.llm import llm
+from config.registry import config
 
 # Initialize Selection Chain
 # This mini-chain helps the agent pick relevant tables from a list.
@@ -76,11 +77,8 @@ def schema_tool_node(state: CampaignSubState):
         
     except Exception as e:
         print(f"DEBUG [CampaignSchemaTool] Selection failed: {e}. Fallback to basic logic.")
-        # Fallback logic (similar to previous version)
-        if task.query_level == "contract":
-            target_tables = ["cue_lists", "clients"]
-        else:
-            target_tables = ["one_campaigns", "pre_campaign"]
+        # Fallback logic using config-defined query level mappings
+        target_tables = config.get_fallback_tables(task.query_level)
 
     # Step 3: Get Schema Info
     # InfoSQLDatabaseTool expects comma-separated string
