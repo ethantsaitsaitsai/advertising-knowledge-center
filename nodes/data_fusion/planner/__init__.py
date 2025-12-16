@@ -2,9 +2,17 @@
 DataFusion Planner
 
 This package contains LLM-based strategic planning for the DataFusion pipeline.
-
-Phase 1-2: Empty
-Phase 3: Will contain FusionPlanner and StrategyCache
 """
 
-__all__ = []
+from nodes.data_fusion.planner.fusion_strategy import FusionStrategy, create_default_strategy
+from nodes.data_fusion.planner.fusion_planner import FusionPlanner
+from nodes.data_fusion.planner.cache import StrategyCache, get_global_cache, reset_global_cache
+
+__all__ = [
+    'FusionStrategy',
+    'create_default_strategy',
+    'FusionPlanner',
+    'StrategyCache',
+    'get_global_cache',
+    'reset_global_cache',
+]

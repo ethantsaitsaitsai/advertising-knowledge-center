@@ -5,7 +5,7 @@ The DataFusionPipeline coordinates all processing stages for data fusion.
 It is responsible for assembling and executing the processor chain.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from schemas.state import AgentState
 from config.registry import ConfigRegistry
 from nodes.data_fusion.core.context import ProcessingContext
@@ -26,6 +26,10 @@ from nodes.data_fusion.processors import (
 )
 from nodes.data_fusion.validators import BudgetValidator
 
+# Import LLM planner (Phase 3)
+from nodes.data_fusion.planner import FusionPlanner, get_global_cache
+from langchain_core.language_models import BaseChatModel
+
 
 class DataFusionPipeline:
     """
@@ -40,17 +44,37 @@ class DataFusionPipeline:
     Attributes:
         config (ConfigRegistry): Configuration registry
         processors (List[BaseProcessor]): List of processors to execute
+        planner (Optional[FusionPlanner]): LLM-based strategy planner (Phase 3)
+        enable_llm_planner (bool): Whether to use LLM for strategic planning
     """
 
-    def __init__(self, config: ConfigRegistry):
+    def __init__(
+        self,
+        config: ConfigRegistry,
+        llm: Optional[BaseChatModel] = None,
+        enable_llm_planner: bool = False,
+    ):
         """
         Initialize the DataFusion pipeline.
 
         Args:
             config: Configuration registry for accessing settings
+            llm: Optional language model for LLM-based planning (Phase 3)
+            enable_llm_planner: Whether to enable LLM strategic planning (Phase 3)
         """
         self.config = config
         self.processors: List[BaseProcessor] = []
+        self.enable_llm_planner = enable_llm_planner
+
+        # Initialize LLM planner (Phase 3)
+        if enable_llm_planner and llm is not None:
+            cache = get_global_cache()
+            self.planner = FusionPlanner(llm=llm, cache=cache, enable_llm=True)
+            print("DEBUG [Pipeline] LLM Planner enabled with caching")
+        else:
+            # Use rule-based planning (fallback)
+            self.planner = FusionPlanner(llm=None, cache=None, enable_llm=False)
+            print("DEBUG [Pipeline] Using rule-based planning (LLM disabled)")
 
         # Initialize the processor chain
         self._initialize_processors()
@@ -102,6 +126,11 @@ class DataFusionPipeline:
         # Create processing context
         context = ProcessingContext(state)
 
+        # Phase 3: LLM Strategic Planning (after data retrieval)
+        # Note: Planning happens after IntentExtraction to get user's original dims/metrics
+        # For now, we just record the strategy decision without using it
+        # Phase 4 will make processors actually use the strategy
+
         # Execute all processors in sequence
         context = self._execute_processors(context)
 
@@ -135,13 +164,38 @@ class DataFusionPipeline:
         Each processor receives the context, processes it, and returns the updated context.
         Processors can be skipped based on their should_execute() method.
 
+        In Phase 3, after IntentExtraction, we call the FusionPlanner to decide
+        the optimal processing strategy.
+
         Args:
             context: The processing context
 
         Returns:
             ProcessingContext: The final processed context
         """
-        for processor in self.processors:
+        for i, processor in enumerate(self.processors):
+            # Phase 3: Call FusionPlanner after IntentExtraction
+            # This ensures we have user_original_dims and user_original_metrics
+            if processor.name == "IntentExtractionProcessor":
+                if processor.should_execute(context):
+                    context.add_debug_log(f"Executing: {processor.name}")
+                    context = processor.process(context)
+                else:
+                    context.add_debug_log(f"Skipping: {processor.name}")
+
+                # Now call FusionPlanner
+                try:
+                    strategy = self.planner.plan_strategy(context.state, context)
+                    context.metadata['fusion_strategy'] = strategy
+                    context.add_debug_log(f"FusionPlanner Strategy: {strategy.reasoning}")
+                    print(f"DEBUG [Pipeline] Strategy Decision:\n{strategy}")
+                except Exception as e:
+                    context.add_debug_log(f"⚠️ FusionPlanner failed: {e}, using defaults")
+                    print(f"⚠️ WARNING [Pipeline] FusionPlanner failed: {e}")
+
+                continue  # Already executed, skip the normal flow
+
+            # Normal processor execution
             if processor.should_execute(context):
                 context.add_debug_log(f"Executing: {processor.name}")
                 context = processor.process(context)
