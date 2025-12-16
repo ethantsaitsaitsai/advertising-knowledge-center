@@ -192,23 +192,8 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
         insights_summary = "沒有足夠的數據來生成統計摘要。"
 
     # 3. 表格前處理
-    # 3.1 移除所有值為 0 的成效指標欄位
-    performance_metrics = ['CTR', 'VTR', 'ER', 'Impression', 'Click', 'View3s', 'Q100',
-                          'effective_impressions', 'total_clicks', 'total_engagements']
-    cols_to_drop = []
-    for col in df.columns:
-        if col in performance_metrics:
-            # 檢查該欄位是否所有值都為 0 或 NaN
-            col_numeric = pd.to_numeric(df[col], errors='coerce')
-            if col_numeric.notna().any():  # 如果有非 NaN 的值
-                if (col_numeric.fillna(0) == 0).all():  # 所有值都是 0
-                    cols_to_drop.append(col)
-                    print(f"DEBUG [Synthesizer] Removing zero-only column: {col}")
-
-    if cols_to_drop:
-        df = df.drop(columns=cols_to_drop)
-
-    # 3.2 重新排列欄位順序：將 start_date 和 end_date 移到 Campaign_Name 後面
+    # 3.1 重新排列欄位順序：將 start_date 和 end_date 移到 Campaign_Name 後面
+    # Note: Zero-value metric filtering is handled in DataFusion (nodes/data_fusion.py)
     if 'Campaign_Name' in df.columns:
         cols = list(df.columns)
         # 找到 Campaign_Name 的位置
@@ -228,7 +213,7 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
             df = df[cols]
             print(f"DEBUG [Synthesizer] Reordered columns: {date_cols} moved after Campaign_Name")
 
-    # 3.3 生成 Markdown 表格
+    # 3.2 生成 Markdown 表格
     formatted_table_string = df.to_markdown(index=False, floatfmt=".2f")
 
     # 4. 【關鍵邏輯】動態添加 Limit 提示 (Smart Footer)

@@ -662,20 +662,32 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         final_df = final_df[final_df[adv_col].notna()]
         
     # ============================================================
-    # Hide All-Zero Metrics (ONLY if user didn't explicitly request them)
+    # Hide All-Zero Metrics (ONLY if they are default metrics)
     # ============================================================
-    # If user requested CTR/VTR/ER, show them even if all values are 0
-    # (0 is meaningful data - indicates no clicks/views/engagement)
+    # Logic:
+    # - If user EXPLICITLY requested a metric (e.g., "show me VTR"), keep it even if all 0
+    # - If metric was auto-added as DEFAULT (e.g., "成效" → CTR/VTR/ER), hide if all 0
+    # - This keeps the table clean while preserving user intent
+    was_default = state.get("was_default_metrics", False)
+
     for metric in ['ctr', 'vtr', 'er']:
         if metric in final_df.columns:
             # Check if user explicitly requested this metric
             user_requested_metric = metric.upper() in [m.upper() for m in user_original_metrics]
-            if not user_requested_metric and (final_df[metric] == 0).all():
-                # User didn't request it AND all values are 0 → hide it
-                final_df = final_df.drop(columns=[metric])
-                print(f"DEBUG [DataFusion] Hiding all-zero metric '{metric}' (user didn't request it)")
-            elif user_requested_metric:
-                print(f"DEBUG [DataFusion] Keeping metric '{metric}' (user requested it, even if all zeros)")
+
+            if (final_df[metric] == 0).all():
+                # All values are 0
+                if was_default and not user_requested_metric:
+                    # Default metric with all zeros → hide it
+                    final_df = final_df.drop(columns=[metric])
+                    print(f"DEBUG [DataFusion] Hiding all-zero DEFAULT metric '{metric}'")
+                elif user_requested_metric:
+                    # User explicitly requested it → keep it (0 is meaningful)
+                    print(f"DEBUG [DataFusion] Keeping all-zero metric '{metric}' (user explicitly requested it)")
+                elif not was_default:
+                    # Not default and user didn't request → hide it
+                    final_df = final_df.drop(columns=[metric])
+                    print(f"DEBUG [DataFusion] Hiding all-zero metric '{metric}' (not requested)")
 
     # --- 8. Final Renaming (Restore Capitalization for Display) ---
     # Restore capitalization based on intent_to_alias (backward mapping) or config
