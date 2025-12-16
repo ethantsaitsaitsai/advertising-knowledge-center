@@ -12,6 +12,7 @@ wheels/
 # LLM
 .gemini
 .claude
+.claude-docs
 CLAUDE.md
 GEMINI.md
 

@@ -1,0 +1,5 @@
+# Environment variables
+.env
+
+# LLM configurations and internal docs
+.gemini
