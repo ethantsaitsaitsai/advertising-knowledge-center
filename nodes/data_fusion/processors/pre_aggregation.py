@@ -136,15 +136,27 @@ class PreAggregationProcessor(BaseProcessor):
 
     def should_execute(self, context: ProcessingContext) -> bool:
         """
-        Execute only if segment column exists.
+        Execute based on FusionStrategy decision (Phase 4).
+
+        Priority:
+        1. If FusionStrategy exists, use strategy.use_pre_aggregation
+        2. Otherwise, fallback to rule-based: execute if segment column exists
 
         This processor is only needed for Audience-level queries that have
-        segment data.
+        segment data to prevent budget duplication.
         """
         if context.df_mysql is None or context.df_mysql.empty:
             return False
 
-        # Check if segment column exists
+        # Phase 4: Check FusionStrategy first
+        strategy = context.metadata.get('fusion_strategy')
+        if strategy is not None:
+            context.add_debug_log(
+                f"PreAggregation decision from strategy: {strategy.use_pre_aggregation}"
+            )
+            return strategy.use_pre_aggregation
+
+        # Fallback: Rule-based decision (backward compatible)
         seg_col_candidates = self.config.get_segment_column_candidates()
         seg_col = next((c for c in context.df_mysql.columns if c in seg_col_candidates), None)
 

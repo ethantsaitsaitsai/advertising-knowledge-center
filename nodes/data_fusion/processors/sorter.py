@@ -53,17 +53,31 @@ class SortingProcessor(BaseProcessor):
         final_df = context.df_final
         state = context.state
 
-        # Get calculation type from user's original intent
-        user_original_analysis_needs = context.metadata.get('user_original_analysis_needs', {})
-        calc_type = user_original_analysis_needs.get('calculation_type', 'Total')
+        # Phase 4: Use FusionStrategy for sorting decision
+        strategy = context.metadata.get('fusion_strategy')
+        if strategy is not None:
+            # Use strategy decision
+            sorting_strategy = strategy.sorting_strategy
+            context.add_debug_log(f"Sorting strategy from FusionPlanner: {sorting_strategy}")
+        else:
+            # Fallback: Rule-based decision (backward compatible)
+            user_original_analysis_needs = context.metadata.get('user_original_analysis_needs', {})
+            calc_type = user_original_analysis_needs.get('calculation_type', 'Total')
 
-        # Smart Sorting: Auto-switch to Ranking for large datasets
-        if len(final_df) > 20 and calc_type == 'Total':
-            calc_type = 'Ranking'
-            context.add_debug_log("Auto-switching to Ranking mode due to large dataset.")
+            # Smart Sorting: Auto-switch to Ranking for large datasets
+            if len(final_df) > 20 and calc_type == 'Total':
+                calc_type = 'Ranking'
+                context.add_debug_log("Auto-switching to Ranking mode due to large dataset.")
+
+            # Map calc_type to sorting_strategy
+            sorting_strategy = {
+                'Ranking': 'ranking',
+                'Trend': 'trend',
+                'Total': 'none'
+            }.get(calc_type, 'none')
 
         # Apply Sorting
-        if calc_type == 'Ranking':
+        if sorting_strategy == 'ranking':
             sort_col = None
 
             # Strategy: Budget Fallback (most common business metric)
@@ -74,7 +88,7 @@ class SortingProcessor(BaseProcessor):
                 context.add_debug_log(f"Sorting by {sort_col} (Descending) for Ranking")
                 final_df = final_df.sort_values(by=sort_col, ascending=False)
 
-        elif calc_type == 'Trend':
+        elif sorting_strategy == 'trend':
             date_col = next((c for c in final_df.columns if 'date' in c or 'month' in c), None)
             if date_col:
                 context.add_debug_log(f"Sorting by {date_col} (Ascending) for Trend")

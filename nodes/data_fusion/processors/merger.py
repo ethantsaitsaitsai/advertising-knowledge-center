@@ -68,15 +68,22 @@ class DataMergeProcessor(BaseProcessor):
         df_mysql = context.df_mysql
         df_ch = context.df_clickhouse
 
-        # 1. Determine Merge Keys
-        merge_on = ['cmpid']
-        if (not df_ch.empty and
-                'ad_format_type_id' in df_ch.columns and
-                'ad_format_type_id' in df_mysql.columns):
-            merge_on.append('ad_format_type_id')
-            context.add_debug_log("Using Composite Merge Key: ['cmpid', 'ad_format_type_id']")
+        # 1. Determine Merge Keys (Phase 4: Use FusionStrategy)
+        strategy = context.metadata.get('fusion_strategy')
+        if strategy is not None:
+            # Use strategy decision
+            merge_on = strategy.merge_keys
+            context.add_debug_log(f"Merge keys from strategy: {merge_on}")
         else:
-            context.add_debug_log("Using Simple Merge Key: ['cmpid']")
+            # Fallback: Rule-based decision (backward compatible)
+            merge_on = ['cmpid']
+            if (not df_ch.empty and
+                    'ad_format_type_id' in df_ch.columns and
+                    'ad_format_type_id' in df_mysql.columns):
+                merge_on.append('ad_format_type_id')
+                context.add_debug_log("Using Composite Merge Key: ['cmpid', 'ad_format_type_id']")
+            else:
+                context.add_debug_log("Using Simple Merge Key: ['cmpid']")
 
         # 2. Perform Merge
         if not df_ch.empty:

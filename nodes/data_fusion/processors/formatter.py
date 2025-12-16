@@ -111,62 +111,78 @@ class FormattingProcessor(BaseProcessor):
         if camp_name_col and camp_name_col in final_df.columns:
             final_df = final_df[final_df[camp_name_col].astype(str) != '0']
 
-        # 7. Ad Format Filtering (CRITICAL: Only if user requested it)
+        # 7. Ad Format Filtering (Phase 4: Use FusionStrategy)
         ad_format_col = next(
             (c for c in final_df.columns if 'ad_format' in c and c != 'ad_format_type_id'),
             None
         )
 
-        user_requested_ad_format = 'ad_format' in [d.lower() for d in user_original_dims]
-        user_requested_performance = any(
-            m.lower() in ['ctr', 'vtr', 'er', 'impression', 'click']
-            for m in user_original_metrics
-        )
+        # Get filter strategy
+        strategy = context.metadata.get('fusion_strategy')
+        if strategy is not None:
+            filter_ad_format = strategy.filter_ad_format
+            context.add_debug_log(f"Ad Format filter strategy from FusionPlanner: {filter_ad_format}")
+        else:
+            # Fallback: Rule-based decision
+            user_requested_ad_format = 'ad_format' in [d.lower() for d in user_original_dims]
+            user_requested_performance = any(
+                m.lower() in ['ctr', 'vtr', 'er', 'impression', 'click']
+                for m in user_original_metrics
+            )
 
-        if ad_format_col and ad_format_col in final_df.columns and user_requested_ad_format:
-            initial_count = len(final_df)
+            if user_requested_ad_format:
+                filter_ad_format = "strict" if user_requested_performance else "loose"
+            else:
+                filter_ad_format = "none"
 
-            if user_requested_performance:
+        # Apply filtering based on strategy
+        if ad_format_col and ad_format_col in final_df.columns:
+            if filter_ad_format == "strict":
                 # Strictly filter out rows without valid format
+                initial_count = len(final_df)
                 context.add_debug_log(
-                    "User requested Ad_Format + Performance. Strictly filtering empty/null Ad_Format."
+                    "Ad_Format filtering: STRICT (removing empty/null values)"
                 )
                 mask = ~final_df[ad_format_col].astype(str).str.strip().isin(
                     ['0', 'nan', 'none', '', 'None']
                 )
-            else:
-                # Keep empty/null (represents 'not set')
-                context.add_debug_log(
-                    "User requested Ad_Format only. Filtering '0', keeping empty/null."
-                )
-                mask = ~final_df[ad_format_col].astype(str).str.strip().isin(['0'])
+                filtered_df = final_df[mask]
+                dropped_count = initial_count - len(filtered_df)
 
-            filtered_df = final_df[mask]
-            dropped_count = initial_count - len(filtered_df)
-
-            # Safety Check: Don't remove ALL data
-            if dropped_count == initial_count and initial_count > 0:
-                context.add_debug_log(
-                    f"Ad_Format filter would remove all {initial_count} rows. "
-                    "Keeping data with empty Ad_Format."
-                )
-                final_df[ad_format_col] = final_df[ad_format_col].astype(str).replace(
-                    ['0', 'nan', 'None'], ''
-                )
-            else:
-                final_df = filtered_df
-                if dropped_count > 0:
+                # Safety Check: Don't remove ALL data
+                if dropped_count == initial_count and initial_count > 0:
                     context.add_debug_log(
-                        f"Dropped {dropped_count} rows with invalid Ad Format "
-                        "(user requested Ad_Format dimension)."
+                        f"Ad_Format filter would remove all {initial_count} rows. "
+                        "Keeping data with empty Ad_Format."
                     )
+                    final_df[ad_format_col] = final_df[ad_format_col].astype(str).replace(
+                        ['0', 'nan', 'None'], ''
+                    )
+                else:
+                    final_df = filtered_df
+                    if dropped_count > 0:
+                        context.add_debug_log(f"Dropped {dropped_count} rows with invalid Ad Format")
 
-        elif ad_format_col and ad_format_col in final_df.columns and not user_requested_ad_format:
-            # User didn't request Ad_Format, drop the column
-            context.add_debug_log(
-                f"User didn't request Ad_Format. Dropping column '{ad_format_col}'."
-            )
-            final_df = final_df.drop(columns=[ad_format_col], errors='ignore')
+            elif filter_ad_format == "loose":
+                # Keep empty/null (represents 'not set'), only filter '0'
+                initial_count = len(final_df)
+                context.add_debug_log("Ad_Format filtering: LOOSE (only filtering '0')")
+                mask = ~final_df[ad_format_col].astype(str).str.strip().isin(['0'])
+                filtered_df = final_df[mask]
+                dropped_count = initial_count - len(filtered_df)
+
+                if dropped_count > 0:
+                    final_df = filtered_df
+                    context.add_debug_log(f"Dropped {dropped_count} rows with '0' Ad Format")
+
+            elif filter_ad_format == "none":
+                # Don't filter rows, but drop the column if user didn't request it
+                user_requested_ad_format = 'ad_format' in [d.lower() for d in user_original_dims]
+                if not user_requested_ad_format:
+                    context.add_debug_log(
+                        f"Ad_Format filtering: NONE, dropping column '{ad_format_col}'"
+                    )
+                    final_df = final_df.drop(columns=[ad_format_col], errors='ignore')
 
         # 8. Filter Empty Agency
         agency_col = next((c for c in final_df.columns if c == 'agency'), None)
@@ -180,23 +196,33 @@ class FormattingProcessor(BaseProcessor):
             final_df = final_df[~final_df[adv_col].astype(str).isin(['None', 'nan', ''])]
             final_df = final_df[final_df[adv_col].notna()]
 
-        # 10. Hide All-Zero Metrics (ONLY if they are default metrics)
+        # 10. Hide All-Zero Metrics (Phase 4: Use FusionStrategy)
         was_default = state.get("was_default_metrics", False)
 
-        for metric in ['ctr', 'vtr', 'er']:
-            if metric in final_df.columns:
-                user_requested_metric = metric.upper() in [
-                    m.upper() for m in user_original_metrics
-                ]
+        # Get hide strategy
+        if strategy is not None:
+            hide_zero_metrics = strategy.hide_zero_metrics
+            context.add_debug_log(f"Hide zero metrics strategy from FusionPlanner: {hide_zero_metrics}")
+        else:
+            # Fallback: Always hide by default
+            hide_zero_metrics = True
 
-                if (final_df[metric] == 0).all():
-                    if was_default and not user_requested_metric:
-                        # Default metric with all zeros → hide it
-                        final_df = final_df.drop(columns=[metric])
-                        context.add_debug_log(f"Hiding all-zero DEFAULT metric '{metric}'")
-                    elif user_requested_metric:
-                        # User explicitly requested it → keep it
-                        context.add_debug_log(
+        # Only hide if strategy allows
+        if hide_zero_metrics:
+            for metric in ['ctr', 'vtr', 'er']:
+                if metric in final_df.columns:
+                    user_requested_metric = metric.upper() in [
+                        m.upper() for m in user_original_metrics
+                    ]
+
+                    if (final_df[metric] == 0).all():
+                        if was_default and not user_requested_metric:
+                            # Default metric with all zeros → hide it
+                            final_df = final_df.drop(columns=[metric])
+                            context.add_debug_log(f"Hiding all-zero DEFAULT metric '{metric}'")
+                        elif user_requested_metric:
+                            # User explicitly requested it → keep it
+                            context.add_debug_log(
                             f"Keeping all-zero metric '{metric}' (user explicitly requested it)"
                         )
                     elif not was_default:
