@@ -120,6 +120,17 @@ def planner_node(state: SupervisorSubState):
             }
         }
 
+    # Check if decision is None (LLM failed to return valid structured output)
+    if decision is None:
+        print(f"⚠️ WARNING [SupervisorPlanner] LLM returned None, using fallback")
+        return {
+            "draft_decision": {
+                 "next_node": "FINISH",
+                 "instructions": "LLM failed to return valid decision.",
+                 "reasoning": "LLM returned None instead of SupervisorDecision"
+            }
+        }
+
     draft = decision.model_dump()
     print(f"DEBUG [SupervisorPlanner] Draft: {decision.next_node} | Reasoning: {decision.reasoning}")
 

@@ -9,6 +9,7 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
     """
     next_node = draft.get("next_node")
     ids = state.get("campaign_ids", [])
+    campaign_data = state.get("campaign_data")
     user_intent = state.get("user_intent")
 
     print(f"DEBUG [SupervisorValidator] Validating plan: Go to '{next_node}'")
@@ -16,11 +17,21 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
           f"entities={user_intent.entities if user_intent else None}, "
           f"date_range={user_intent.date_range if user_intent else None}")
 
-    if next_node == "PerformanceAgent" and not ids:
+    # Check if we have campaign data (either campaign_ids or campaign_data)
+    has_campaign_data = (
+        bool(ids) or
+        (campaign_data and campaign_data.get("data") and len(campaign_data["data"]) > 0)
+    )
+
+    print(f"DEBUG [SupervisorValidator] has_campaign_data={has_campaign_data}, "
+          f"campaign_ids={len(ids) if ids else 0}, "
+          f"campaign_data={'Available (' + str(len(campaign_data['data'])) + ' rows)' if campaign_data and campaign_data.get('data') else 'None'}")
+
+    if next_node == "PerformanceAgent" and not has_campaign_data:
         return (
-            "CRITICAL ERROR: You chose 'PerformanceAgent' but we do not have any 'campaign_ids' yet. "
-            "PerformanceAgent cannot work without IDs. "
-            "You MUST choose 'CampaignAgent' first to find the IDs (using search or query)."
+            "CRITICAL ERROR: You chose 'PerformanceAgent' but we do not have any campaign data yet. "
+            "PerformanceAgent cannot work without campaign IDs or data. "
+            "You MUST choose 'CampaignAgent' first to find the campaigns (using search or query)."
         )
     
     if next_node == "ParallelExecutor" and not ids:
