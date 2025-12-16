@@ -1,10 +1,9 @@
 """
 DataFusion Validators
 
-This package contains validation processors for ensuring data quality.
-
-Phase 1: Empty
-Phase 2: Will contain BudgetValidator
+This package contains validation processors that check data consistency.
 """
 
-__all__ = []
+from nodes.data_fusion.validators.budget_validator import BudgetValidator
+
+__all__ = ['BudgetValidator']

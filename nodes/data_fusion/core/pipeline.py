@@ -11,6 +11,21 @@ from config.registry import ConfigRegistry
 from nodes.data_fusion.core.context import ProcessingContext
 from nodes.data_fusion.core.processor import BaseProcessor
 
+# Import all processors
+from nodes.data_fusion.processors import (
+    DataRetrievalProcessor,
+    StandardizationProcessor,
+    IntentExtractionProcessor,
+    PreAggregationProcessor,
+    DataMergeProcessor,
+    AggregationProcessor,
+    KPICalculator,
+    ColumnFilterProcessor,
+    SortingProcessor,
+    FormattingProcessor,
+)
+from nodes.data_fusion.validators import BudgetValidator
+
 
 class DataFusionPipeline:
     """
@@ -37,26 +52,39 @@ class DataFusionPipeline:
         self.config = config
         self.processors: List[BaseProcessor] = []
 
-        # Phase 1: No processors yet, using legacy logic
-        # Phase 2+: Will initialize processors here
-        # self._initialize_processors()
+        # Initialize the processor chain
+        self._initialize_processors()
 
     def _initialize_processors(self) -> None:
         """
         Initialize the processor chain.
 
-        In Phase 2+, this method will create instances of all processors
-        in the correct order. For now, this is a placeholder.
+        Processors are executed in this order:
+        1. Data Retrieval - Extract data from state
+        2. Standardization - Normalize column names and types
+        3. Pre-Aggregation - Segment deduplication (conditional)
+        4. Intent Extraction - Extract user's original request
+        5. Data Merge - Merge MySQL + ClickHouse
+        6. Aggregation - Re-aggregate by user dimensions
+        7. Budget Validator - Validate budget consistency
+        8. KPI Calculator - Calculate derived metrics (CTR/VTR/ER)
+        9. Column Filter - Remove unwanted enriched columns
+        10. Sorting - Sort and limit rows
+        11. Formatting - Final cleanup and display formatting
         """
-        # TODO Phase 2: Initialize processors
-        # Example:
-        # self.processors = [
-        #     DataRetrievalProcessor(),
-        #     StandardizationProcessor(),
-        #     IntentExtractionProcessor(),
-        #     ...
-        # ]
-        pass
+        self.processors = [
+            DataRetrievalProcessor(),
+            StandardizationProcessor(),
+            PreAggregationProcessor(self.config),
+            IntentExtractionProcessor(),
+            DataMergeProcessor(),
+            AggregationProcessor(self.config),
+            BudgetValidator(),
+            KPICalculator(self.config),
+            ColumnFilterProcessor(self.config),
+            SortingProcessor(),
+            FormattingProcessor(self.config),
+        ]
 
     def execute(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -74,13 +102,11 @@ class DataFusionPipeline:
         # Create processing context
         context = ProcessingContext(state)
 
-        # Phase 1: Use legacy implementation directly
-        # This ensures backward compatibility while we build the new architecture
-        result = self._execute_legacy(state)
+        # Execute all processors in sequence
+        context = self._execute_processors(context)
 
-        # Phase 2+: Use modular processors
-        # context = self._execute_processors(context)
-        # result = context.to_state_update()
+        # Convert context to state update format
+        result = context.to_state_update()
 
         return result
 
