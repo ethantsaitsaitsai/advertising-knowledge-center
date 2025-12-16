@@ -367,6 +367,36 @@ def data_fusion_node(state: AgentState) -> Dict[str, Any]:
         agg_budget_total = final_df[budget_col_agg].sum()
         debug_logs.append(f"DEBUG: Post-Agg Budget Total: {agg_budget_total:,.0f}")
 
+    # ============================================================
+    # Budget Consistency Validation
+    # ============================================================
+    # Compare budget totals across three stages to detect potential duplication
+    if raw_budget_total > 0 and agg_budget_total > 0:
+        budget_diff_pct = abs(agg_budget_total - raw_budget_total) / raw_budget_total * 100
+
+        # Tolerance based on query level and granularity
+        tolerance = 5  # 5% for most queries
+        query_level = state.get('query_level', 'strategy')
+
+        # Higher tolerance for format-level queries due to potential floating point rounding
+        if query_level == 'execution' and 'ad_format_type_id' in final_df.columns:
+            tolerance = 10
+
+        if budget_diff_pct > tolerance:
+            warning = (
+                f"⚠️ Budget Consistency Warning:\n"
+                f"   Query Level: {query_level}\n"
+                f"   Raw SQL Total: {raw_budget_total:,.0f}\n"
+                f"   Post-Merge Total: {merge_budget_total:,.0f}\n"
+                f"   Post-Agg Total: {agg_budget_total:,.0f}\n"
+                f"   Difference: {budget_diff_pct:.1f}% (Tolerance: {tolerance}%)\n"
+                f"   Possible causes: SQL duplication, incorrect GROUP BY, or Cartesian product"
+            )
+            debug_logs.append(warning)
+            print(f"DEBUG [DataFusion] {warning}")
+        else:
+            debug_logs.append(f"✅ Budget Consistency Check PASSED: Diff {budget_diff_pct:.2f}% < {tolerance}%")
+
     print(f"DEBUG [DataFusion] Pre-KPI Calc Columns: {list(final_df.columns)}")
 
     # 5. 重算衍生指標

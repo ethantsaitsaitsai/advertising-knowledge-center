@@ -241,20 +241,34 @@ SQL_GENERATOR_PROMPT = """
     ```
 
     ```sql
-    -- 簡化版（不需公司過濾）
+    -- 簡化版（不需公司過濾）- 使用子查詢避免 Budget 重複計算
     SELECT
         oc.id AS cmpid,
         oc.name AS Campaign_Name,
         oc.start_date,
         oc.end_date,
-        GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category,
-        SUM(pc.budget) AS Budget_Sum
+        SegmentInfo.Segment_Category,
+        BudgetInfo.Budget_Sum
     FROM one_campaigns oc
-    JOIN pre_campaign pc ON oc.id = pc.one_campaign_id
-    LEFT JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
-    LEFT JOIN target_segments ts ON ctp.selection_id = ts.id
-    WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')
-    GROUP BY oc.id
+    -- 1. 獨立查詢預算 (避免被 Segment 一對多關係膨脹)
+    LEFT JOIN (
+        SELECT
+            one_campaign_id,
+            SUM(budget) AS Budget_Sum
+        FROM pre_campaign
+        GROUP BY one_campaign_id
+    ) AS BudgetInfo ON oc.id = BudgetInfo.one_campaign_id
+    -- 2. 獨立查詢受眾
+    LEFT JOIN (
+        SELECT
+            pc.one_campaign_id,
+            GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category
+        FROM pre_campaign pc
+        LEFT JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
+        LEFT JOIN target_segments ts ON ctp.selection_id = ts.id
+        WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')
+        GROUP BY pc.one_campaign_id
+    ) AS SegmentInfo ON oc.id = SegmentInfo.one_campaign_id
     ORDER BY oc.id
     ```
 
