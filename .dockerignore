@@ -1,0 +1,10 @@
+__pycache__
+.venv
+.git
+.gemini
+.claude
+.env
+*.log
+*.pid
+ssh_keys/
+ui_debug.log

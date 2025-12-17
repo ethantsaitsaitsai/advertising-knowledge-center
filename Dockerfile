@@ -1,9 +1,14 @@
-FROM python:3.11-slim-bookworm AS base
+# Dockerfile
+FROM python:3.12-slim-bookworm
 
 # 安裝系統依賴
+# openssh-client: 用於 SSH Tunnel
+# curl: 用於健康檢查
+# git: 有些 python套件可能需要 git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # 安裝 uv
@@ -12,26 +17,28 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 # 設定工作目錄
 WORKDIR /app
 
-# 複製依賴檔案
+# 1. 先複製依賴定義檔 (利用 Docker Layer Cache)
 COPY pyproject.toml uv.lock ./
 
-# 安裝依賴 (使用 system python)
+# 2. 安裝依賴
+# --frozen: 嚴格依照 lock 檔安裝
+# --no-install-project: 暫不安裝專案本身 (只安裝 dependencies)
 RUN uv sync --frozen --no-install-project
 
-# 複製專案代碼
+# 3. 複製其餘程式碼
 COPY . .
 
+# 4. 安裝專案本身 (如果有的話) 及更新環境變數
+RUN uv sync --frozen
+
 # 設定環境變數
-ENV PYTHONPATH=/app
+# 讓 uv 使用虛擬環境
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # 暴露端口
 EXPOSE 8000 8001
 
-# 健康檢查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/agent/playground || exit 1
-
-# 預設指令 (會被 docker-compose 覆蓋)
+# 預設指令
 CMD ["uv", "run", "server.py"]
