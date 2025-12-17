@@ -1,6 +1,6 @@
 # ui.py
 import chainlit as cl
-import requests
+import httpx # Use async client to avoid blocking event loop
 import os
 import json
 from typing import AsyncIterator
@@ -12,7 +12,7 @@ LANGSERVE_URL = os.getenv("LANGSERVE_URL", "http://backend:8000/agent")
 async def start():
     """初始化對話"""
     await cl.Message(
-        content="""# 歡迎使用 Text-to-SQL AI Agent 🚀
+        content="""# 歡迎使用廣告知識中心 🚀
 
 **功能介紹**:
 - 🔍 自然語言查詢 MySQL 和 ClickHouse 資料庫
@@ -21,7 +21,7 @@ async def start():
 
 **查詢範例**:
 1. "悠遊卡股份有限公司，時間2025年，投遞的格式、成效、數據鎖定格式投資金額"
-2. "幫我查 2024 Q4 所有活動的 CTR 和 VTR"
+2. "代理商 YTD(Year to Date) 認列金額 (截至最新月份)"
 3. "展碁國際預算 Top 5 的活動是哪些？"
 
 請輸入您的查詢 ⬇️
@@ -54,153 +54,107 @@ async def main(message: cl.Message):
     }
 
     try:
-        # 使用 streaming 端點
-        response = requests.post(
-            f"{LANGSERVE_URL}/stream",
-            json=input_data,
-            stream=True,
-            timeout=300  # 5 分鐘超時
-        )
-        response.raise_for_status()
-
-        # 移除思考訊息
-        await thinking_msg.remove()
-
-        # 處理 streaming 輸出
-        final_content = ""
-        current_msg = None
-
-        for line in response.iter_lines():
-            if not line:
-                continue
-
-            # LangServe streaming 格式: data: {...}
-            line_text = line.decode('utf-8')
-            if not line_text.startswith('data: '):
-                continue
-
-            try:
-                data = json.loads(line_text[6:])  # 移除 'data: ' prefix
-                # print(f"DEBUG: Received chunk: {data}") # Debug log
-
-                # 處理不同類型的 chunk - LangGraph Stream 結構
-                # 1. 檢查是否有直接的 messages 更新 (通常在 updates 中)
-                messages_list = []
+        # 使用 httpx AsyncClient 避免阻塞 Event Loop
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("POST", f"{LANGSERVE_URL}/stream", json=input_data) as response:
                 
-                # Case A: Standard LangGraph 'values' or 'updates'
-                if isinstance(data, dict):
-                    # 嘗試從不同位置提取 messages
-                    possible_sources = [
-                        data.get('messages'), 
-                        data.get('updates', {}).get('messages'),
-                        data.get('values', {}).get('messages')
-                    ]
+                if response.status_code != 200:
+                    # 處理非 200 錯誤
+                    error_detail = await response.aread()
+                    await cl.Message(
+                        content=f"❌ HTTP 錯誤 {response.status_code}\n\n{error_detail.decode()}",
+                        author="Error"
+                    ).send()
+                    return
+
+                # 移除思考訊息
+                await thinking_msg.remove()
+
+                current_msg = None
+
+                # Async iterate over lines
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
                     
-                    # 針對特定節點的輸出 (e.g., ResponseSynthesizer)
-                    for node_name, node_output in data.items():
-                        if isinstance(node_output, dict) and 'messages' in node_output:
-                            possible_sources.append(node_output['messages'])
+                    if not line.startswith('data: '):
+                        continue
 
-                    for source in possible_sources:
-                        if source and isinstance(source, list):
-                            messages_list.extend(source)
-                        elif source and isinstance(source, dict) and 'content' in source:
-                             messages_list.append(source)
-
-                # 處理提取到的訊息
-                for msg in messages_list:
-                    content = ""
-                    msg_type = ""
-                    
-                    if isinstance(msg, dict):
-                        content = msg.get('content', "")
-                        msg_type = msg.get('type', "")
-                    elif hasattr(msg, 'content'): # Handle objects if deserialized
-                        content = msg.content
-                        msg_type = getattr(msg, 'type', "")
-
-                    # 只顯示 AI 的訊息，且內容不為空
-                    if content and msg_type == 'ai':
-                        # 如果是完整的最終回應（通常比較長），直接顯示
-                        final_content = content
+                    try:
+                        data = json.loads(line[6:])  # 移除 'data: ' prefix
                         
-                        if current_msg:
-                            current_msg.content = final_content
-                            await current_msg.update()
-                        else:
-                            current_msg = cl.Message(content=final_content, author="AI Agent")
-                            await current_msg.send()
+                        # Debug Logging
+                        with open("ui_debug.log", "a") as f:
+                            f.write(f"Chunk received: {json.dumps(data, ensure_ascii=False)}\n")
 
-            except json.JSONDecodeError:
-                # 略過無法解析的行
-                continue
+                        messages_list = []
+                        
+                        # Helper: Recursive search
+                        def find_messages_recursively(obj):
+                            found = []
+                            if isinstance(obj, dict):
+                                for k, v in obj.items():
+                                    if k == 'messages' and isinstance(v, list):
+                                        found.extend(v)
+                                    elif isinstance(v, (dict, list)):
+                                        found.extend(find_messages_recursively(v))
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    found.extend(find_messages_recursively(item))
+                            return found
 
-        # 如果沒有 streaming 輸出，顯示最終內容
-        if not current_msg and final_content:
-            await cl.Message(
-                content=final_content,
-                author="AI Agent"
-            ).send()
-        elif current_msg and final_content and current_msg.content != final_content:
-            # 確保最終內容完整顯示
-            current_msg.content = final_content
-            await current_msg.update()
+                        if isinstance(data, dict):
+                            if 'ResponseSynthesizer' in data:
+                                node_data = data['ResponseSynthesizer']
+                                if 'messages' in node_data:
+                                    messages_list.extend(node_data['messages'])
+                            elif 'updates' in data:
+                                messages_list.extend(find_messages_recursively(data['updates']))
+                            if not messages_list:
+                                search_data = {k: v for k, v in data.items() if k != 'values'}
+                                messages_list.extend(find_messages_recursively(search_data))
 
-    except requests.exceptions.Timeout:
+                        for msg in messages_list:
+                            content = ""
+                            msg_type = ""
+                            
+                            if isinstance(msg, dict):
+                                content = msg.get('content', "")
+                                msg_type = msg.get('type', "")
+                            elif hasattr(msg, 'content'): 
+                                content = msg.content
+                                msg_type = getattr(msg, 'type', "")
+                            
+                            if content and msg_type == 'ai':
+                                final_content = content
+                                if current_msg:
+                                    current_msg.content = final_content
+                                    await current_msg.update()
+                                else:
+                                    current_msg = cl.Message(content=final_content, author="AI Agent")
+                                    await current_msg.send()
+
+                    except json.JSONDecodeError:
+                        pass
+                    except Exception as e:
+                        with open("ui_debug.log", "a") as f:
+                            f.write(f"Error processing chunk: {e}\n")
+                        continue
+
+    except httpx.TimeoutException:
         await cl.Message(
             content="⏰ 查詢超時，請稍後再試或簡化查詢條件。",
             author="Error"
         ).send()
 
-    except requests.exceptions.ConnectionError:
+    except httpx.RequestError as e:
         await cl.Message(
-            content=f"""❌ 無法連接到後端服務
-
-**可能原因**:
-- 後端服務未啟動
-- Docker 網路配置問題
-- URL 設定錯誤: {LANGSERVE_URL}
-
-請檢查 `docker-compose logs backend` 查看後端狀態。
-""",
-            author="Error"
-        ).send()
-
-    except requests.exceptions.HTTPError as e:
-        error_detail = ""
-        try:
-            error_detail = e.response.json()
-        except:
-            error_detail = e.response.text
-
-        await cl.Message(
-            content=f"""❌ HTTP 錯誤 {e.response.status_code}
-
-**錯誤詳情**:
-```
-{error_detail}
-```
-
-請檢查後端日誌以獲取更多資訊。
-""",
+            content=f"❌ 無法連接到後端服務: {str(e)}\n\n請檢查後端是否啟動。",
             author="Error"
         ).send()
 
     except Exception as e:
         await cl.Message(
-            content=f"""❌ 未知錯誤
-
-**錯誤訊息**: {str(e)}
-
-請聯繫系統管理員或查看日誌。
-""",
+            content=f"❌ 未知錯誤: {str(e)}",
             author="Error"
         ).send()
-
-@cl.on_chat_end
-async def end():
-    """對話結束"""
-    await cl.Message(
-        content="感謝使用 Text-to-SQL Agent！👋",
-        author="System"
-    ).send()

@@ -5,7 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "chainlit>=2.9.3",
     "clickhouse-connect>=0.10.0",
+    "httpx>=0.28.1",
     "langchain>=1.2.0",
     "langchain-community>=0.4.1",
     "langchain-core>=1.2.1",
@@ -13,6 +15,7 @@ dependencies = [
     "langgraph>=1.0.5",
     "langgraph-api>=0.5.42",
     "langgraph-cli[inmem]>=0.4.10",
+    "langserve>=0.3.3",
     "mysql-connector-python>=9.5.0",
     "pandas>=2.3.3",
     "paramiko>=4.0.0",
