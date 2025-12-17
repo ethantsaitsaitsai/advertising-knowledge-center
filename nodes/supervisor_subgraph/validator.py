@@ -11,6 +11,7 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
     ids = state.get("campaign_ids", [])
     campaign_data = state.get("campaign_data")
     user_intent = state.get("user_intent")
+    messages = state.get("messages", [])
 
     print(f"DEBUG [SupervisorValidator] Validating plan: Go to '{next_node}'")
     print(f"DEBUG [SupervisorValidator] is_ambiguous={user_intent.is_ambiguous if user_intent else None}, "
@@ -27,12 +28,50 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
           f"campaign_ids={len(ids) if ids else 0}, "
           f"campaign_data={'Available (' + str(len(campaign_data['data'])) + ' rows)' if campaign_data and campaign_data.get('data') else 'None'}")
 
+    # RULE 0: Loop Detection - Prevent consecutive calls to the same agent
+    if messages and len(messages) > 0:
+        # Check last message from worker agent
+        last_worker_msg = None
+        for msg in reversed(messages):
+            if hasattr(msg, "name") and msg.name in ["CampaignAgent", "PerformanceAgent"]:
+                last_worker_msg = msg
+                break
+
+        if last_worker_msg and last_worker_msg.name == next_node:
+            print(f"⚠️ WARNING [SupervisorValidator] Loop detected: Last worker was '{last_worker_msg.name}', trying to go to '{next_node}' again")
+            # Only block if it's a true infinite loop scenario
+            # (i.e., going to CampaignAgent when we should go to PerformanceAgent)
+            if next_node == "CampaignAgent" and has_campaign_data and user_intent and user_intent.needs_performance:
+                return (
+                    f"LOOP DETECTED: You are trying to send task to '{next_node}' again, "
+                    f"but the last worker was already '{last_worker_msg.name}'. "
+                    "This creates an infinite loop. "
+                    "Since we have campaign_data and needs_performance=True, "
+                    "you MUST go to 'PerformanceAgent' instead."
+                )
+
+    # RULE 1: Cannot go to PerformanceAgent without campaign data
     if next_node == "PerformanceAgent" and not has_campaign_data:
         return (
             "CRITICAL ERROR: You chose 'PerformanceAgent' but we do not have any campaign data yet. "
             "PerformanceAgent cannot work without campaign IDs or data. "
             "You MUST choose 'CampaignAgent' first to find the campaigns (using search or query)."
         )
+
+    # RULE 2: MUST go to PerformanceAgent if we have campaign_data and needs_performance=True
+    # This prevents infinite loops where Supervisor repeatedly sends tasks to CampaignAgent
+    if (next_node == "CampaignAgent" and has_campaign_data and
+        user_intent and user_intent.needs_performance):
+        # Check if we already have performance data
+        has_perf_result = state.get("final_dataframe") is not None
+        if not has_perf_result:
+            return (
+                "CRITICAL ERROR: You chose 'CampaignAgent' but we ALREADY have campaign data "
+                f"({len(campaign_data['data']) if campaign_data and campaign_data.get('data') else len(ids)} rows/IDs) "
+                "and user needs performance metrics (needs_performance=True). "
+                "You MUST NOT repeat CampaignAgent query. "
+                "You MUST choose 'PerformanceAgent' to query ClickHouse for performance metrics (CTR, VTR, ER)."
+            )
 
     # CRITICAL RULE: If user has provided specific entities AND date_range,
     # we should query even if is_ambiguous=True (ambiguity is resolved by user clarification)
@@ -103,14 +142,14 @@ def validator_node(state: SupervisorSubState):
         if campaign_ids:
             if "campaign_ids" not in decision_payload or not decision_payload["campaign_ids"]:
                 decision_payload["campaign_ids"] = campaign_ids
-        
+
         if "filters" not in decision_payload:
             decision_payload["filters"] = {}
-            
+
         if user_intent and user_intent.entities:
             if "brands" not in decision_payload["filters"]:
                 decision_payload["filters"]["brands"] = user_intent.entities
-                
+
         if user_intent and user_intent.date_range:
             if "date_range" not in decision_payload["filters"]:
                 if hasattr(user_intent.date_range, "model_dump"):
@@ -155,7 +194,11 @@ def validator_node(state: SupervisorSubState):
 
             if next_node == "PerformanceAgent":
                 # Filter to ClickHouse-only fields
-                clickhouse_dimensions = {"Date_Month", "Date_Year", "Campaign_Name"}
+                # [MODIFIED] Added 'Ad_Format' and 'Format' to allow granular performance query
+                clickhouse_dimensions = {
+                    "Date_Month", "Date_Year", "Campaign_Name",
+                    "Ad_Format", "Format", "投遞格式"
+                }
                 clickhouse_metrics = {"Impression", "Click", "CTR", "VTR", "ER", "View3s", "Q100"}
 
                 filtered_analysis_needs = {}
@@ -180,7 +223,7 @@ def validator_node(state: SupervisorSubState):
                 decision_payload["analysis_needs"] = full_analysis_needs
 
             else:
-                # For other agents, pass full analysis_needs
+                # For other routing targets, pass full analysis_needs
                 decision_payload["analysis_needs"] = full_analysis_needs
 
     return {

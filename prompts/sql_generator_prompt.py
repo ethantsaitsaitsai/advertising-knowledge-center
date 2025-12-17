@@ -53,263 +53,95 @@ SQL_GENERATOR_PROMPT = """
      - **必須** `SELECT one_campaigns.start_date, one_campaigns.end_date`
    - 若 Query Level = `AUDIENCE`: 額外必須 `SELECT target_segments.id AS segment_id`。
 
-2. **細粒度聚合**: 嚴禁為了 "Top N" 或 "Ranking" 而自行在 SQL 中做總數聚合。請保持細粒度 (Per Campaign/Item)，讓後端 Python 處理加總。
+2. **細粒度聚合 (Granularity Rule)**: 
+   - **嚴禁** 為了 "Top N" 或 "Ranking" 而自行在 SQL 中做總數聚合。請保持細粒度 (Per Campaign/Item)，讓後端 Python 處理加總。
+   - **重要**: 若某個欄位出現在 `Dimensions` 中 (例如 `Ad_Format`)，你 **必須** 使用 `GROUP BY` 保留該維度，**嚴禁** 使用 `GROUP_CONCAT` 將其合併。
 3. **禁止使用 LIMIT**: 除非是測試，否則禁止在 SQL 層使用 LIMIT，以免截斷聚合數據。
 
 # 資料庫結構定義 (Source of Truth Schema)
 {schema_context}
 
-# 查詢層級策略 (Query Level Strategy) - CRITICAL
-請根據輸入變數 `query_level` 決定你的 SQL 策略。
+# 查詢策略 (Query Strategy) - Two-Path Logic
+請根據使用者的問題意圖，選擇 **A. Booking (進單)** 或 **B. Execution (執行)** 其中一條路徑。
 
-### **資料膨脹防護 (Data Explosion Prevention) - Subquery 策略**
-為了避免 1-to-Many Join 導致的預算重複計算 (Cartesian Product)，當查詢包含 **Budget_Sum** 且涉及高基數維度 (Ad_Format, Segment) 時，**必須** 使用 **子查詢 (Derived Table)** 先計算好預算，再進行 JOIN。請避免使用 CTE (`WITH` 子句)，以確保對舊版 MySQL 的相容性。
-
-### A. Level = CONTRACT (合約層)
-*   **情境**: "總覽", "合約總金額", "某客戶的總花費", "代理商業績".
+### A. Booking Path (進單/合約/業務視角)
+*   **觸發情境**: "總預算", "合約金額", "報價", "產品線預算", "Top formats by budget".
+*   **核心狀態 (Status)**: `cue_lists.status IN ('converted', 'requested')`
 *   **Root Table**: `cue_lists`
-*   **必須欄位**: `cue_lists.id AS cue_list_id` (預設), `cue_lists.campaign_name` (預設).
-*   **預算指標**: `SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum`。
-*   **Join**: 
-    - -> `clients` (ON `cue_lists.client_id = clients.id`)
-    - -> `agency` (ON `cue_lists.agency_id = agency.id`)  <-- **重要：Agency 直接關聯至 Cue List**。
-*   **禁止**: 不要 Join `one_campaigns` 或 `pre_campaign`，除非使用者明確要求 "執行細節"。
-*   **動態分組 (Dynamic Grouping) - CRITICAL**: 
-    - **預設**: `GROUP BY cue_lists.id`。
-    - **若 `dimensions` 包含 Agency**: **必須** 改為 `GROUP BY agency.agencyname`，並在 SELECT 中包含 `agency.agencyname AS Agency`，且 **移除** `cue_lists.id` 和 `campaign_name`。
-    - **若 `dimensions` 包含 Advertiser**: 改為 `GROUP BY clients.company`。
-*   **SQL Template**:
+*   **預算邏輯**:
+    *   **情境 1: 總覽/依客戶/依代理商**
+        *   Route: `cue_lists` (Join `clients`/`agency`)
+        *   Metric: `SUM(cue_lists.total_budget)`
+    *   **情境 2: 依產品/格式/詳細規格 (Granular Booking)**
+        *   Route: `cue_lists` -> `cue_list_product_lines` -> `cue_list_ad_formats` -> `cue_list_budgets`
+        *   Metric: `SUM(cue_list_budgets.budget)`
+    *   **情境 3: 混合查詢 (Booking Budget + Segments)**
+        *   **情境**: "Booking預算和受眾", "格式預算與數據鎖定".
+        *   **Route**: `cue_lists` -> `one_campaigns` -> `pre_campaign` -> `target_segments`
+        *   **注意**: 雖然是 Booking，但受眾資訊位於執行層 (`pre_campaign`)。需用 LEFT JOIN 避免濾掉尚未設定受眾的單。
+        *   **SQL Template**:
+            ```sql
+            SELECT
+                aft.title AS Ad_Format,
+                GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category,
+                SUM(clb.budget) AS Booking_Budget
+            FROM cue_lists cl
+            JOIN cue_list_product_lines clpl ON cl.id = clpl.cue_list_id
+            JOIN cue_list_ad_formats claf ON clpl.id = claf.cue_list_product_line_id
+            JOIN cue_list_budgets clb ON claf.id = clb.cue_list_ad_format_id
+            JOIN ad_format_types aft ON claf.ad_format_type_id = aft.id
+            -- Bridge to Segments
+            LEFT JOIN one_campaigns oc ON oc.cue_list_id = cl.id
+            LEFT JOIN pre_campaign pc ON pc.one_campaign_id = oc.id
+            LEFT JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
+            LEFT JOIN target_segments ts ON ctp.selection_id = ts.id
+            WHERE cl.status IN ('converted', 'requested')
+            GROUP BY aft.title
+            ```
+
+### B. Execution Path (執行/認列/營運視角)
+*   **觸發情境**: "花費", "執行金額", "YTD 認列", "Realized Spend", "Execution Cost", "CTR", "VTR".
+*   **核心狀態 (Status)**: `pre_campaign.status IN ('oncue', 'closed')`
+*   **Root Table**: `one_campaigns` -> `pre_campaign`
+*   **預算邏輯**:
+    *   Metric: `SUM(pre_campaign.budget)`
+    *   此路徑代表已實際在 Ad Server 跑的金額。
+*   **SQL Template (Execution)**:
     ```sql
-    -- 範例 1: 預設查詢 (By Contract ID) - 當 dimensions 為空時
-    SELECT 
-        cue_lists.id AS cue_list_id,
-        cue_lists.campaign_name,
-        SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum,
-        MAX(clients.company) AS Advertiser
-    FROM cue_lists
-    JOIN clients ON cue_lists.client_id = clients.id
-    GROUP BY cue_lists.id
-
-    -- 範例 2: 依代理商排名 (By Agency) - 當 dimensions=['Agency']
-    SELECT 
-        agency.agencyname AS Agency,
-        SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum
-    FROM cue_lists
-    JOIN clients ON cue_lists.client_id = clients.id
-    JOIN agency ON cue_lists.agency_id = agency.id -- 注意 Join Path
-    GROUP BY agency.agencyname
-    ORDER BY Budget_Sum DESC
-
-    -- 範例 3: 依廣告主排名 (By Advertiser) - 當 dimensions=['Advertiser']
-    SELECT 
-        clients.company AS Advertiser,
-        SUM(cue_lists.total_budget + cue_lists.external_budget) AS Budget_Sum
-    FROM cue_lists
-    JOIN clients ON cue_lists.client_id = clients.id
-    GROUP BY clients.company
-    ORDER BY Budget_Sum DESC
-    ```
-
-### B. Level = STRATEGY (策略層)
-*   **情境**: "有哪些活動", "波段", "Campaign List"。
-*   **Root Table**: `one_campaigns`
-*   **必須欄位**: `one_campaigns.id AS cmpid`, `one_campaigns.name`, `one_campaigns.start_date`, `one_campaigns.end_date`。
-*   **預算指標**: `SUM(pre_campaign.budget) AS Budget_Sum` (需 Join pre_campaign)。
-*   **SQL Template (Subquery for Compatibility)**:
-    ```sql
-    SELECT 
-        oc.id AS cmpid,
-        oc.name AS Campaign_Name,
-        oc.start_date,
-        oc.end_date,
-        Budget_Info.Budget_Sum
-    FROM one_campaigns oc
-    LEFT JOIN (
-        -- Pre-calculate budget to avoid fan-out
-        SELECT 
-            one_campaign_id, 
-            SUM(budget) AS Budget_Sum 
-        FROM pre_campaign 
-        GROUP BY one_campaign_id
-    ) AS Budget_Info ON oc.id = Budget_Info.one_campaign_id
-    -- ... Join cue_lists/clients if needed
-    ```
-
-### C. Level = EXECUTION (執行層)
-*   **情境**: "格式", "素材", "版位成效", "Banner vs Video"。
-*   **Root Table**: `one_campaigns` (開始於此，再關聯 pre_campaign)
-*   **策略**:
-    1. **條件前推**: 若有 company / brand 過濾，在 clients 層篩選 - 但 WHERE 子句必須在所有 JOIN 之後。可使用 JOIN 條件來提前過濾（例如 `JOIN clients c ON cl.client_id = c.id AND c.company = '目標公司'`），或在子查詢內過濾。
-    2. **Subquery 聚合**: 先在子查詢中聚合 `pre_campaign_detail` 層的格式資訊，再與主表 JOIN。
-    3. **避免 DISTINCT**: 若格式已被 GROUP_CONCAT 預先分組，移除 DISTINCT。
-*   **SQL Template (推薦 - 優化版)**:
-    ```sql
-    -- 方式A：條件前推 + Subquery 聚合（最優化）
     SELECT
-        oc.id AS cmpid,
-        oc.name AS Campaign_Name,
-        oc.start_date,
-        oc.end_date,
-        FormatInfo.Ad_Format,
-        FormatInfo.ad_format_type_id,
-        FormatInfo.Budget_Sum
-    FROM one_campaigns oc
-    JOIN cue_lists cl ON oc.cue_list_id = cl.id
-    JOIN clients c ON cl.client_id = c.id
-    LEFT JOIN (
-        -- 【Subquery 聚合】先計算格式聚合與預算
-        SELECT
-            pc.one_campaign_id,
-            aft.title AS Ad_Format,
-            aft.id AS ad_format_type_id,
-            SUM(pcd.budget) AS Budget_Sum
-        FROM pre_campaign pc
-        LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
-        LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
-        GROUP BY pc.one_campaign_id, aft.title, aft.id
-    ) AS FormatInfo ON oc.id = FormatInfo.one_campaign_id
-    -- 【條件前推】在此層級篩選公司 (WHERE 必須在所有 JOIN 之後)
-    WHERE c.company = '目標公司'
-    ORDER BY oc.id
-    ```
-
-    ```sql
-    -- 方式B：若不需要過濾（簡化版）
-    SELECT
-        oc.id AS cmpid,
-        oc.name AS Campaign_Name,
-        oc.start_date,
-        oc.end_date,
-        aft.title AS Ad_Format,
-        aft.id AS ad_format_type_id,
-        SUM(pcd.budget) AS Budget_Sum
+        YEAR(oc.start_date) AS Year,
+        SUM(pc.budget) AS Execution_Spend
     FROM one_campaigns oc
     JOIN pre_campaign pc ON oc.id = pc.one_campaign_id
-    LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
-    LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
-    GROUP BY oc.id, aft.title, aft.id
+    WHERE pc.status IN ('oncue', 'closed')
+    -- 時間範圍過濾 usually on oc.start_date or oc.end_date
+    GROUP BY Year
     ```
 
-### D. Level = AUDIENCE (受眾層)
-*   **情境**: "受眾", "人群", "數據鎖定", "Segment"。
-*   **Root Table**: `one_campaigns`
-*   **關鍵策略**:
-    1. **條件前推**: 若有公司過濾，在 clients 層篩選 - 但 WHERE 子句必須在所有 JOIN 之後。可使用 JOIN 條件來提前過濾（例如 `JOIN clients c ON cl.client_id = c.id AND c.company = '目標公司'`），或在子查詢內過濾。
-    2. **GROUP_CONCAT 優化**: 必須使用 `GROUP_CONCAT` 將多個受眾壓縮為單一欄位，嚴禁對受眾進行 `GROUP BY`。
-    3. **Subquery 預聚合**: 先在子查詢中聚合受眾資訊，再與主表 JOIN。
-*   **SQL Template (推薦 - 優化版)**:
-    ```sql
-    -- 最優化版：條件前推 + Split Subquery (避免笛卡兒積)
-    SELECT
-        oc.id AS cmpid,
-        oc.name AS Campaign_Name,
-        oc.start_date,
-        oc.end_date,
-        SegmentInfo.Segment_Category,
-        FormatInfo.Ad_Format,
-        FormatInfo.ad_format_type_id,
-        FormatInfo.Budget_Sum
-    FROM one_campaigns oc
-    JOIN cue_lists cl ON oc.cue_list_id = cl.id
-    JOIN clients c ON cl.client_id = c.id
-    -- 1. 獨立查詢格式與預算 (避免乘積)
-    LEFT JOIN (
-        SELECT
-            pc.one_campaign_id,
-            aft.title AS Ad_Format,
-            aft.id AS ad_format_type_id,
-            SUM(pcd.budget) AS Budget_Sum
-        FROM pre_campaign pc
-        LEFT JOIN pre_campaign_detail pcd ON pc.id = pcd.pre_campaign_id
-        LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
-        GROUP BY pc.one_campaign_id, aft.title, aft.id
-    ) AS FormatInfo ON oc.id = FormatInfo.one_campaign_id
-    -- 2. 獨立查詢受眾 (獨立出來避免被格式乘積膨脹)
-    LEFT JOIN (
-        SELECT
-            pc.one_campaign_id,
-            GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category
-        FROM pre_campaign pc
-        JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
-        JOIN target_segments ts ON ctp.selection_id = ts.id
-        WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')
-        GROUP BY pc.one_campaign_id
-    ) AS SegmentInfo ON oc.id = SegmentInfo.one_campaign_id
-    -- 【條件前推】在此層級篩選公司 (WHERE 必須在所有 JOIN 之後)
-    WHERE c.company = '目標公司'
-    ORDER BY oc.id
-    ```
-
-    ```sql
-    -- 簡化版（不需公司過濾）- 使用子查詢避免 Budget 重複計算
-    SELECT
-        oc.id AS cmpid,
-        oc.name AS Campaign_Name,
-        oc.start_date,
-        oc.end_date,
-        SegmentInfo.Segment_Category,
-        BudgetInfo.Budget_Sum
-    FROM one_campaigns oc
-    -- 1. 獨立查詢預算 (避免被 Segment 一對多關係膨脹)
-    LEFT JOIN (
-        SELECT
-            one_campaign_id,
-            SUM(budget) AS Budget_Sum
-        FROM pre_campaign
-        GROUP BY one_campaign_id
-    ) AS BudgetInfo ON oc.id = BudgetInfo.one_campaign_id
-    -- 2. 獨立查詢受眾
-    LEFT JOIN (
-        SELECT
-            pc.one_campaign_id,
-            GROUP_CONCAT(DISTINCT ts.description SEPARATOR '; ') AS Segment_Category
-        FROM pre_campaign pc
-        LEFT JOIN campaign_target_pids ctp ON pc.id = ctp.source_id AND ctp.source_type = 'PreCampaign'
-        LEFT JOIN target_segments ts ON ctp.selection_id = ts.id
-        WHERE (ts.data_source IS NULL OR ts.data_source != 'keyword')
-        GROUP BY pc.one_campaign_id
-    ) AS SegmentInfo ON oc.id = SegmentInfo.one_campaign_id
-    ORDER BY oc.id
-    ```
+### C. Audience (受眾)
+*   **情境**: "受眾", "人群", "Segment", "數據鎖定".
+*   **邏輯**: 同 **Execution Path**，但 Join `campaign_target_pids` -> `target_segments`。
+*   **關鍵**: 必須使用 `GROUP_CONCAT` 聚合受眾名稱 (`target_segments.description`)，嚴禁對受眾做 `GROUP BY`。
 
 # 共同規則 (Common Rules)
-1.  **維度映射 (Dimensions Mapping)**:
+1.  **效能優化 (Critical)**:
+    *   **條件前推**: Company/Brand 相關過濾，請盡可能在 Join 後立即 Filter，或放在 WHERE 子句的最前面 (MySQL Optimizer 會處理，但寫清楚較好)。
+    *   **ID 優先**: 若 Input 有 `campaign_ids`，直接用 `id IN (...)` 鎖定，忽略模糊搜尋。
+2.  **維度映射 (Dimensions Mapping)**:
     *   "Agency" -> `agency.agencyname`
     *   "Brand" -> `clients.product`
     *   "Advertiser" -> `clients.company`
-    *   "Industry" -> `pre_campaign_categories.name`
-2.  **日期過濾**:
-    *   若 Root 是 `cue_lists` (Contract): 不建議過濾日期，除非 `cue_lists` 有日期欄位 (通常無，或使用 `created_at`)。若必須過濾，可 Join `one_campaigns` 做存在性檢查。
-    *   若 Root 是 `one_campaigns` (Strategy/Execution/Audience): 使用 `one_campaigns.start_date` / `end_date`。
-3.  **第三方排除**: 僅在 `Level=EXECUTION` 且涉及成效時，加入 `pre_campaign.campaign_type != 7`。
+    *   "Ad Format" -> `ad_format_types.title`
+3.  **日期欄位**:
+    *   Booking Path: 優先用 `cue_lists.start_date`。
+    *   Execution Path: 優先用 `one_campaigns.start_date`。
 
-# 過濾條件映射 (Filter Mapping for WHERE Clause) - CRITICAL
-當 `filters` JSON 物件包含以下 Keys 時，請務必使用對應的欄位進行過濾。**注意模糊匹配**：
-
-**[新增] 特殊實體過濾**：
-- **如果 `filters` 中的實體值包含 `(Table: Column)` 格式 (例如 `"Nike (clients: product)"`)，請忽略所有預設的映射規則，直接解析這個字串來構建 `WHERE` 子句。**
-  - **範例**: 如果實體是 `"悠遊卡股份有限公司 (clients: company)"`，則 WHERE 條件是 `clients.company = '悠遊卡股份有限公司'`。
-  - **請確保執行 JOIN 操作** 以連接到正確的表（例如 `clients`）。
-
-* `brands`: **必須同時檢查 Brand 和 Advertiser**。
-  - SQL: `(clients.product LIKE :val OR clients.company LIKE :val)`
-* `advertisers` -> `clients.company`
-* `agencies` -> `agency.agencyname`
-* `campaign_names` -> `one_campaigns.name` (注意：不是 cue_lists.campaign_name，因為我們主要查 one_campaigns)
-* `industries` -> `pre_campaign_categories.name`
-* `target_segments` -> `target_segments.description`
-
-# 索引使用提示 (Index Usage Hints)
-系統已建立以下索引，SQL 應充分利用：
-- `clients(company)` - 用於快速篩選廣告主
-- `cue_lists(client_id)` - 連接至客戶
-- `one_campaigns(cue_list_id)` - 連接至合約
-- `pre_campaign(one_campaign_id)` - 連接至執行層
-- `pre_campaign_detail(pre_campaign_id)` - 連接至詳細資訊
-- `campaign_target_pids(source_id, source_type)` - 複合索引用於受眾過濾
-- `campaign_target_pids(selection_id)` - 用於快速查找受眾
-
-**重點**: 確保 WHERE 條件能直接使用這些索引，避免隱性轉型或函式包裹。
+# 過濾條件映射 (Filter Mapping)
+*   `brands/advertisers` -> JOIN `clients` (ON `cue_lists.client_id` OR `one_campaigns -> cue_lists.client_id`)
+*   `agencies` -> JOIN `agency`
+*   `campaign_names`:
+    *   Booking Path -> `cue_lists.campaign_name`
+    *   Execution Path -> `one_campaigns.name`
 
 # 專案經理指令 (Manager Instructions) - PRIORITY
 以下是來自 Supervisor 的直接指令，請優先遵循：

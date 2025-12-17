@@ -60,6 +60,7 @@ class FormattingProcessor(BaseProcessor):
         # Get user's original intent
         user_original_dims = context.metadata.get('user_original_dims', [])
         user_original_metrics = context.metadata.get('user_original_metrics', [])
+        context.add_debug_log(f"FormattingProcessor: User Original Metrics: {user_original_metrics}")
 
         # 1. Budget Formatting
         for col in final_df.columns:
@@ -211,24 +212,32 @@ class FormattingProcessor(BaseProcessor):
         if hide_zero_metrics:
             for metric in ['ctr', 'vtr', 'er']:
                 if metric in final_df.columns:
-                    user_requested_metric = metric.upper() in [
-                        m.upper() for m in user_original_metrics
-                    ]
+                    # Clean user metrics for comparison
+                    clean_user_metrics = [m.strip().upper() for m in user_original_metrics]
+                    
+                    user_requested_metric = metric.strip().upper() in clean_user_metrics
 
                     if (final_df[metric] == 0).all():
-                        if was_default and not user_requested_metric:
-                            # Default metric with all zeros → hide it
+                        # Metric is all zeros
+                        if user_requested_metric:
+                            # User explicitly requested it → ALWAYS keep it (even if all zeros)
+                            context.add_debug_log(
+                                f"Keeping all-zero metric '{metric}' (user explicitly requested it)"
+                            )
+                        elif was_default:
+                            # Default metric with all zeros and not requested → hide it
                             final_df = final_df.drop(columns=[metric])
                             context.add_debug_log(f"Hiding all-zero DEFAULT metric '{metric}'")
-                        elif user_requested_metric:
-                            # User explicitly requested it → keep it
+                        else:
+                            # Not default, not requested, all zeros → hide it
+                            final_df = final_df.drop(columns=[metric])
+                            context.add_debug_log(f"Hiding all-zero metric '{metric}' (not requested)")
+                    else:
+                        # Metric has non-zero values → ALWAYS keep it (data exists)
+                        if not user_requested_metric:
                             context.add_debug_log(
-                            f"Keeping all-zero metric '{metric}' (user explicitly requested it)"
-                        )
-                    elif not was_default:
-                        # Not default and user didn't request → hide it
-                        final_df = final_df.drop(columns=[metric])
-                        context.add_debug_log(f"Hiding all-zero metric '{metric}' (not requested)")
+                                f"Keeping metric '{metric}' (has non-zero values, even though not explicitly requested)"
+                            )
 
         # 11. Final Renaming (Restore Capitalization for Display)
         display_map = {}
