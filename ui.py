@@ -8,6 +8,23 @@ from typing import AsyncIterator
 # LangServe backend URL
 LANGSERVE_URL = os.getenv("LANGSERVE_URL", "http://backend:8000/agent")
 
+@cl.password_auth_callback
+def auth(username: str, password: str):
+    """
+    簡單的密碼驗證回調函數。
+    使用者名稱可以是任意值，但密碼必須匹配環境變數設定。
+    """
+    auth_password = os.getenv("CHAINLIT_AUTH_PASSWORD")
+    
+    # 如果未設定環境變數，則不進行驗證（或是您可以選擇預設禁止）
+    if not auth_password:
+        return cl.User(identifier=username)
+
+    if password == auth_password:
+        return cl.User(identifier=username)
+    
+    return None
+
 @cl.on_chat_start
 async def start():
     """初始化對話"""
@@ -67,10 +84,17 @@ async def main(message: cl.Message):
                     ).send()
                     return
 
-                # 移除思考訊息
-                await thinking_msg.remove()
-
                 current_msg = None
+                
+                # 節點狀態對照表
+                NODE_STATUS_MAP = {
+                    "IntentAnalyzer": "🧠 正在分析您的查詢意圖...",
+                    "Supervisor": "👨‍✈️ 正在規劃查詢路徑...",
+                    "CampaignAgent": "🔍 正在查詢 MySQL 活動資料...",
+                    "PerformanceAgent": "📈 正在查詢 ClickHouse 成效數據...",
+                    "DataFusion": "🔄 正在進行數據融合與驗證...",
+                    "ResponseSynthesizer": "✍️ 正在撰寫分析報告..."
+                }
 
                 # Async iterate over lines
                 async for line in response.aiter_lines():
@@ -86,6 +110,17 @@ async def main(message: cl.Message):
                         # Debug Logging
                         with open("ui_debug.log", "a") as f:
                             f.write(f"Chunk received: {json.dumps(data, ensure_ascii=False)}\n")
+
+                        # --- 狀態更新邏輯 ---
+                        # 檢查哪個節點正在輸出，並更新思考訊息
+                        if isinstance(data, dict):
+                            for node_name in data.keys():
+                                if node_name in NODE_STATUS_MAP:
+                                    status_text = NODE_STATUS_MAP[node_name]
+                                    # 如果狀態改變了，更新訊息
+                                    if thinking_msg.content != status_text:
+                                        thinking_msg.content = status_text
+                                        await thinking_msg.update()
 
                         messages_list = []
                         
@@ -127,6 +162,9 @@ async def main(message: cl.Message):
                             
                             if content and msg_type == 'ai':
                                 final_content = content
+                                # 一旦開始生成最終回應，移除思考訊息
+                                await thinking_msg.remove()
+                                
                                 if current_msg:
                                     current_msg.content = final_content
                                     await current_msg.update()
@@ -140,6 +178,9 @@ async def main(message: cl.Message):
                         with open("ui_debug.log", "a") as f:
                             f.write(f"Error processing chunk: {e}\n")
                         continue
+                
+                # 確保迴圈結束後思考訊息被移除 (如果還沒移除的話)
+                await thinking_msg.remove()
 
     except httpx.TimeoutException:
         await cl.Message(
