@@ -125,7 +125,7 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
     perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
     campaign_data = state.get("sql_result")  # From CampaignAgent (MySQL)
 
-    # Fallback: if sql_result is not available, get data from campaign_data
+    # Fallback: Use campaign_data if sql_result is not available
     if not campaign_data and state.get("campaign_data"):
         campaign_data = state.get("campaign_data", {}).get("data")
     

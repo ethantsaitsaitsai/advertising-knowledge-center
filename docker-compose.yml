@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    command: uv run server.py
+    ports:
+      - "8000:8000"
+    env_file: .env  # 載入您的環境變數 (GCP key, DB config)
+    volumes:
+      - ./ssh_keys:/root/.ssh:ro  # 掛載 SSH Key 讓容器能連線 MySQL
+    restart: always
+
+  frontend:
+    build: .
+    command: uv run chainlit run ui.py --port 8001 --host 0.0.0.0
+    ports:
+      - "8001:8001"
+    environment:
+      - LANGSERVE_URL=http://backend:8000/agent # Chainlit 連接到 LangServe 後端
+    env_file: .env # Chainlit 也可能需要 .env 中的其他變數
+    depends_on:
+      - backend
+    restart: always

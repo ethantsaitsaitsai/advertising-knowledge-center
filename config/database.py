@@ -1,11 +1,12 @@
 import os
+import time
 import traceback
 import paramiko
 from sqlalchemy import create_engine, MetaData
 from langchain_community.utilities import SQLDatabase
 from dotenv import load_dotenv
 import clickhouse_connect
-from sshtunnel import SSHTunnelForwarder
+from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 
 if not hasattr(paramiko, "DSSKey"):
     paramiko.DSSKey = paramiko.RSAKey
@@ -20,32 +21,56 @@ def get_mysql_db():
     global _mysql_db_instance, _ssh_tunnel
     if _mysql_db_instance is None:
         print("🔌 Initializing MySQL connection...")
-        try:
-            db_user = os.getenv('DB_USER')
-            db_password = os.getenv('DB_PASSWORD')
-            db_name = os.getenv('DB_NAME')
-            db_host = os.getenv('DB_HOST')
-            db_port = int(os.getenv('DB_PORT', 3306))
+        
+        db_user = os.getenv('DB_USER')
+        db_password = os.getenv('DB_PASSWORD')
+        db_name = os.getenv('DB_NAME')
+        db_host = os.getenv('DB_HOST')
+        db_port = int(os.getenv('DB_PORT', 3306))
 
-            # SSH Connection details
-            ssh_host = os.getenv('SSH_HOST')
-            ssh_port = int(os.getenv('SSH_PORT', 22))
-            ssh_user = os.getenv('SSH_USER')
-            ssh_password = os.getenv('SSH_PASSWORD')
+        # SSH Connection details
+        ssh_host = os.getenv('SSH_HOST')
+        ssh_port = int(os.getenv('SSH_PORT', 22))
+        ssh_user = os.getenv('SSH_USER')
+        ssh_password = os.getenv('SSH_PASSWORD')
 
-            print(f"🛡️  Establishing SSH Tunnel to {ssh_host}...")
+        print(f"🛡️  Establishing SSH Tunnel to {ssh_host}...")
 
-            ssh_args = {
-                "ssh_address_or_host": (ssh_host, ssh_port),
-                "ssh_username": ssh_user,
-                "remote_bind_address": (db_host, db_port),
-                "ssh_password": ssh_password,
-                "set_keepalive": 30.0, # Send keepalive packets every 30 seconds
-            }
+        ssh_args = {
+            "ssh_address_or_host": (ssh_host, ssh_port),
+            "ssh_username": ssh_user,
+            "remote_bind_address": (db_host, db_port),
+            "ssh_password": ssh_password,
+            "set_keepalive": 30.0, # Send keepalive packets every 30 seconds
+        }
 
-            _ssh_tunnel = SSHTunnelForwarder(**ssh_args)
-            _ssh_tunnel.start()
+        # Retry mechanism for SSH connection
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if _ssh_tunnel:
+                    _ssh_tunnel.stop()
+                
+                _ssh_tunnel = SSHTunnelForwarder(**ssh_args)
+                _ssh_tunnel.start()
+                
+                # Verify tunnel is active
+                if _ssh_tunnel.is_active:
+                    break
+            except BaseSSHTunnelForwarderError as e:
+                print(f"⚠️ SSH Tunnel connection failed (Attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(5) # Wait before retry
+                else:
+                    print("❌ Detailed Error Traceback:")
+                    traceback.print_exc()
+                    raise ValueError("Error: Could not establish SSH Tunnel after multiple attempts.") from e
+            except Exception as e:
+                print("❌ Detailed Error Traceback:")
+                traceback.print_exc()
+                raise ValueError(f"Error: Unexpected error during SSH connection: {e}") from e
 
+        if _ssh_tunnel and _ssh_tunnel.is_active:
             print(f"✅ SSH Tunnel established! Local bind port: {_ssh_tunnel.local_bind_port}")
 
             # Override host and port to use the tunnel
@@ -57,46 +82,46 @@ def get_mysql_db():
                 f"@{current_host}:{current_port}/{db_name}"
             )
 
-            # Add connection pooling settings
-            engine = create_engine(
-                db_uri,
-                pool_recycle=3600,  # Recycle connections every hour
-                pool_pre_ping=True,  # Check connection before usage (Auto-reconnect)
-                connect_args={'consume_results': True} # Ensure previous results are consumed
-            )
-            target_tables = [
-                "cue_lists",
-                "one_campaigns",
-                "clients",
-                "agency",
-                "cue_list_budgets",
-                "cue_list_ad_formats",
-                "ad_format_types",
-                "pricing_models",
-                "pre_campaign",
-                "campaign_target_pids",
-                "target_segments",
-                "segment_categories"
-            ]
-            metadata = MetaData()
-            metadata.reflect(bind=engine, only=target_tables, resolve_fks=False)
-            _mysql_db_instance = SQLDatabase(
-                engine=engine,
-                metadata=metadata,
-                include_tables=target_tables,
-                lazy_table_reflection=True
-            )
-
-        except Exception as e:
-            print("❌ Detailed Error Traceback:")
-            traceback.print_exc()
-            if _ssh_tunnel:
-                _ssh_tunnel.stop()
-                _ssh_tunnel = None
-            raise ValueError(
-                "Error: Could not establish MySQL connection (possibly via SSH). "
-                "Please check your .env configuration."
-            ) from e
+            try:
+                # Add connection pooling settings
+                engine = create_engine(
+                    db_uri,
+                    pool_recycle=3600,  # Recycle connections every hour
+                    pool_pre_ping=True,  # Check connection before usage (Auto-reconnect)
+                    connect_args={'consume_results': True} # Ensure previous results are consumed
+                )
+                target_tables = [
+                    "cue_lists",
+                    "one_campaigns",
+                    "clients",
+                    "agency",
+                    "cue_list_budgets",
+                    "cue_list_ad_formats",
+                    "ad_format_types",
+                    "pricing_models",
+                    "pre_campaign",
+                    "campaign_target_pids",
+                    "target_segments",
+                    "segment_categories"
+                ]
+                metadata = MetaData()
+                metadata.reflect(bind=engine, only=target_tables, resolve_fks=False)
+                _mysql_db_instance = SQLDatabase(
+                    engine=engine,
+                    metadata=metadata,
+                    include_tables=target_tables,
+                    lazy_table_reflection=True
+                )
+            except Exception as e:
+                print("❌ Database Engine Creation Failed:")
+                traceback.print_exc()
+                if _ssh_tunnel:
+                    _ssh_tunnel.stop()
+                    _ssh_tunnel = None
+                raise ValueError("Error: Could not create MySQL Engine.") from e
+        else:
+             raise ValueError("Error: SSH Tunnel is not active.")
+             
     return _mysql_db_instance
 
 

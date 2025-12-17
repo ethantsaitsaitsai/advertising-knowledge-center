@@ -17,7 +17,7 @@ class NumericConverter:
     """
 
     # Columns that should NOT be converted to numeric (IDs)
-    EXCLUDE_COLUMNS = ['cmpid', 'id', 'ad_format_type_id']
+    EXCLUDE_COLUMNS = ['cmpid', 'id', 'ad_format_type_id', 'ad_format', 'segment_category']
 
     # Keywords that indicate a column likely contains metrics
     METRIC_KEYWORDS = ['budget', 'sum', 'price', 'count', 'impression', 'click', 'view']

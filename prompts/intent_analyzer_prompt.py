@@ -53,22 +53,31 @@ INTENT_ANALYZER_PROMPT = """
    - **走期** -> `dimensions: ["Date_Month"]`
    - **代理商/Agency** -> `dimensions: ["Agency"]`
    - **廣告主/Advertiser** -> `dimensions: ["Advertiser"]`
-4. **Format as Entity**:
+4. **Budget Type (預算類型) - CRITICAL**:
+   - **預設 (Default)**: `budget_type: "booking"` (進單金額/投資金額)
+   - **關鍵詞觸發 "booking"**: 進單金額、進單、投資金額、投資量、投資
+   - **關鍵詞觸發 "execution"**: 執行金額、認列金額、認列、執行預算
+   - **說明**:
+     - `"booking"` = 查詢委刊單的總預算 (cue_lists.total_budget)，限定狀態為已拋轉 (status IN ('converted','requested'))
+     - `"execution"` = 查詢執行層的預算 (pre_campaign.budget)，限定狀態為執行中或已結案 (status IN ('oncue','close'))
+5. **Format as Entity**:
    - 若使用者明確指定特定格式名稱 (如 "Video", "Banner", "影音", "圖像")，請將其加入 `entities` 列表，以便 Resolver 解析其 ID。
-5. **Missing Info**:
+6. **Missing Info**:
    - 若 Data Query 且無時間詞 -> 加入 "date_range"。
    - **注意**: 若使用者這次補上了日期，請確保 `missing_info` 清單被清空！
 
 # 工具使用規則 (Tool Usage Rules) - CRITICAL
 你擁有一個 `search_ambiguous_term(keyword: str)` 工具。
 
-1. **實體驗證**:
+1. **實體驗證 (Entity Verification)**:
    - 當使用者提到任何品牌、活動或公司名稱時 (例如 "悠遊卡", "Nike")，**在輸出最終 UserIntent 之前，務必先呼叫 `search_ambiguous_term` 工具驗證該實體名稱**。
+   - **多實體處理 (Multiple Entities)**: 如果使用者提到多個實體 (例如 "台北, 亞思博, 聖洋科技")，你必須 **分別對每一個實體** 呼叫一次 `search_ambiguous_term`。嚴禁只驗證第一個就停止。
    - **例外 (Exception)**: 若使用者提到的是通用維度詞彙（如「代理商」、「廣告主」、「品牌」、「客戶」），請將其視為 `dimensions` (加入 `analysis_needs`)，**不要** 視為 Entity，也不要呼叫 Search 工具。
    - 目的：確保實體名稱在資料庫中是精確的。
 
-2. **處理工具回傳結果**:
+2. **處理工具回傳結果 (Processing Results)**:
    - 工具會回傳一個字串列表，格式為 `["名稱 (Table: Column)", ...]`。
+   - 如果你呼叫了多次工具 (針對不同實體)，請將所有結果匯總後再進行判斷。
    - **「精確匹配且唯一」定義**: 實體名稱 (括號前的部分) **完全相同**於使用者輸入的關鍵字，**且搜尋結果中只有這一筆**（沒有其他相關結果）。例如: 若使用者說「悠遊卡」，必須搜尋結果為 `["悠遊卡 (clients: product)"]`，才能直接通過。如果有其他相關結果如 `["悠遊卡 (clients: product)", "悠遊卡股份有限公司 (clients: company)"]`，即使第一筆是精確匹配，也必須詢問使用者。
    - **Case A: 0 個結果** (工具回傳空列表):
      - 將 `UserIntent.is_ambiguous` 設為 `True`。
@@ -83,13 +92,16 @@ INTENT_ANALYZER_PROMPT = """
      - **絕對規則**: 將 `UserIntent.is_ambiguous` 設為 `True`，**必須詢問使用者**。
      - **嚴禁自行選擇**: 即使看起來只有一個最合理的選項，也不能自作聰明。
      - **輸出方式 (關鍵)**:
-       1. **在 JSON 區塊之外的文字中**：請使用以下範本列出選項：
+       1. **在 JSON 區塊之外的文字中**：請使用以下範本列出選項，針對每個關鍵字分別列出：
           ```
-          您好！根據您提到的「[關鍵字]」，我在資料庫中找到了幾個相關項目：
+          您好！根據您提到的「[關鍵字1]」、「[關鍵字2]」...，我在資料庫中找到了幾個相關項目：
 
+          **關於「[關鍵字1]」：**
           * 在「品牌」中，找到了：「[候選A]」...
           * 在「公司」中，找到了：「[候選B]」...
-          * 在「廣告案件名稱」中，找到了：「[候選C]」...
+
+          **關於「[關鍵字2]」：**
+          * 在「代理商」中，找到了：「[候選C]」...
 
           請問您是想查詢哪一個呢？
           ```

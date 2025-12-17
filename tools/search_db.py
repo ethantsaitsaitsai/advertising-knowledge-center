@@ -4,10 +4,13 @@ from sqlalchemy import text
 from utils.rag_service import RagService
 from config.database import get_mysql_db
 
-def search_sql_like(keyword: str) -> List[str]:
+def search_sql_like(keyword: str, scope: Optional[List[str]] = None) -> List[str]:
     """
     Performs SQL LIKE search and returns formatted strings with source info.
     Format: "Value (Table: Column)"
+    Args:
+        keyword: The keyword to search for.
+        scope: An optional list of entity types (e.g., ['agencies', 'brands']) to limit the search.
     """
     candidates = []
     
@@ -24,8 +27,9 @@ def search_sql_like(keyword: str) -> List[str]:
     
     try:
         with db._engine.connect() as connection:
-            # Fix unpacking: mapping.items() returns key, value_tuple
             for f_type, (table, col, condition) in mapping.items():
+                if scope and f_type not in scope: # Only search if f_type is in scope
+                    continue
                 query = text(f"SELECT DISTINCT `{col}` FROM `{table}` WHERE `{col}` LIKE :kw AND {condition} LIMIT 10")
                 result = connection.execute(query, {"kw": f"%{keyword}%"})
                 
@@ -49,20 +53,20 @@ def search_sql_like(keyword: str) -> List[str]:
 
     return unique_candidates[:10]
 
-def _search_ambiguous_term_impl(keyword: str) -> List[str]:
+def _search_ambiguous_term_impl(keyword: str, scope: Optional[List[str]] = None) -> List[str]:
     """
     Implementation of search logic (Pure Python function).
     Returns all results, including both exact matches and partial matches.
     The caller (Intent Analyzer) will decide whether to confirm based on exact match count.
     """
-    print(f"🔎 Searching '{keyword}'...")
-    candidates = search_sql_like(keyword)
+    print(f"🔎 Searching '{keyword}' (Scope: {scope or 'All'})...")
+    candidates = search_sql_like(keyword, scope)
 
     if candidates:
         print(f"✅ Found {len(candidates)} matches.")
         # Extract the entity names (before the parentheses) for analysis
         entity_names = [c.split(" (")[0] for c in candidates]
-        exact_matches = [c for c in candidates if c.split(" (")[0] == keyword]
+        exact_matches = [c for c in candidates if c.split(" (")[0].lower() == keyword.lower()] # Case-insensitive exact match
         print(f"   - Exact matches: {len(exact_matches)}")
         print(f"   - Partial matches: {len(candidates) - len(exact_matches)}")
     else:
@@ -71,12 +75,18 @@ def _search_ambiguous_term_impl(keyword: str) -> List[str]:
     return candidates
 
 @tool
-def search_ambiguous_term(keyword: str) -> List[str]:
+def search_ambiguous_term(keyword: str, scope: Optional[List[str]] = None) -> List[str]:
     """
     Searches for an entity in the database and returns candidates with their source table/column.
     Use this to verify entity names or resolve ambiguity.
     
+    Args:
+        keyword: The term to search for.
+        scope: Optional list of entity types to limit the search (e.g., ['agencies', 'brands']).
+               Supported types: 'brands', 'advertisers', 'campaign_names', 'cue_campaigns', 'agencies'.
+               If None, searches all supported types.
+
     Returns a list of strings in the format: "EntityName (Table: ColumnName)"
     Example: "悠遊卡 (clients: product)"
     """
-    return _search_ambiguous_term_impl(keyword)
+    return _search_ambiguous_term_impl(keyword, scope)

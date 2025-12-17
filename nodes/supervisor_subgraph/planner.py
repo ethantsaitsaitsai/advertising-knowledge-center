@@ -11,7 +11,7 @@ class SupervisorDecision(BaseModel):
     next_node: Literal["CampaignAgent", "PerformanceAgent", "ResponseSynthesizer", "FINISH"] = Field(description="The next agent to act")
     instructions: str = Field(description="Specific instructions for the worker agent. Translate user intent into a clear task.")
     reasoning: str = Field(description="Your thought process (Chain of Thought) justifying this decision.")
-    
+
     # Optional Task Payloads
     campaign_task_params: Optional[Dict[str, Any]] = Field(None, description="Parameters for CampaignTask if next_node is CampaignAgent")
     performance_task_params: Optional[Dict[str, Any]] = Field(None, description="Parameters for PerformanceTask if next_node is PerformanceAgent")
@@ -44,88 +44,30 @@ def planner_node(state: SupervisorSubState):
     # Check existing results (for Fan-In Logic - Fast Pass)
     has_perf_result = state.get("final_dataframe") is not None
     has_campaign_result = (state.get("sql_result") is not None) or (state.get("campaign_data") is not None)
-
-    # --- 0. Fast Pass Logic ---
-    # Case 1: Both MySQL and ClickHouse data complete
+    
+    # --- 0. Fan-In Logic (Fast Pass) ---
     if has_campaign_ids and user_intent and user_intent.needs_performance:
         if has_perf_result and has_campaign_result:
-             print(f"DEBUG [SupervisorPlanner] Both MySQL and ClickHouse data complete. Scheduling Synthesizer.")
+             print(f"DEBUG [SupervisorPlanner] Sequential Execution Complete (Campaign + Performance). Scheduling Synthesizer.")
              return {
                  "draft_decision": {
                      "next_node": "ResponseSynthesizer",
                      "instructions": "Data retrieval complete. Synthesize the final report.",
-                     "reasoning": "Fast path: Both data sources complete."
+                     "reasoning": "Fast path: Both MySQL and ClickHouse data retrieved."
                  }
              }
-        # Case 1b: Have MySQL data, need ClickHouse data
-        elif has_campaign_result and not has_perf_result:
-            print(f"DEBUG [SupervisorPlanner] MySQL data complete, routing to PerformanceAgent.")
+
+        # CRITICAL RULE: If we have campaign_data but no performance data yet, FORCE PerformanceAgent
+        # This prevents infinite loops where Supervisor keeps sending tasks to CampaignAgent
+        if has_campaign_result and not has_perf_result:
+            print(f"DEBUG [SupervisorPlanner] HARD RULE: has_campaign_data=True + needs_performance=True + no_perf_data → FORCE PerformanceAgent")
             return {
                 "draft_decision": {
                     "next_node": "PerformanceAgent",
-                    "instructions": "Query performance metrics for the retrieved campaigns.",
-                    "reasoning": "Fast path: MySQL complete, now fetch ClickHouse performance data."
+                    "instructions": f"Query performance metrics (CTR, VTR, ER) for Campaign IDs: {campaign_ids}.",
+                    "reasoning": "Hard rule: Campaign data exists and user needs performance metrics. Must query ClickHouse next."
                 }
             }
-
-    # Case 2: MySQL-only query complete (needs_performance=False)
-    if user_intent and not user_intent.needs_performance and has_campaign_result:
-        print(f"DEBUG [SupervisorPlanner] MySQL-only query complete. Scheduling Synthesizer.")
-        return {
-            "draft_decision": {
-                "next_node": "ResponseSynthesizer",
-                "instructions": "MySQL data retrieval complete. Synthesize the final report.",
-                "reasoning": "Fast path: MySQL-only query complete, no performance data needed."
-            }
-        }
-
-    # --- Loop Detection ---
-    # Count consecutive calls to the same agent
-    consecutive_campaign_calls = 0
-    consecutive_performance_calls = 0
-    if messages:
-        for msg in reversed(messages):
-            agent_name = getattr(msg, "name", "")
-            if agent_name == "CampaignAgent":
-                consecutive_campaign_calls += 1
-            elif agent_name == "PerformanceAgent":
-                consecutive_performance_calls += 1
-            else:
-                break  # Stop counting when we hit a different agent
-
-    if consecutive_campaign_calls >= 2:
-        print(f"DEBUG [SupervisorPlanner] Loop detected: CampaignAgent called {consecutive_campaign_calls} times consecutively.")
-        # If we have campaign data, move on
-        if has_campaign_result:
-            if user_intent and user_intent.needs_performance and has_campaign_ids:
-                print(f"DEBUG [SupervisorPlanner] Breaking loop: Routing to PerformanceAgent.")
-                return {
-                    "draft_decision": {
-                        "next_node": "PerformanceAgent",
-                        "instructions": "Query performance metrics for the retrieved campaigns.",
-                        "reasoning": "Loop break: Moving from CampaignAgent to PerformanceAgent."
-                    }
-                }
-            else:
-                print(f"DEBUG [SupervisorPlanner] Breaking loop: Routing to ResponseSynthesizer.")
-                return {
-                    "draft_decision": {
-                        "next_node": "ResponseSynthesizer",
-                        "instructions": "Synthesize report with available data.",
-                        "reasoning": "Loop break: Enough data collected, proceeding to synthesis."
-                    }
-                }
-
-    if consecutive_performance_calls >= 2:
-        print(f"DEBUG [SupervisorPlanner] Loop detected: PerformanceAgent called {consecutive_performance_calls} times consecutively.")
-        print(f"DEBUG [SupervisorPlanner] Breaking loop: Routing to ResponseSynthesizer.")
-        return {
-            "draft_decision": {
-                "next_node": "ResponseSynthesizer",
-                "instructions": "Synthesize report with available data.",
-                "reasoning": "Loop break: Avoiding infinite performance queries."
-            }
-        }
 
     # --- 1. Prepare Context for LLM (Enhanced Observation) ---
     payload_context = {}

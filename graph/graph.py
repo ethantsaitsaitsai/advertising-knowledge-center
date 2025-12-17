@@ -5,17 +5,15 @@ from nodes.campaign_node_wrapper import campaign_node
 from nodes.performance_node_wrapper import performance_node
 from nodes.intent_analyzer import intent_analyzer_node
 from nodes.response_synthesizer import response_synthesizer_node
-from nodes.parallel_executor import parallel_executor_node
 
 # Define the graph
 workflow = StateGraph(AgentState)
 
 # Add Nodes
-workflow.add_node("IntentAnalyzer", intent_analyzer_node) 
+workflow.add_node("IntentAnalyzer", intent_analyzer_node)
 workflow.add_node("Supervisor", supervisor_node) # Wraps the SubGraph
-workflow.add_node("CampaignAgent", campaign_node)         
-workflow.add_node("PerformanceAgent", performance_node)   
-workflow.add_node("ParallelExecutor", parallel_executor_node) 
+workflow.add_node("CampaignAgent", campaign_node)
+workflow.add_node("PerformanceAgent", performance_node)
 workflow.add_node("ResponseSynthesizer", response_synthesizer_node) 
 
 # Add Edges
@@ -30,7 +28,6 @@ workflow.add_conditional_edges(
     {
         "CampaignAgent": "CampaignAgent",
         "PerformanceAgent": "PerformanceAgent",
-        "ParallelExecutor": "ParallelExecutor",
         "ResponseSynthesizer": "ResponseSynthesizer",
         "IntentAnalyzer": "IntentAnalyzer",  # For clarification response re-analysis
         "FINISH": END
@@ -40,7 +37,6 @@ workflow.add_conditional_edges(
 # Workers return to Supervisor (Loop for next step)
 workflow.add_edge("CampaignAgent", "Supervisor")
 workflow.add_edge("PerformanceAgent", "Supervisor")
-workflow.add_edge("ParallelExecutor", "Supervisor")
 
 # Synthesizer ends the flow
 workflow.add_edge("ResponseSynthesizer", END)

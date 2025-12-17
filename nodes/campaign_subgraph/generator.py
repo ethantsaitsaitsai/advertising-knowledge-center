@@ -66,6 +66,35 @@ def generator_node(state: CampaignSubState):
             dimensions.append("Ad_Format")
             print("DEBUG [CampaignGenerator] Auto-enriched Dimensions with 'Ad_Format'")
 
+    # --- Budget Path Detection ---
+    # Determine if this is Booking Path or Execution Path based on keywords
+    instruction_text = task.instruction_text or ""
+    metrics_str = str(task.analysis_needs.get("metrics", []))
+
+    # Booking Path keywords (總預算類)
+    booking_keywords = ["總預算", "合約金額", "報價", "產品線預算", "booking", "contract", "quotation", "cue_list"]
+    # Execution Path keywords (認列金額/投資金額類)
+    execution_keywords = ["花費", "執行金額", "認列金額", "投資金額", "realized", "execution", "investment", "pre_campaign"]
+
+    # Check instruction and metrics for path hints
+    instruction_lower = instruction_text.lower()
+    metrics_lower = metrics_str.lower()
+
+    has_booking_hint = any(k in instruction_lower or k in metrics_lower for k in booking_keywords)
+    has_execution_hint = any(k in instruction_lower or k in metrics_lower for k in execution_keywords)
+
+    # Determine budget path
+    if has_execution_hint and not has_booking_hint:
+        budget_path_hint = "EXECUTION_PATH"
+    elif has_booking_hint and not has_execution_hint:
+        budget_path_hint = "BOOKING_PATH"
+    else:
+        # Default: if no clear indication, use BOOKING_PATH for safety
+        budget_path_hint = "BOOKING_PATH"
+
+    print(f"DEBUG [CampaignGenerator] Budget Path Detected: {budget_path_hint}")
+    print(f"DEBUG [CampaignGenerator] Dimensions: {dimensions}")
+
     # Map task fields to prompt variables
     ids = getattr(task, 'campaign_ids', []) or []
     prompt_inputs = {
@@ -76,6 +105,7 @@ def generator_node(state: CampaignSubState):
         "confirmed_entities": str(task.filters.get("brands", []) + task.filters.get("entities", [])), # Legacy support
         "campaign_ids": str(ids),
         "instruction_text": task.instruction_text or "None", # Pass instruction
+        "budget_path_hint": budget_path_hint,  # NEW: Explicit path guidance
         "internal_memory": memory_str,
         "sql_error": str(sql_error) if sql_error else "None",
         "schema_context": schema_md

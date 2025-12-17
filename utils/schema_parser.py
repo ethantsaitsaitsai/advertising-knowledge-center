@@ -19,8 +19,8 @@ def parse_markdown_schema(file_path: str):
 
     # Regex to find sections like "#### 1. 資料表：`cue_lists` (說明)"
     # Pattern explanation:
-    # ^#### \d+\. 資料表：`([\w_]+)` \(([^)]+)\)
-    pattern = re.compile(r"^#### \d+\. 資料表：`([\w_]+)` \(([^)]+)\)", re.MULTILINE)
+    # ^#### [\d\\.]+\s+資料表：`([\w_]+)` \(([^)]+)\)
+    pattern = re.compile(r"^#### [\d\\.]+\s+資料表：`([\w_]+)` \(([^)]+)\)", re.MULTILINE)
     
     matches = list(pattern.finditer(content))
     

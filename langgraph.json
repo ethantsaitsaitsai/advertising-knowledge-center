@@ -4,5 +4,6 @@
     "sql_agent": "./graph/graph.py:app"
   },
   "env": ".env",
-  "image_distro": "wolfi"
+  "image_distro": "wolfi",
+  "allowed_origins": ["*"]
 }
