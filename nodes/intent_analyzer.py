@@ -28,7 +28,6 @@ def intent_analyzer_node(state: AgentState):
     clarification_pending = state.get("clarification_pending", False)
     if clarification_pending and messages:
         # Find the most recent HumanMessage (user's clarification response)
-        from langchain_core.messages import HumanMessage
         user_response = None
         for msg in reversed(messages):
             if isinstance(msg, HumanMessage):
@@ -59,12 +58,40 @@ def intent_analyzer_node(state: AgentState):
     # 2. Run Agent
     if HAS_CREATE_AGENT:
         agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
-        result = agent.invoke({"messages": messages})
+        
+        # --- Prepare tool_kwargs for search_ambiguous_term ---
+        tool_kwargs = {}
+        last_user_message_content = ""
+        if messages:
+            for msg in reversed(messages):
+                if isinstance(msg, HumanMessage):
+                    last_user_message_content = msg.content
+                    break
+        
+        # Determine search scope based on keywords in the last user message
+        search_scope = []
+        if "代理商" in last_user_message_content or "agency" in last_user_message_content.lower():
+            search_scope.append("agencies")
+        if "品牌" in last_user_message_content or "brand" in last_user_message_content.lower():
+            search_scope.append("brands")
+        if "廣告主" in last_user_message_content or "advertiser" in last_user_message_content.lower():
+            search_scope.append("advertisers")
+        if "活動名稱" in last_user_message_content or "活動" in last_user_message_content.lower():
+            search_scope.append("campaign_names")
+            
+        if search_scope:
+            tool_kwargs = {"search_ambiguous_term": {"scope": search_scope}}
+            print(f"DEBUG [IntentAnalyzer] Dynamic search scope set: {search_scope}")
+
+        result = agent.invoke({"messages": messages}, tool_kwargs=tool_kwargs)
     else:
         llm_with_tools = llm.bind_tools(tools)
         
         def agent_node(state: MessagesState):
             msgs = [SystemMessage(content=system_prompt)] + state["messages"]
+            # Dynamically determine tool_kwargs if possible for non-create_agent flow
+            # This part is more complex for direct LangGraph bind_tools without create_agent
+            # For simplicity, assuming LLM will handle scope if prompt is good, or needs more advanced integration
             return {"messages": [llm_with_tools.invoke(msgs)]}
 
         def should_continue(state: MessagesState):
@@ -82,6 +109,7 @@ def intent_analyzer_node(state: AgentState):
         
         app = workflow.compile()
         result = app.invoke({"messages": messages})
+
 
     # 3. Extract Result
     last_message = result["messages"][-1]
@@ -246,6 +274,16 @@ def intent_analyzer_node(state: AgentState):
             if not final_intent.date_range:
                 missing.append("date_range")
         final_intent.missing_info = missing
+
+    # --- Auto-detect needs_performance based on requested metrics ---
+    # ClickHouse-only metrics that require performance data
+    CLICKHOUSE_METRICS = {"CTR", "VTR", "ER", "Click", "Impression", "View3s", "Q100"}
+    if final_intent.analysis_needs:
+        requested_metrics = final_intent.analysis_needs.get("metrics", [])
+        if any(metric in CLICKHOUSE_METRICS for metric in requested_metrics):
+            if not final_intent.needs_performance:
+                print(f"DEBUG [IntentAnalyzer] Auto-detecting needs_performance=True (found ClickHouse metrics: {requested_metrics})")
+                final_intent.needs_performance = True
 
     # 【CRITICAL FIX】 If user has provided BOTH entities and date_range,
     # clear is_ambiguous flag - ambiguity is resolved by user clarification!

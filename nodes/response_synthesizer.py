@@ -124,8 +124,8 @@ def response_synthesizer_node(state: AgentState) -> Dict[str, Any]:
     # --- Data Fusion Logic ---
     perf_data = state.get("final_dataframe") # From PerformanceAgent (ClickHouse)
     campaign_data = state.get("sql_result")  # From CampaignAgent (MySQL)
-    
-    # Fallback for Single Path (Contract Level) where ParallelExecutor didn't run
+
+    # Fallback: if sql_result is not available, get data from campaign_data
     if not campaign_data and state.get("campaign_data"):
         campaign_data = state.get("campaign_data", {}).get("data")
     

@@ -33,13 +33,6 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
             "PerformanceAgent cannot work without campaign IDs or data. "
             "You MUST choose 'CampaignAgent' first to find the campaigns (using search or query)."
         )
-    
-    if next_node == "ParallelExecutor" and not ids:
-        return (
-            "CRITICAL ERROR: You chose 'ParallelExecutor' but we do not have 'campaign_ids'. "
-            "You cannot run performance queries in parallel without IDs. "
-            "Please route to 'CampaignAgent' first."
-        )
 
     # CRITICAL RULE: If user has provided specific entities AND date_range,
     # we should query even if is_ambiguous=True (ambiguity is resolved by user clarification)
@@ -54,7 +47,7 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
 
     if user_intent and user_intent.is_ambiguous:
         # Only prevent PerformanceAgent/Synthesizer if ambiguous (need CampaignAgent to resolve first)
-        if next_node in ["PerformanceAgent", "ParallelExecutor", "ResponseSynthesizer"]:
+        if next_node in ["PerformanceAgent", "ResponseSynthesizer"]:
              return (
                  "CRITICAL ERROR: The UserIntent is marked as 'is_ambiguous'. "
                  "We do not know which entity to query yet. "
@@ -95,12 +88,10 @@ def validator_node(state: SupervisorSubState):
     
     if next_node == "CampaignAgent":
         decision_payload = draft.get("campaign_task_params") or {}
-        decision_payload["task_type"] = "campaign_query" 
+        decision_payload["task_type"] = "campaign_query"
     elif next_node == "PerformanceAgent":
         decision_payload = draft.get("performance_task_params") or {}
-        decision_payload["task_type"] = "performance_query" 
-    elif next_node == "ParallelExecutor":
-        decision_payload = {"task_type": "parallel_query"}
+        decision_payload["task_type"] = "performance_query"
     
     decision_payload["instruction_text"] = instructions
     
@@ -108,7 +99,7 @@ def validator_node(state: SupervisorSubState):
     campaign_ids = state.get("campaign_ids", [])
     user_intent = state.get("user_intent")
     
-    if next_node in ["CampaignAgent", "PerformanceAgent", "ParallelExecutor"]:
+    if next_node in ["CampaignAgent", "PerformanceAgent"]:
         if campaign_ids:
             if "campaign_ids" not in decision_payload or not decision_payload["campaign_ids"]:
                 decision_payload["campaign_ids"] = campaign_ids
@@ -141,15 +132,56 @@ def validator_node(state: SupervisorSubState):
         # CampaignGenerator and PerformanceGenerator need dimensions/metrics to generate correct SQL
         # Without this, CampaignAgent only queries basic cmpid, missing Budget_Sum, Segment_Category, etc.
         if user_intent and user_intent.analysis_needs:
+            # Get analysis_needs as dict
             if hasattr(user_intent.analysis_needs, "model_dump"):
-                decision_payload["analysis_needs"] = user_intent.analysis_needs.model_dump()
+                full_analysis_needs = user_intent.analysis_needs.model_dump()
             elif hasattr(user_intent.analysis_needs, "dict"):
-                decision_payload["analysis_needs"] = user_intent.analysis_needs.dict()
+                full_analysis_needs = user_intent.analysis_needs.dict()
             elif isinstance(user_intent.analysis_needs, dict):
-                decision_payload["analysis_needs"] = user_intent.analysis_needs
+                full_analysis_needs = user_intent.analysis_needs
             else:
                 # Fallback: try to convert to dict
-                decision_payload["analysis_needs"] = dict(user_intent.analysis_needs)
+                full_analysis_needs = dict(user_intent.analysis_needs)
+
+            # ============================================================
+            # FIELD RESPONSIBILITY SEPARATION
+            # ============================================================
+            # Based on metrics.yaml and column_mappings.yaml
+            # MySQL-only fields (CampaignAgent): Agency, Advertiser, Brand, Ad_Format,
+            #   Segment_Category, Industry, Pricing_Unit, Budget_Sum
+            # ClickHouse-only fields (PerformanceAgent): Impression, Click, CTR, VTR, ER,
+            #   View3s, Q100, Date_Month, Date_Year
+            # Shared fields: Campaign_Name (both databases have it)
+
+            if next_node == "PerformanceAgent":
+                # Filter to ClickHouse-only fields
+                clickhouse_dimensions = {"Date_Month", "Date_Year", "Campaign_Name"}
+                clickhouse_metrics = {"Impression", "Click", "CTR", "VTR", "ER", "View3s", "Q100"}
+
+                filtered_analysis_needs = {}
+                if "dimensions" in full_analysis_needs:
+                    filtered_dims = [d for d in full_analysis_needs["dimensions"]
+                                   if d in clickhouse_dimensions]
+                    if filtered_dims:
+                        filtered_analysis_needs["dimensions"] = filtered_dims
+
+                if "metrics" in full_analysis_needs:
+                    filtered_metrics = [m for m in full_analysis_needs["metrics"]
+                                      if m in clickhouse_metrics]
+                    if filtered_metrics:
+                        filtered_analysis_needs["metrics"] = filtered_metrics
+
+                decision_payload["analysis_needs"] = filtered_analysis_needs
+                print(f"DEBUG [SupervisorValidator] Filtered analysis_needs for PerformanceAgent: {filtered_analysis_needs}")
+
+            elif next_node == "CampaignAgent":
+                # CampaignAgent gets all MySQL fields (no filtering needed for now)
+                # But we could filter out ClickHouse-only time dimensions if needed
+                decision_payload["analysis_needs"] = full_analysis_needs
+
+            else:
+                # For other agents, pass full analysis_needs
+                decision_payload["analysis_needs"] = full_analysis_needs
 
     return {
         "next": next_node, # Update Global 'next'
