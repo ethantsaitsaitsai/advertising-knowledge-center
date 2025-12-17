@@ -33,14 +33,32 @@ def planner_node(state: SupervisorSubState):
     Supervisor Agent (Planner).
     Generates a draft decision based on context and feedback.
     """
-    messages = list(state.get("messages", []))
+    # --- FIX: Ensure messages are proper types (ChatGoogleGenerativeAI strictness) ---
+    def fix_messages(msgs):
+        fixed = []
+        for m in msgs:
+            if type(m).__name__ == 'BaseMessage': 
+                # print(f"DEBUG [SupervisorPlanner] Converting BaseMessage(type={m.type}) to concrete class.")
+                if m.type == 'human':
+                    fixed.append(HumanMessage(content=m.content))
+                elif m.type == 'ai':
+                    fixed.append(AIMessage(content=m.content))
+                elif m.type == 'system':
+                    fixed.append(SystemMessage(content=m.content))
+                else:
+                    fixed.append(HumanMessage(content=m.content))
+            else:
+                fixed.append(m)
+        return fixed
+
+    messages = fix_messages(list(state.get("messages", [])))
+    internal_feedback = fix_messages(list(state.get("internal_feedback", [])))
+    # -----------------------------------------------------------------------------
+
     user_intent = state.get("user_intent")
     campaign_ids = state.get("campaign_ids", [])
     has_campaign_ids = bool(campaign_ids)
     
-    # Feedback from Validator Node (if any)
-    internal_feedback = state.get("internal_feedback", [])
-
     # Check existing results (for Fan-In Logic - Fast Pass)
     has_perf_result = state.get("final_dataframe") is not None
     has_campaign_result = (state.get("sql_result") is not None) or (state.get("campaign_data") is not None)
@@ -123,23 +141,89 @@ def planner_node(state: SupervisorSubState):
         supervisor_chain = prompt | llm.with_structured_output(SupervisorDecision)
         decision: SupervisorDecision = supervisor_chain.invoke(chain_input)
     except Exception as e:
-        print(f"DEBUG [SupervisorPlanner] LLM Error: {e}")
+        print(f"⚠️ WARNING [SupervisorPlanner] LLM Error: {e}")
+        print(f"DEBUG [SupervisorPlanner] Using Python fallback rules...")
+
+        # Fallback: Use Python rules to determine next step
+        has_campaign_result = (state.get("sql_result") is not None) or (state.get("campaign_data") is not None)
+        has_perf_result = state.get("final_dataframe") is not None
+
+        # Rule 1: If no campaign data, must go to CampaignAgent first
+        if not has_campaign_ids and not has_campaign_result:
+            print(f"DEBUG [SupervisorPlanner] Fallback Rule 1: No campaign data → CampaignAgent")
+            return {
+                "draft_decision": {
+                    "next_node": "CampaignAgent",
+                    "instructions": f"Query campaigns for entity: {user_intent.entities if user_intent else 'unknown'}",
+                    "reasoning": "Fallback rule: No campaign data, must query CampaignAgent first."
+                }
+            }
+
+        # Rule 2: If have campaign data but need performance data
+        if has_campaign_ids and user_intent and user_intent.needs_performance and not has_perf_result:
+            print(f"DEBUG [SupervisorPlanner] Fallback Rule 2: Have campaign_ids + needs_performance → PerformanceAgent")
+            return {
+                "draft_decision": {
+                    "next_node": "PerformanceAgent",
+                    "instructions": f"Query performance metrics for Campaign IDs: {campaign_ids}",
+                    "reasoning": "Fallback rule: Have campaign data + needs_performance=True, must query PerformanceAgent."
+                }
+            }
+
+        # Rule 3: If have both results, go to Synthesizer
+        if has_campaign_result and (not user_intent or not user_intent.needs_performance or has_perf_result):
+            print(f"DEBUG [SupervisorPlanner] Fallback Rule 3: All data available → ResponseSynthesizer")
+            return {
+                "draft_decision": {
+                    "next_node": "ResponseSynthesizer",
+                    "instructions": "Synthesize the final report from available data.",
+                    "reasoning": "Fallback rule: All required data available, go to Synthesizer."
+                }
+            }
+
+        # Default: Return error to user
+        print(f"DEBUG [SupervisorPlanner] Fallback: No rule matched, returning error")
         return {
             "draft_decision": {
                  "next_node": "FINISH",
-                 "instructions": "System error in planning.",
-                 "reasoning": f"LLM Exception: {e}"
+                 "instructions": "System error: Unable to determine next step.",
+                 "reasoning": f"LLM Exception: {e}. Fallback rules did not match any scenario.",
+                 "error_message": f"抱歉，系統遇到暫時性錯誤 (Gemini API 500)。請稍後再試或簡化您的查詢。"
             }
         }
 
     # Check if decision is None (LLM failed to return valid structured output)
     if decision is None:
         print(f"⚠️ WARNING [SupervisorPlanner] LLM returned None, using fallback")
+
+        # Use same fallback logic as exception handler
+        has_campaign_result = (state.get("sql_result") is not None) or (state.get("campaign_data") is not None)
+        has_perf_result = state.get("final_dataframe") is not None
+
+        if not has_campaign_ids and not has_campaign_result:
+            return {
+                "draft_decision": {
+                    "next_node": "CampaignAgent",
+                    "instructions": f"Query campaigns for entity: {user_intent.entities if user_intent else 'unknown'}",
+                    "reasoning": "Fallback rule (None result): No campaign data, must query CampaignAgent first."
+                }
+            }
+
+        if has_campaign_ids and user_intent and user_intent.needs_performance and not has_perf_result:
+            return {
+                "draft_decision": {
+                    "next_node": "PerformanceAgent",
+                    "instructions": f"Query performance metrics for Campaign IDs: {campaign_ids}",
+                    "reasoning": "Fallback rule (None result): Have campaign data + needs_performance=True, must query PerformanceAgent."
+                }
+            }
+
         return {
             "draft_decision": {
                  "next_node": "FINISH",
                  "instructions": "LLM failed to return valid decision.",
-                 "reasoning": "LLM returned None instead of SupervisorDecision"
+                 "reasoning": "LLM returned None instead of SupervisorDecision",
+                 "error_message": "抱歉，系統無法理解您的查詢。請提供更清晰的描述。"
             }
         }
 

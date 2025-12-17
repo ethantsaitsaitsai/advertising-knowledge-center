@@ -81,41 +81,55 @@ async def main(message: cl.Message):
 
             try:
                 data = json.loads(line_text[6:])  # 移除 'data: ' prefix
+                # print(f"DEBUG: Received chunk: {data}") # Debug log
 
-                # 處理不同類型的 chunk
+                # 處理不同類型的 chunk - LangGraph Stream 結構
+                # 1. 檢查是否有直接的 messages 更新 (通常在 updates 中)
+                messages_list = []
+                
+                # Case A: Standard LangGraph 'values' or 'updates'
                 if isinstance(data, dict):
-                    # 檢查是否有 messages
-                    if 'messages' in data and isinstance(data['messages'], list):
-                        for msg in data['messages']:
-                            if isinstance(msg, dict) and 'content' in msg:
-                                content = msg['content']
+                    # 嘗試從不同位置提取 messages
+                    possible_sources = [
+                        data.get('messages'), 
+                        data.get('updates', {}).get('messages'),
+                        data.get('values', {}).get('messages')
+                    ]
+                    
+                    # 針對特定節點的輸出 (e.g., ResponseSynthesizer)
+                    for node_name, node_output in data.items():
+                        if isinstance(node_output, dict) and 'messages' in node_output:
+                            possible_sources.append(node_output['messages'])
 
-                                # 如果包含 Markdown 表格，單獨顯示
-                                if '|' in content and '---' in content:
-                                    if current_msg:
-                                        await current_msg.update()
+                    for source in possible_sources:
+                        if source and isinstance(source, list):
+                            messages_list.extend(source)
+                        elif source and isinstance(source, dict) and 'content' in source:
+                             messages_list.append(source)
 
-                                    # 顯示表格
-                                    await cl.Message(
-                                        content=content,
-                                        author="AI Agent 📊"
-                                    ).send()
-                                else:
-                                    # 累積文字輸出
-                                    if not current_msg:
-                                        current_msg = cl.Message(content="", author="AI Agent")
-                                        await current_msg.send()
+                # 處理提取到的訊息
+                for msg in messages_list:
+                    content = ""
+                    msg_type = ""
+                    
+                    if isinstance(msg, dict):
+                        content = msg.get('content', "")
+                        msg_type = msg.get('type', "")
+                    elif hasattr(msg, 'content'): # Handle objects if deserialized
+                        content = msg.content
+                        msg_type = getattr(msg, 'type', "")
 
-                                    current_msg.content += content
-                                    await current_msg.update()
-
-                    # 檢查是否為最終輸出
-                    elif 'output' in data:
-                        output = data['output']
-                        if isinstance(output, dict) and 'messages' in output:
-                            last_message = output['messages'][-1]
-                            if isinstance(last_message, dict) and 'content' in last_message:
-                                final_content = last_message['content']
+                    # 只顯示 AI 的訊息，且內容不為空
+                    if content and msg_type == 'ai':
+                        # 如果是完整的最終回應（通常比較長），直接顯示
+                        final_content = content
+                        
+                        if current_msg:
+                            current_msg.content = final_content
+                            await current_msg.update()
+                        else:
+                            current_msg = cl.Message(content=final_content, author="AI Agent")
+                            await current_msg.send()
 
             except json.JSONDecodeError:
                 # 略過無法解析的行

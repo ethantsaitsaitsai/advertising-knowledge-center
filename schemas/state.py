@@ -4,7 +4,7 @@ import operator
 from langchain_core.messages import BaseMessage
 from schemas.intent import UserIntent
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     """
     The state for the hierarchical multi-agent graph.
     """

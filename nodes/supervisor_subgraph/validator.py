@@ -28,6 +28,37 @@ def validate_decision(draft: Dict[str, Any], state: SupervisorSubState) -> Optio
           f"campaign_ids={len(ids) if ids else 0}, "
           f"campaign_data={'Available (' + str(len(campaign_data['data'])) + ' rows)' if campaign_data and campaign_data.get('data') else 'None'}")
 
+    # RULE 0a: FINISH Decision Validation
+    # If routing to FINISH, ensure it's a valid termination point
+    if next_node == "FINISH":
+        error_msg = draft.get("error_message")
+
+        # Allow FINISH if there's an error_message (system error or clarification request)
+        if error_msg:
+            print(f"DEBUG [SupervisorValidator] FINISH with error_message allowed: {error_msg[:100]}...")
+            return None
+
+        # Allow FINISH for chitchat
+        if user_intent and user_intent.query_level == "chitchat":
+            print(f"DEBUG [SupervisorValidator] FINISH for chitchat allowed.")
+            return None
+
+        # Block FINISH if this is a data query without any results
+        if user_intent and user_intent.query_level in ["contract", "strategy", "execution", "audience"]:
+            # Check if we have any data to show
+            has_any_data = (
+                has_campaign_data or
+                state.get("final_dataframe") is not None or
+                state.get("sql_result") is not None
+            )
+
+            if not has_any_data:
+                return (
+                    "CRITICAL ERROR: Cannot FINISH without retrieving any data. "
+                    f"User asked for '{user_intent.query_level}' level query but we have no results yet. "
+                    "You MUST route to 'CampaignAgent' to retrieve data first."
+                )
+
     # RULE 0: Loop Detection - Prevent consecutive calls to the same agent
     if messages and len(messages) > 0:
         # Check last message from worker agent

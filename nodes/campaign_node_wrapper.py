@@ -3,6 +3,16 @@ from nodes.campaign_subgraph.graph import campaign_subgraph
 from schemas.state import AgentState
 from schemas.agent_tasks import CampaignTask
 import json
+from decimal import Decimal
+
+def convert_decimals(obj):
+    if isinstance(obj, list):
+        return [convert_decimals(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: convert_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    return obj
 
 def campaign_node(state: AgentState):
     """
@@ -55,6 +65,9 @@ def campaign_node(state: AgentState):
     
     # 3. Adapt Output
     campaign_data = result_state.get("campaign_data")
+    if campaign_data:
+        campaign_data = convert_decimals(campaign_data)
+    
     sql_error = result_state.get("sql_error")
     final_response_text = result_state.get("final_response")
     step_count = result_state.get("step_count", 0)

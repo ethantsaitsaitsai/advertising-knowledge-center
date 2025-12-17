@@ -3,6 +3,16 @@ from nodes.performance_subgraph.graph import performance_subgraph
 from schemas.state import AgentState
 from schemas.agent_tasks import PerformanceTask
 import json
+from decimal import Decimal
+
+def convert_decimals(obj):
+    if isinstance(obj, list):
+        return [convert_decimals(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: convert_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    return obj
 
 def performance_node(state: AgentState):
     """
@@ -95,6 +105,12 @@ def performance_node(state: AgentState):
         "data": final_dataframe,
         "generated_sqls": [generated_sql] if generated_sql else []
     }
+    
+    # Apply Decimal Conversion
+    if final_dataframe:
+        final_dataframe = convert_decimals(final_dataframe)
+    if performance_data_wrapper:
+        performance_data_wrapper = convert_decimals(performance_data_wrapper)
 
     return {
         "messages": [response_msg],

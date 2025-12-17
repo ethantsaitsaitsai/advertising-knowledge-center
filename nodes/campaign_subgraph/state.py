@@ -3,7 +3,7 @@ from typing_extensions import TypedDict, Annotated
 import operator
 from schemas.agent_tasks import CampaignTask
 
-class CampaignSubState(TypedDict):
+class CampaignSubState(TypedDict, total=False):
     """
     State specifically for the Campaign Agent (SubGraph).
     """

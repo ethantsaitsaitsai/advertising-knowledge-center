@@ -3,7 +3,7 @@ from typing_extensions import TypedDict, Annotated
 import operator
 from schemas.agent_tasks import PerformanceTask
 
-class PerformanceSubState(TypedDict):
+class PerformanceSubState(TypedDict, total=False):
     """
     State specifically for the Performance Agent (SubGraph).
     """

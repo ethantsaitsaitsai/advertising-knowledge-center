@@ -59,6 +59,24 @@ def intent_analyzer_node(state: AgentState):
     if HAS_CREATE_AGENT:
         agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
         
+        # --- FIX: Ensure messages are proper types (ChatGoogleGenerativeAI strictness) ---
+        fixed_messages = []
+        for m in messages:
+            if type(m).__name__ == 'BaseMessage': 
+                # print(f"DEBUG [IntentAnalyzer] Converting BaseMessage(type={m.type}) to concrete class.")
+                if m.type == 'human':
+                    fixed_messages.append(HumanMessage(content=m.content))
+                elif m.type == 'ai':
+                    fixed_messages.append(AIMessage(content=m.content))
+                elif m.type == 'system':
+                    fixed_messages.append(SystemMessage(content=m.content))
+                else:
+                    fixed_messages.append(HumanMessage(content=m.content))
+            else:
+                fixed_messages.append(m)
+        messages = fixed_messages
+        # -----------------------------------------------------------------------------
+
         # --- Prepare tool_kwargs for search_ambiguous_term ---
         tool_kwargs = {}
         last_user_message_content = ""
@@ -143,6 +161,13 @@ def intent_analyzer_node(state: AgentState):
             json_str = re.sub(r'"\s*\n\s*', '" ', json_str)
             json_str = re.sub(r'\n\s*"', ' "', json_str)
             data = json.loads(json_str, strict=False)
+
+            # CRITICAL FIX: Move budget_type from analysis_needs to top level if misplaced
+            if "analysis_needs" in data and isinstance(data["analysis_needs"], dict):
+                if "budget_type" in data["analysis_needs"]:
+                    print(f"DEBUG [IntentAgent] Detected misplaced budget_type in analysis_needs, moving to top level")
+                    data["budget_type"] = data["analysis_needs"].pop("budget_type")
+
             final_intent = UserIntent(**data)
             print("DEBUG [IntentAgent] Successfully extracted JSON via Regex.")
         except Exception as e:

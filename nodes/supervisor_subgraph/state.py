@@ -4,7 +4,7 @@ import operator
 from langchain_core.messages import BaseMessage
 from schemas.state import AgentState
 
-class SupervisorSubState(AgentState):
+class SupervisorSubState(AgentState, total=False):
     """
     State specifically for the Supervisor SubGraph.
     Inherits everything from global AgentState, adds internal loop variables.
