@@ -71,9 +71,29 @@ class DataMergeProcessor(BaseProcessor):
         # 1. Determine Merge Keys (Phase 4: Use FusionStrategy)
         strategy = context.metadata.get('fusion_strategy')
         if strategy is not None:
-            # Use strategy decision
-            merge_on = strategy.merge_keys
-            context.add_debug_log(f"Merge keys from strategy: {merge_on}")
+            # Use strategy decision, but validate keys exist in both DataFrames
+            proposed_keys = strategy.merge_keys
+            context.add_debug_log(f"Merge keys from strategy: {proposed_keys}")
+
+            # Validate: ensure all proposed keys exist in both DataFrames (if CH is not empty)
+            if not df_ch.empty:
+                valid_keys = [k for k in proposed_keys
+                             if k in df_mysql.columns and k in df_ch.columns]
+                if valid_keys != proposed_keys:
+                    missing_in_ch = [k for k in proposed_keys if k not in df_ch.columns]
+                    missing_in_mysql = [k for k in proposed_keys if k not in df_mysql.columns]
+                    context.add_debug_log(
+                        f"WARNING: Some merge keys missing. "
+                        f"Missing in ClickHouse: {missing_in_ch}, "
+                        f"Missing in MySQL: {missing_in_mysql}. "
+                        f"Using valid keys: {valid_keys}"
+                    )
+                    merge_on = valid_keys if valid_keys else ['cmpid']
+                else:
+                    merge_on = proposed_keys
+            else:
+                # ClickHouse is empty, use proposed keys (merge won't happen anyway)
+                merge_on = proposed_keys
         else:
             # Fallback: Rule-based decision (backward compatible)
             merge_on = ['cmpid']

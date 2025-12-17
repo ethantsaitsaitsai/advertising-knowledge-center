@@ -1,11 +1,19 @@
 from typing import List, Optional, Literal, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 class DateRange(BaseModel):
     """Explicit date range with start and end."""
     start: Optional[str] = Field(None, description="Start date (YYYY-MM-DD).")
     end: Optional[str] = Field(None, description="End date (YYYY-MM-DD).")
     raw: Optional[str] = Field(None, description="The raw string user mentioned (e.g. '2025年').")
+
+    @field_validator('start', 'end', mode='before')
+    @classmethod
+    def clean_date_string(cls, v):
+        """Remove whitespace and newlines from date strings."""
+        if v and isinstance(v, str):
+            return v.strip()
+        return v
 
 class UserIntent(BaseModel):
     """
@@ -46,4 +54,9 @@ class UserIntent(BaseModel):
     analysis_needs: Dict[str, List[str]] = Field(
         default_factory=dict,
         description="Extracted metrics (e.g., 'Budget_Sum') and dimensions (e.g., 'Campaign_Name')."
+    )
+
+    budget_type: Literal["booking", "execution"] = Field(
+        "booking",
+        description="Type of budget to query. 'booking' = 進單金額/投資金額 (cue_lists.total_budget, status IN ('converted','requested')). 'execution' = 執行金額/認列金額 (pre_campaign.budget, status IN ('oncue','close'))."
     )

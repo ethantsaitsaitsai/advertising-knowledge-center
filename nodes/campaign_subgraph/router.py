@@ -52,6 +52,7 @@ def router_node(state: CampaignSubState):
     Uses strict Python logic priorities to avoid LLM loops.
     """
     MAX_STEPS = 8
+    MAX_SQL_ERRORS = 3  # Maximum consecutive SQL errors before giving up
     current_step = state.get("step_count", 0) + 1
 
     # Extract State
@@ -60,6 +61,14 @@ def router_node(state: CampaignSubState):
     campaign_data = state.get("campaign_data")
     sql_error = state.get("sql_error")
     search_results = state.get("search_results") # This is a list or None
+
+    # Count consecutive SQL errors from memory
+    consecutive_sql_errors = 0
+    for thought in reversed(memory):
+        if "SQL Error" in thought or "Schema error" in thought:
+            consecutive_sql_errors += 1
+        else:
+            break  # Stop counting when we hit a non-error thought
 
     # Check if this is a clarification/disambiguation request from Supervisor
     # NEW: Also check for is_ambiguous flag OR intent mismatch indicators
@@ -237,12 +246,34 @@ def router_node(state: CampaignSubState):
             "step_count": current_step
         }
 
-    # 5. Safety Brake
+    # 5. Safety Brake - Max Steps
     if current_step > MAX_STEPS:
         print("DEBUG [CampaignRouter] Logic: Max steps -> FINISH_NO_DATA")
         return {
             "next_action": "finish_no_data",
             "internal_thoughts": ["Brain: Max steps reached."],
+            "step_count": current_step
+        }
+
+    # 5b. Safety Brake - Consecutive SQL Errors
+    if consecutive_sql_errors >= MAX_SQL_ERRORS:
+        print(f"DEBUG [CampaignRouter] Logic: {consecutive_sql_errors} consecutive SQL errors -> FINISH")
+        clarification_msg = (
+            "抱歉，我在嘗試生成 SQL 查詢時遇到了持續的技術問題。\n\n"
+            "可能的原因：\n"
+            "- 數據庫架構已更改\n"
+            "- 查詢條件過於複雜\n"
+            "- 系統暫時無法處理此類查詢\n\n"
+            "建議您：\n"
+            "- 簡化查詢條件\n"
+            "- 嘗試查詢單一指標\n"
+            "- 聯繫系統管理員檢查數據庫狀態\n\n"
+            "我會將此問題回報以便進一步處理。"
+        )
+        return {
+            "next_action": "finish",
+            "final_response": clarification_msg,
+            "internal_thoughts": [f"Brain (Safety): {consecutive_sql_errors} consecutive SQL errors. Aborting."],
             "step_count": current_step
         }
 

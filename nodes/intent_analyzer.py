@@ -138,6 +138,10 @@ def intent_analyzer_node(state: AgentState):
     if json_match:
         try:
             json_str = json_match.group(1)
+            # Clean up malformed JSON: remove literal newlines within string values
+            # Replace newlines that appear between quotes with spaces
+            json_str = re.sub(r'"\s*\n\s*', '" ', json_str)
+            json_str = re.sub(r'\n\s*"', ' "', json_str)
             data = json.loads(json_str, strict=False)
             final_intent = UserIntent(**data)
             print("DEBUG [IntentAgent] Successfully extracted JSON via Regex.")

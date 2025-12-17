@@ -57,6 +57,16 @@ def planner_node(state: SupervisorSubState):
                      "reasoning": "Fast path: Both data sources complete."
                  }
              }
+        # Case 1b: Have MySQL data, need ClickHouse data
+        elif has_campaign_result and not has_perf_result:
+            print(f"DEBUG [SupervisorPlanner] MySQL data complete, routing to PerformanceAgent.")
+            return {
+                "draft_decision": {
+                    "next_node": "PerformanceAgent",
+                    "instructions": "Query performance metrics for the retrieved campaigns.",
+                    "reasoning": "Fast path: MySQL complete, now fetch ClickHouse performance data."
+                }
+            }
 
     # Case 2: MySQL-only query complete (needs_performance=False)
     if user_intent and not user_intent.needs_performance and has_campaign_result:
