@@ -3,13 +3,15 @@
   Description: 執行金額/認列金額（執行中或已結案）
   Data Source: pre_campaign.budget
   Status Filter: pre_campaign.status IN ('oncue', 'close') AND pre_campaign.trash = 0
-  Returns: campaign_id, execution_amount, media_name
+  Returns: campaign_id, execution_amount, media_name, client_name, agency_name
   Merge Key: campaign_id
   Parameters:
     - campaign_ids: List[int] (optional) - 指定 campaign IDs
     - client_names: List[str] (optional) - 客戶名稱過濾
+    - client_ids: List[int] (optional) - 客戶 ID 過濾
     - start_date: str (optional) - 開始日期
     - end_date: str (optional) - 結束日期
+    - limit: int (optional) - 返回筆數限制
 #}
 
 SELECT
@@ -18,6 +20,10 @@ SELECT
     -- 執行單資訊
     pc.id AS execution_id,
     pc.medianame AS media_name,
+
+    -- 客戶與代理商資訊 (用於排名分析)
+    COALESCE(c.advertiser_name, c.company) AS client_name,
+    COALESCE(ag.agencyname, 'Direct Client') AS agency_name,
 
     -- 執行金額（認列金額）- 來自執行單
     pc.budget AS execution_amount,
@@ -44,6 +50,10 @@ SELECT
     pc.closed AS closed_at
 
 FROM pre_campaign pc
+JOIN one_campaigns oc ON pc.one_campaign_id = oc.id
+JOIN cue_lists cl ON oc.cue_list_id = cl.id
+JOIN clients c ON cl.client_id = c.id
+LEFT JOIN agency ag ON cl.agency_id = ag.id
 
 WHERE 1=1
     -- 執行金額定義：執行中或已結案
@@ -58,15 +68,9 @@ WHERE 1=1
     AND c.id IN ({{ client_ids|join(',') }})
     {% endif %}
 
-    {% if client_names %}
-    AND EXISTS (
-        SELECT 1 FROM one_campaigns oc
-        JOIN cue_lists cl ON oc.cue_list_id = cl.id
-        JOIN clients c ON cl.client_id = c.id
-        WHERE oc.id = pc.one_campaign_id
-        AND (c.advertiser_name IN ({{ client_names|map('tojson')|join(',') }})
-             OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
-    )
+    {% if client_names and not client_ids %}
+    AND (c.advertiser_name IN ({{ client_names|map('tojson')|join(',') }})
+         OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
     {% endif %}
 
     {% if start_date %}
@@ -78,4 +82,4 @@ WHERE 1=1
     {% endif %}
 
 ORDER BY pc.one_campaign_id, pc.start_date DESC
-LIMIT 100
+LIMIT {{ limit|default(100) }}

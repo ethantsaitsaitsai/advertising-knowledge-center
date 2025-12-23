@@ -98,7 +98,17 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
 
    - **禁止事項**: 嚴禁在使用者已經明確回覆名稱（且該名稱在選項中存在）的情況下，再次跳出一樣的選項要求確認。
 
-2. **選擇正確的 SQL 工具 (新版模組化 Templates)**
+   **特殊情境：排名與全局查詢 (Ranking / Global Queries)**
+   - 若 System Prompt 顯示 `entity_keywords` 為空，且問題涉及「排名」、「Top X」、「總額」：
+     - **跳過實體解析** (Do not call resolve_entity)。
+     - 直接使用 SQL 工具進行廣泛查詢。
+     - **務必放大 Limit**：呼叫 `query_investment_budget` 或 `query_execution_budget` 時，請設定 `limit=5000` 以確保統計結果涵蓋完整年度數據。
+     - **分組依據**：
+       - 廣告主排名：針對 `client_name` 進行 `groupby_sum`。
+       - 代理商排名：針對 `agency_name` 進行 `groupby_sum`。
+     - **數量說明**：若最終結果少於使用者要求的數量（例如求 Top 20 但只列出 5 個），請在回應中說明「該期間僅有 5 筆符合條件的資料」。
+
+4. **資料處理 (CRITICAL!)**
 
    **基礎查詢工具**:
    - `query_campaign_basic`: 查詢活動基本資訊（客戶、活動名稱、日期、預算）
@@ -189,10 +199,11 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    - 在呼叫 `pandas_processor` 前，請檢查 Tool Output 中的 `columns` 列表。
    - **不要** 對不存在的欄位進行 GroupBy 或 Sum。例如 `campaign_basic` 結果中沒有 `format_name`，請勿嘗試對其分組。
 
-5. **最終回應**
-   - 以 Markdown 格式呈現分析結果
+5. **最終回應 (Critical)**
+   - `pandas_processor` 工具會回傳一個 `markdown` 欄位，其中包含已格式化好的表格。
+   - **請直接將該 `markdown` 字串複製到您的回應中**。
+   - **絕對不要** 嘗試閱讀 JSON `data` 欄位並自己重新手寫表格，這會導致錯位或亂碼 (Hallucination)。
    - **若 Analyst Data 中有資料，絕不可回傳空字串或「查無資料」**。
-   - 必須明確列出找到的 Campaign 列表及其數據。
 
 **當前情境:**
 - 使用者查詢: {original_query}
@@ -338,8 +349,10 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
             # Pre-process: Inject data for pandas_processor BEFORE execution
             try:
                 if tool_name == "pandas_processor" and latest_query_data and not args.get("data"):
-                    # Convert Decimal before injecting
+                    # Convert Decimal and Date before injecting
                     from decimal import Decimal
+                    from datetime import date, datetime
+                    
                     def _safe_convert(obj):
                         if isinstance(obj, dict):
                             return {k: _safe_convert(v) for k, v in obj.items()}
@@ -347,6 +360,8 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                             return [_safe_convert(item) for item in obj]
                         elif isinstance(obj, Decimal):
                             return float(obj)
+                        elif isinstance(obj, (date, datetime)):
+                            return obj.isoformat()
                         else:
                             return obj
 

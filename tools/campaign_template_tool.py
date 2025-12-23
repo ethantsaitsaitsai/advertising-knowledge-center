@@ -108,7 +108,8 @@ def query_investment_budget(
     client_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    limit: int = 100
 ) -> Dict[str, Any]:
     """
     查詢「進單/投資」金額 (Investment Budget)，包含各格式的單價、預算分配。
@@ -120,13 +121,15 @@ def query_investment_budget(
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
+        limit: 返回筆數限制 (預設 100，排名分析時建議設為 500-1000)
     """
     context = {
         "client_names": client_names,
         "client_ids": client_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
-        "end_date": end_date
+        "end_date": end_date,
+        "limit": limit
     }
     return _render_and_execute_mysql("investment_budget.sql", context)
 
@@ -136,7 +139,8 @@ def query_execution_budget(
     client_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    limit: int = 100
 ) -> Dict[str, Any]:
     """
     查詢「執行/認列」金額 (Execution Budget)，包含實際執行的媒體、金額與狀態。
@@ -148,13 +152,15 @@ def query_execution_budget(
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
+        limit: 返回筆數限制 (預設 100，排名分析時建議設為 500-1000)
     """
     context = {
         "client_names": client_names,
         "client_ids": client_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
-        "end_date": end_date
+        "end_date": end_date,
+        "limit": limit
     }
     return _render_and_execute_mysql("execution_budget.sql", context)
 
