@@ -54,6 +54,10 @@ WHERE 1=1
     AND pc.one_campaign_id IN ({{ campaign_ids|join(',') }})
     {% endif %}
 
+    {% if client_ids %}
+    AND c.id IN ({{ client_ids|join(',') }})
+    {% endif %}
+
     {% if client_names %}
     AND EXISTS (
         SELECT 1 FROM one_campaigns oc
@@ -66,11 +70,11 @@ WHERE 1=1
     {% endif %}
 
     {% if start_date %}
-    AND pc.start_date >= '{{ start_date }}'
+    AND pc.end_date >= '{{ start_date }}'
     {% endif %}
 
     {% if end_date %}
-    AND pc.end_date <= '{{ end_date }}'
+    AND pc.start_date <= '{{ end_date }}'
     {% endif %}
 
 ORDER BY pc.one_campaign_id, pc.start_date DESC

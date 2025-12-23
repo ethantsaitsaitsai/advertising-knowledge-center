@@ -103,16 +103,18 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    **基礎查詢工具**:
    - `query_campaign_basic`: 查詢活動基本資訊（客戶、活動名稱、日期、預算）
      - 適用：取得 campaign IDs、基本概覽
-     - 參數：client_names, campaign_ids, start_date, end_date
+     - 參數：client_names, client_ids, campaign_ids, start_date, end_date
+     - **重要**: 當已確認實體為 Client (ID=X) 時，請務必使用 `client_ids=[X]`，**不要**只傳名稱。
 
    **預算相關工具**:
    - `query_investment_budget`: 查詢「進單/投資」金額（格式層級明細）
      - 適用：「預算」、「進單」、「投資金額」相關問題
-     - 參數：client_names, campaign_ids, start_date, end_date
+     - 參數：client_names, client_ids, campaign_ids, start_date, end_date
+     - **重要**: 優先使用 `client_ids` 或 `campaign_ids` 進行精準過濾。
 
    - `query_execution_budget`: 查詢「執行/認列」金額（執行單層級明細）
      - 適用：「執行」、「認列」、「實際花費」相關問題
-     - 參數：client_names, campaign_ids, start_date, end_date
+     - 參數：client_names, client_ids, campaign_ids, start_date, end_date
 
    - `query_budget_details`: 查詢預算摘要（整合投資與執行金額）
      - 適用：「預算缺口」、「預算對比」分析
@@ -139,11 +141,17 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
 
 3. **判斷日期範圍 (重要)**
    - **預設範圍**:
-     - **Start Date**: {current_year}-01-01
+     - **Start Date**: {last_year}-01-01 (預設涵蓋去年與今年，避免遺漏近期活動)
      - **End Date**: {current_year}-12-31
    - **例外情況**:
      - 媒體排期常會預排至明年。若在當年查無特定活動，**請自動將 End Date 延長至明年底** (例如 {current_year}+1-12-31)。
      - 若使用者明確指定年份，則以使用者指定為準。
+
+   **⚠️ 查無資料時的處理策略 (Retry Strategy)**:
+   - 若使用 `query_campaign_basic` 查詢特定客戶但在指定日期內回傳 0 筆結果：
+     - **不要直接放棄！**
+     - 請**立刻**再次呼叫 `query_campaign_basic`，但**移除 start_date 與 end_date 參數**。
+     - 目的：確認該客戶是否在其他年份有活動資料。若有，請告知使用者「該期間無活動，但找到其他期間的紀錄...」。
 
 4. **資料處理 (CRITICAL!)**
    - SQL 工具回傳原始數據，可能包含 NULL 或重複的 entity_name
@@ -171,15 +179,20 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
 
    **合併數據策略**:
    - 使用者希望看到**一張整合的大表**，請盡可能將所有數據合併。
-   - **標準合併流程**:
-     1. 先呼叫 `query_campaign_basic` 取得 campaign_ids
-     2. 使用這些 IDs 呼叫其他工具（ad_formats, targeting_segments, budget_details 等）
-     3. 使用 `pandas_processor(operation="merge", merge_on="campaign_id")` 合併結果
+   - **標準合併流程 (Drill-Down Logic)**:
+     1. 先呼叫 `query_campaign_basic` 取得 `campaign_ids`。
+     2. **若步驟 1 有找到資料，絕對不要停止！** 你必須繼續使用這些 IDs 呼叫細節工具（如 `query_ad_formats`, `query_budget_details`, `query_performance_metrics`）。
+     3. **嚴禁**在只有 Basic Info 但缺細節時直接回答「查無資料」。你必須去查細節！
+     4. 最後使用 `pandas_processor(operation="merge", merge_on="campaign_id")` 合併結果。
+
+   **資料處理安全檢查**:
+   - 在呼叫 `pandas_processor` 前，請檢查 Tool Output 中的 `columns` 列表。
+   - **不要** 對不存在的欄位進行 GroupBy 或 Sum。例如 `campaign_basic` 結果中沒有 `format_name`，請勿嘗試對其分組。
 
 5. **最終回應**
    - 以 Markdown 格式呈現分析結果
-   - 若成功合併，展示一張大表。
-   - 若分開展示，請說明原因。
+   - **若 Analyst Data 中有資料，絕不可回傳空字串或「查無資料」**。
+   - 必須明確列出找到的 Campaign 列表及其數據。
 
 **當前情境:**
 - 使用者查詢: {original_query}
@@ -213,6 +226,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
     now = datetime.now()
     current_date = now.strftime("%Y-%m-%d")
     current_year = now.year
+    last_year = current_year - 1
 
     # Extract context from state
     routing_context = state.get("routing_context", {})
@@ -257,6 +271,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
         SystemMessage(content=ANALYST_SYSTEM_PROMPT.format(
             current_date=current_date,
             current_year=current_year,
+            last_year=last_year,
             original_query=original_query,
             entity_keywords=entity_keywords,
             time_keywords=time_keywords,

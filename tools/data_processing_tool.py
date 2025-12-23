@@ -83,8 +83,14 @@ def pandas_processor(
                 except (ValueError, TypeError):
                     pass
 
+            # Handle multiple merge columns (comma-separated)
+            if isinstance(merge_on, str) and ',' in merge_on:
+                merge_on_keys = [col.strip() for col in merge_on.split(',')]
+            else:
+                merge_on_keys = merge_on
+
             # 執行 merge
-            result_df = pd.merge(df, df2, on=merge_on, how=merge_how, suffixes=('_1', '_2'))
+            result_df = pd.merge(df, df2, on=merge_on_keys, how=merge_how, suffixes=('_1', '_2'))
 
             # 填充 merge 後的 NaN 值為 0
             numeric_cols_after_merge = result_df.select_dtypes(include=['number']).columns

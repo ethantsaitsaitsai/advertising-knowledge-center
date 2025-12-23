@@ -54,6 +54,10 @@ WHERE oc.cue_list_id = cl.id
     AND oc.id IN ({{ campaign_ids|join(',') }})
     {% endif %}
 
+    {% if client_ids %}
+    AND cl.client_id IN ({{ client_ids|join(',') }})
+    {% endif %}
+
     {% if client_names %}
     AND EXISTS (
         SELECT 1 FROM clients c
@@ -64,11 +68,11 @@ WHERE oc.cue_list_id = cl.id
     {% endif %}
 
     {% if start_date %}
-    AND cl.start_date >= '{{ start_date }}'
+    AND cl.end_date >= '{{ start_date }}'
     {% endif %}
 
     {% if end_date %}
-    AND cl.end_date <= '{{ end_date }}'
+    AND cl.start_date <= '{{ end_date }}'
     {% endif %}
 
 ORDER BY oc.id, aft.name

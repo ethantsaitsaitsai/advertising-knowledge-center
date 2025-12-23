@@ -61,6 +61,7 @@ def _render_and_execute_mysql(template_name: str, context: Dict[str, Any]) -> Di
 @tool
 def query_campaign_basic(
     client_names: Optional[List[str]] = None,
+    client_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -70,12 +71,14 @@ def query_campaign_basic(
     
     Args:
         client_names: 客戶/廣告主名稱列表 (例如 ['悠遊卡'])
+        client_ids: 客戶 ID 列表 (精準搜尋用)
         campaign_ids: 直接指定 Campaign IDs (若已知)
         start_date: 開始日期過濾 (YYYY-MM-DD)
         end_date: 結束日期過濾 (YYYY-MM-DD)
     """
     context = {
         "client_names": client_names,
+        "client_ids": client_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date
@@ -102,6 +105,7 @@ def query_budget_details(
 @tool
 def query_investment_budget(
     client_names: Optional[List[str]] = None,
+    client_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -112,12 +116,14 @@ def query_investment_budget(
     
     Args:
         client_names: 客戶名稱列表
+        client_ids: 客戶 ID 列表
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
     """
     context = {
         "client_names": client_names,
+        "client_ids": client_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date
@@ -127,6 +133,7 @@ def query_investment_budget(
 @tool
 def query_execution_budget(
     client_names: Optional[List[str]] = None,
+    client_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -137,12 +144,14 @@ def query_execution_budget(
     
     Args:
         client_names: 客戶名稱列表
+        client_ids: 客戶 ID 列表
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
     """
     context = {
         "client_names": client_names,
+        "client_ids": client_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date

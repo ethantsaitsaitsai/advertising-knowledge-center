@@ -6,6 +6,7 @@
   Parameters:
     - campaign_ids: List[int] (optional) - 指定 campaign IDs
     - client_names: List[str] (optional) - 客戶名稱過濾
+    - client_ids: List[int] (optional) - 客戶 ID 過濾
     - start_date: str (optional) - 開始日期過濾
     - end_date: str (optional) - 結束日期過濾
 #}
@@ -21,37 +22,42 @@ SELECT
     oc.budget,
     oc.status AS campaign_status,
     cl.status AS contract_status,
-    -- 優化目標 ID (沒有 objectives 表，只返回 ID)
     oc.objective_id,
-    -- 代理商資訊
-    ag.agencyname AS agency_name
+    -- 使用 LEFT JOIN 確保沒有代理商時也能查到
+    COALESCE(ag.agencyname, 'Direct Client') AS agency_name
 
-FROM one_campaigns oc, cue_lists cl, clients c, agency ag
+FROM one_campaigns oc
+JOIN cue_lists cl ON oc.cue_list_id = cl.id
+JOIN clients c ON cl.client_id = c.id
+LEFT JOIN agency ag ON cl.agency_id = ag.id
 
-WHERE oc.cue_list_id = cl.id
-    AND cl.client_id = c.id
-    AND cl.agency_id = ag.id
+WHERE 1=1
+    -- 排除已刪除的
+    AND oc.status != 'deleted'
+    AND oc.is_test = 0
+    -- 放寬合約狀態限制，確保能找到歷史資料
+    -- AND cl.status IN ('converted', 'requested')
 
     {% if campaign_ids %}
     AND oc.id IN ({{ campaign_ids|join(',') }})
     {% endif %}
 
-    {% if client_names %}
+    {% if client_ids %}
+    AND c.id IN ({{ client_ids|join(',') }})
+    {% endif %}
+
+    {% if client_names and not client_ids %}
     AND (c.advertiser_name IN ({{ client_names|map('tojson')|join(',') }})
          OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
     {% endif %}
 
     {% if start_date %}
-    AND oc.start_date >= '{{ start_date }}'
+    AND oc.end_date >= '{{ start_date }}'
     {% endif %}
 
     {% if end_date %}
-    AND oc.end_date <= '{{ end_date }}'
+    AND oc.start_date <= '{{ end_date }}'
     {% endif %}
 
-    -- 排除測試單和已刪除的
-    AND oc.is_test = 0
-    AND oc.status != 'deleted'
-    AND cl.status IN ('converted', 'requested')
-
 ORDER BY oc.start_date DESC
+LIMIT 100
