@@ -72,7 +72,20 @@ WHERE 1=1
     AND cl.agency_id IN ({{ agency_ids|join(',') }})
     {% endif %}
 
-    {% if client_names %}
+    {% if industry_ids or sub_industry_ids %}
+    AND oc.id IN (
+        SELECT one_campaign_id FROM pre_campaign pc 
+        WHERE 1=1
+        {% if industry_ids %}
+        AND pc.category_id IN ({{ industry_ids|join(',') }})
+        {% endif %}
+        {% if sub_industry_ids %}
+        AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
+        {% endif %}
+    )
+    {% endif %}
+
+    {% if client_names and not client_ids %}
     AND (c.advertiser_name IN ({{ client_names|map('tojson')|join(',') }})
          OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
     {% endif %}

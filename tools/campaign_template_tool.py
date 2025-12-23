@@ -107,6 +107,8 @@ def query_investment_budget(
     client_names: Optional[List[str]] = None,
     client_ids: Optional[List[int]] = None,
     agency_ids: Optional[List[int]] = None,
+    industry_ids: Optional[List[int]] = None,
+    sub_industry_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -120,6 +122,8 @@ def query_investment_budget(
         client_names: 客戶名稱列表
         client_ids: 客戶 ID 列表
         agency_ids: 代理商 ID 列表
+        industry_ids: 產業類別 (Category) ID 列表
+        sub_industry_ids: 產業子類別 (Sub-Category) ID 列表
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
@@ -129,6 +133,8 @@ def query_investment_budget(
         "client_names": client_names,
         "client_ids": client_ids,
         "agency_ids": agency_ids,
+        "industry_ids": industry_ids,
+        "sub_industry_ids": sub_industry_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date,
@@ -141,6 +147,8 @@ def query_execution_budget(
     client_names: Optional[List[str]] = None,
     client_ids: Optional[List[int]] = None,
     agency_ids: Optional[List[int]] = None,
+    industry_ids: Optional[List[int]] = None,
+    sub_industry_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -154,6 +162,8 @@ def query_execution_budget(
         client_names: 客戶名稱列表
         client_ids: 客戶 ID 列表
         agency_ids: 代理商 ID 列表
+        industry_ids: 產業類別 (Category) ID 列表
+        sub_industry_ids: 產業子類別 (Sub-Category) ID 列表
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
@@ -163,6 +173,8 @@ def query_execution_budget(
         "client_names": client_names,
         "client_ids": client_ids,
         "agency_ids": agency_ids,
+        "industry_ids": industry_ids,
+        "sub_industry_ids": sub_industry_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date,
@@ -210,6 +222,8 @@ def execute_sql_template(
     campaign_ids: Optional[List[int]] = None,
     client_names: Optional[List[str]] = None,
     agency_ids: Optional[List[int]] = None,
+    industry_ids: Optional[List[int]] = None,
+    sub_industry_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = 1000
@@ -229,6 +243,8 @@ def execute_sql_template(
         campaign_ids: Campaign IDs
         client_names: 客戶名稱
         agency_ids: 代理商 ID 列表
+        industry_ids: 產業類別 (Category) ID 列表
+        sub_industry_ids: 產業子類別 (Sub-Category) ID 列表
         start_date: 開始日期
         end_date: 結束日期
         limit: 返回筆數限制 (預設 1000)
@@ -237,6 +253,8 @@ def execute_sql_template(
         "campaign_ids": campaign_ids,
         "client_names": client_names,
         "agency_ids": agency_ids,
+        "industry_ids": industry_ids,
+        "sub_industry_ids": sub_industry_ids,
         "start_date": start_date,
         "end_date": end_date,
         "limit": limit

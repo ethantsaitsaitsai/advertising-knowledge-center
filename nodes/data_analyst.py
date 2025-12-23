@@ -56,7 +56,7 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    - 使用 `resolve_entity(keyword="...")` 進行實體查詢
    - **參數設定原則**:
      - **預設情況**: **不要** 設定 `target_types` (保持預設值 None)。這會同時搜尋 Campaign, Client, Agency, Brand 等所有表格。
-     - **例外情況**: 只有當使用者明確指定類型時（例如：「查詢**代理商**亞思博」、「**客戶**悠遊卡」），才設定 `target_types=["agency"]` 或 `target_types=["client"]`。
+     - **例外情況**: 只有當使用者明確指定類型時（例如：「查詢**代理商**亞思博」、「**客戶**悠遊卡」、「**產業**美妝」），才設定 `target_types=["agency"]` 或 `target_types=["industry"]`。
      - **原因**: 若使用者只說「悠遊卡」，它可能是客戶名也可能是活動名。必須搜尋全部，若總結果只有 1 筆才會自動匹配。
    - 工具會自動執行：LIKE 查詢 → 使用者確認 → RAG 向量搜尋
 
@@ -65,6 +65,7 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    a) `status: "exact_match"` - 找到唯一匹配
       - 直接使用返回的實體 ID 繼續查詢
       - 例如: `{{"status": "exact_match", "data": {{"id": 123, "name": "悠遊卡", "type": "client"}}}}`
+      - 若 type 為 `industry` 或 `sub_industry`，請將 ID 分別放入 `industry_ids` 或 `sub_industry_ids` 參數中。
 
    b) `status: "needs_confirmation"` - 找到多個匹配
       - 向使用者展示選項清單
@@ -96,6 +97,13 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
      - **不要** 在第一個關鍵字需要確認時就直接停止，請先解析完所有關鍵字。
      - 若有多個實體需要確認，請在同一次回應中列出所有的確認選項。
      - 若部分實體已確認 (Exact Match)，部分需要確認，請暫存已確認的 IDs，並針對模糊的項目提問。
+
+   **產業別查詢優化 (Industry Aggregation Rule)**:
+   - 當使用者查詢產業 (如「美妝」、「遊戲」) 時：
+     - 若 `resolve_entity` 回傳多個相關的產業類別 (包含 `industry` 與 `sub_industry`)，且名稱與關鍵字高度相關。
+     - **不要要求使用者逐一確認**。
+     - 請**主動合併所有相關 ID** (例如同時傳入 `industry_ids=[2]` 與 `sub_industry_ids=[26, 16]`)。
+     - 目的：確保統計結果涵蓋該產業的所有相關標籤，並提供最完整的總預算。
 
    - **規則 2: 編號選擇**
      - 若使用者回覆數字 (如 "1")，對應選項清單的編號。
@@ -133,12 +141,13 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    **預算相關工具**:
    - `query_investment_budget`: 查詢「進單/投資」金額（格式層級明細）
      - 適用：「預算」、「進單」、「投資金額」相關問題
-     - 參數：client_names, client_ids, campaign_ids, start_date, end_date
+     - 參數：client_names, client_ids, industry_ids, sub_industry_ids, campaign_ids, start_date, end_date
      - **重要**: 優先使用 `client_ids` 或 `campaign_ids` 進行精準過濾。
+     - **重要**: 若涉及產業查詢，請務必將相關的大類 ID (`industry_ids`) 與子類 ID (`sub_industry_ids`) **合併在同一次工具調用中**，不要分開多次調用。
 
    - `query_execution_budget`: 查詢「執行/認列」金額（執行單層級明細）
      - 適用：「執行」、「認列」、「實際花費」相關問題
-     - 參數：client_names, client_ids, campaign_ids, start_date, end_date
+     - 參數：client_names, client_ids, industry_ids, sub_industry_ids, campaign_ids, start_date, end_date
 
    - `query_budget_details`: 查詢預算摘要（整合投資與執行金額）
      - 適用：「預算缺口」、「預算對比」分析
@@ -162,6 +171,7 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    - `execute_sql_template`: 通用模板執行器
      - 適用：media_placements.sql, product_lines.sql, contract_kpis.sql, execution_status.sql
      - **重要**: 若使用者詢問「**廣告格式與執行金額**」(按格式分出的認列金額)，請優先使用 `media_placements.sql`。該模板包含 `ad_format_name` 與執行層級的 `budget`。
+     - 若需過濾產業，可使用 `industry_ids` (Category) 或 `sub_industry_ids` (Sub-Category) 參數。
      - 只在上述專用工具不適用時才使用
 
 3. **判斷日期範圍 (重要)**
@@ -415,6 +425,8 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                                 "brand": "🏷️ 品牌/產品 (Brands)",
                                 "campaign": "📢 執行活動 (Campaigns)",
                                 "contract": "📄 合約/排期 (Contracts)",
+                                "industry": "🏭 產業類別 (Industry)",
+                                "sub_industry": "🏭 產業子類別 (Sub-Industry)",
                                 "other": "❓ 其他"
                             }
                             
@@ -422,7 +434,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                             global_idx = 1
                             
                             # 按照優先順序顯示類別
-                            for t in ["client", "agency", "brand", "campaign", "contract", "other"]:
+                            for t in ["industry", "sub_industry", "client", "agency", "brand", "campaign", "contract", "other"]:
                                 if t in grouped:
                                     formatted_lines.append(f"\n**{type_labels.get(t, t)}**")
                                     for item in grouped[t]:

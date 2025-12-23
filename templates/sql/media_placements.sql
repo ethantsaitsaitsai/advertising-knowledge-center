@@ -34,6 +34,7 @@ SELECT
     pcd.enable
 
 FROM pre_campaign_detail pcd
+JOIN pre_campaign pc ON pcd.pre_campaign_id = pc.id
 LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
 LEFT JOIN pricing_models pm ON pcd.pricing_model_id = pm.id
 
@@ -41,6 +42,14 @@ WHERE pcd.enable = 1
 
     {% if campaign_ids %}
     AND pcd.one_campaign_id IN ({{ campaign_ids|join(',') }})
+    {% endif %}
+
+    {% if industry_ids %}
+    AND pc.category_id IN ({{ industry_ids|join(',') }})
+    {% endif %}
+
+    {% if sub_industry_ids %}
+    AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
     {% endif %}
 
 ORDER BY pcd.one_campaign_id DESC, pcd.pid

@@ -45,6 +45,22 @@ SEARCH_CONFIGS = [
         "name_col": "campaign_name",
         "desc": "合約/排期名稱",
         "meta_cols": ["start_date", "status"]
+    },
+    {
+        "type": "industry",
+        "table": "pre_campaign_categories",
+        "id_col": "id",
+        "name_col": "name",
+        "desc": "產業類別 (大類)",
+        "meta_cols": []
+    },
+    {
+        "type": "sub_industry",
+        "table": "pre_campaign_sub_categories",
+        "id_col": "id",
+        "name_col": "name",
+        "desc": "產業子類別",
+        "meta_cols": []
     }
 ]
 

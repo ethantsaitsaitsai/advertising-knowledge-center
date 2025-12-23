@@ -214,8 +214,14 @@ def pandas_processor(
 
         # 3. 格式化數值用於展示 (加上千分位)
         display_df = result_df.copy()
+        
+        # 數值格式化
         for col in display_df.select_dtypes(include=['number']).columns:
             display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
+            
+        # 欄位名稱格式化 (snake_case -> Title Case)
+        # 目的: 提升可讀性，並降低 LLM 想要自己「修復」表格的慾望
+        display_df.columns = [c.replace('_', ' ').title() for c in display_df.columns]
 
         markdown_table = display_df.to_markdown(index=False)
 

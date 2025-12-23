@@ -92,6 +92,18 @@ def fetch_data_from_mysql():
                 "sql_id": row[1]
             })
 
+        # 7. Sub-Industries
+        print("📥 Fetching Sub-Industries (pre_campaign_sub_categories.name)...")
+        result = connection.execute(text("SELECT DISTINCT name, id FROM pre_campaign_sub_categories WHERE name IS NOT NULL AND name != ''"))
+        for row in result:
+            entities.append({
+                "text": row[0],
+                "type": "sub_industries",
+                "table": "pre_campaign_sub_categories",
+                "column": "name",
+                "sql_id": row[1]
+            })
+
     print(f"✅ Total entities fetched: {len(entities)}")
     return entities
 
