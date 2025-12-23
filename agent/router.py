@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from config.llm import llm
-from schemas.state import AgentState
+from agent.state import AgentState
 
 INTENT_ROUTER_PROMPT = """你是 AKC 智能助手的意圖路由器 (Intent Router)。
 

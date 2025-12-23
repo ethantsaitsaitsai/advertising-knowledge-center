@@ -3,7 +3,7 @@ version: '3.8'
 services:
   backend:
     build: .
-    command: uv run server.py
+    command: uv run backend/server.py
     ports:
       - "8000:8000"
     env_file: .env  # 載入您的環境變數 (GCP key, DB config)
@@ -13,7 +13,7 @@ services:
 
   frontend:
     build: .
-    command: uv run chainlit run ui.py --port 8001 --host 0.0.0.0
+    command: uv run chainlit run frontend/ui.py --port 8001 --host 0.0.0.0
     ports:
       - "8001:8001"
     environment:

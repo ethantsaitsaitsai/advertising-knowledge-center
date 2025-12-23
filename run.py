@@ -1,18 +1,18 @@
 """
 AKC Framework 3.0 - Interactive CLI Entry Point
 """
+from typing import Dict, Any, List
 from langchain_core.messages import HumanMessage
-from graph.graph import app
 from dotenv import load_dotenv
-from schemas.state import AgentState
 import uuid
 
+# Load environment variables
+load_dotenv()
 
-def main():
-    """
-    Main entry point for the AKC Framework 3.0 data analyst agent.
-    """
-    load_dotenv()
+from agent.graph import app
+from agent.state import AgentState
+
+def run_cli():
 
     # Initialize state with new simplified schema
     state: AgentState = {

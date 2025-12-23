@@ -8,9 +8,9 @@ No more Supervisor-Worker pattern, no SubGraphs.
 All business logic is in Python SQL Templates and Pandas processing.
 """
 from langgraph.graph import StateGraph, END, START
-from schemas.state import AgentState
-from nodes.intent_router import intent_router_node
-from nodes.data_analyst import data_analyst_node
+from agent.state import AgentState
+from agent.router import intent_router_node
+from agent.analyst import data_analyst_node
 from langchain_core.messages import HumanMessage, BaseMessage
 from typing import Dict, Any
 

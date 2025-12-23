@@ -1,7 +1,7 @@
 # server.py
 from fastapi import FastAPI
 from langserve import add_routes
-from graph.graph import app as langgraph_app  # 重命名避免衝突
+from agent.graph import app as langgraph_app
 import uvicorn
 import os
 

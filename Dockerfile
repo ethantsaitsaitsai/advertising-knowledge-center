@@ -41,4 +41,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8000 8001
 
 # 預設指令
-CMD ["uv", "run", "server.py"]
+CMD ["uv", "run", "backend/server.py"]

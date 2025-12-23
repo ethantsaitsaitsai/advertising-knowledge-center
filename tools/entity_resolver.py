@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 from sqlalchemy import text
 from config.database import get_mysql_db
-from utils.rag_service import RagService
+from services.rag_service import RagService
 
 # 定義搜尋範圍配置
 SEARCH_CONFIGS = [

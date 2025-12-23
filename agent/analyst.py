@@ -9,7 +9,7 @@ This agent handles all data query requests using:
 from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from config.llm import llm
-from schemas.state import AgentState
+from agent.state import AgentState
 from tools.entity_resolver import resolve_entity
 from tools.campaign_template_tool import (
     query_campaign_basic,
