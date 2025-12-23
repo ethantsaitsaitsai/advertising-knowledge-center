@@ -10,8 +10,10 @@ wheels/
 .venv
 
 # LLM
+docs/
 .gemini
 .claude
+.claudeignore
 .claude-docs
 CLAUDE.md
 GEMINI.md
@@ -21,3 +23,6 @@ GEMINI.md
 .env
 .DS_Store
 dev.sh
+
+# Tests
+tests/

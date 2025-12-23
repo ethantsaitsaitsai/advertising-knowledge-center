@@ -1,45 +1,88 @@
+"""
+AKC Framework 3.0 - Main Graph
+
+Simplified architecture:
+User Input → Intent Router → Data Analyst Agent → Output
+
+No more Supervisor-Worker pattern, no SubGraphs.
+All business logic is in Python SQL Templates and Pandas processing.
+"""
 from langgraph.graph import StateGraph, END, START
 from schemas.state import AgentState
-from nodes.supervisor import supervisor_node
-from nodes.campaign_node_wrapper import campaign_node
-from nodes.performance_node_wrapper import performance_node
-from nodes.intent_analyzer import intent_analyzer_node
-from nodes.response_synthesizer import response_synthesizer_node
+from nodes.intent_router import intent_router_node
+from nodes.data_analyst import data_analyst_node
+from langchain_core.messages import HumanMessage, BaseMessage
+from typing import Dict, Any
 
-# Define the graph
+
+def input_adapter_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Input Adapter: Ensures messages are in correct format for LangGraph Studio.
+
+    Handles both CLI and Studio inputs:
+    - CLI: messages already in HumanMessage format
+    - Studio: may need conversion from dict or string format
+    """
+    messages = state.get("messages", [])
+
+    print(f"DEBUG [InputAdapter] Received {len(messages)} messages")
+
+    # If messages is empty, check for 'input' field (LangGraph Studio format)
+    if not messages and "input" in state:
+        user_input = state["input"]
+        print(f"DEBUG [InputAdapter] Converting 'input' field to HumanMessage: {user_input}")
+        return {"messages": [HumanMessage(content=str(user_input))]}
+
+    # Convert dict messages to proper Message objects if needed
+    converted_messages = []
+    for msg in messages:
+        if isinstance(msg, BaseMessage):
+            converted_messages.append(msg)
+        elif isinstance(msg, dict):
+            msg_type = msg.get("type", "human")
+            content = msg.get("content", "")
+            if msg_type == "human":
+                converted_messages.append(HumanMessage(content=content))
+                print(f"DEBUG [InputAdapter] Converted dict to HumanMessage: {content[:50]}...")
+            else:
+                # Keep other message types as-is (shouldn't happen at input)
+                converted_messages.append(msg)
+        else:
+            # If it's a string, treat as human message
+            converted_messages.append(HumanMessage(content=str(msg)))
+            print(f"DEBUG [InputAdapter] Converted string to HumanMessage: {str(msg)[:50]}...")
+
+    if converted_messages != messages:
+        return {"messages": converted_messages}
+    else:
+        return {}
+
+
+# Define the workflow
 workflow = StateGraph(AgentState)
 
 # Add Nodes
-workflow.add_node("IntentAnalyzer", intent_analyzer_node)
-workflow.add_node("Supervisor", supervisor_node) # Wraps the SubGraph
-workflow.add_node("CampaignAgent", campaign_node)
-workflow.add_node("PerformanceAgent", performance_node)
-workflow.add_node("ResponseSynthesizer", response_synthesizer_node) 
+workflow.add_node("InputAdapter", input_adapter_node)
+workflow.add_node("IntentRouter", intent_router_node)
+workflow.add_node("DataAnalyst", data_analyst_node)
 
 # Add Edges
-workflow.add_edge(START, "IntentAnalyzer")
-workflow.add_edge("IntentAnalyzer", "Supervisor")
+# User input → Input Adapter → Intent Router
+workflow.add_edge(START, "InputAdapter")
+workflow.add_edge("InputAdapter", "IntentRouter")
 
-# Supervisor Routing
-# The decision comes from the result of the SubGraph
+# Intent Router → Conditional routing
 workflow.add_conditional_edges(
-    "Supervisor",
-    lambda x: x["next"],
+    "IntentRouter",
+    lambda x: x.get("next", "END"),
     {
-        "CampaignAgent": "CampaignAgent",
-        "PerformanceAgent": "PerformanceAgent",
-        "ResponseSynthesizer": "ResponseSynthesizer",
-        "IntentAnalyzer": "IntentAnalyzer",  # For clarification response re-analysis
-        "FINISH": END
+        "DataAnalyst": "DataAnalyst",
+        "END": END
     }
 )
 
-# Workers return to Supervisor (Loop for next step)
-workflow.add_edge("CampaignAgent", "Supervisor")
-workflow.add_edge("PerformanceAgent", "Supervisor")
+# Data Analyst → END (always terminates after analysis)
+workflow.add_edge("DataAnalyst", END)
 
-# Synthesizer ends the flow
-workflow.add_edge("ResponseSynthesizer", END)
-
-# Compile
+# Compile the graph
 app = workflow.compile()

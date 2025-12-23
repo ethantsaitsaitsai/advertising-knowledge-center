@@ -1,30 +1,28 @@
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from graph.graph import app  # Rename to app
+"""
+AKC Framework 3.0 - Interactive CLI Entry Point
+"""
+from langchain_core.messages import HumanMessage
+from graph.graph import app
 from dotenv import load_dotenv
-from schemas.state import AgentState as HierarchicalAgentState  # Fixed import
-from langsmith import uuid7  # Import uuid7
-import uuid  # For uuid4
+from schemas.state import AgentState
+import uuid
 
 
 def main():
     """
-    Main entry point for the data retrieval agent.
+    Main entry point for the AKC Framework 3.0 data analyst agent.
     """
     load_dotenv()
 
-    state: HierarchicalAgentState = {
+    # Initialize state with new simplified schema
+    state: AgentState = {
         "messages": [],
-        "next": "IntentAnalyzer",  # Explicitly set initial next step, though START edge handles it
-        "supervisor_instructions": "",
-        "user_intent": None,
-        "campaign_data": None,
-        "performance_data": None,
-        "extracted_filters": {},
-        "analysis_needs": {},
-        "clarification_pending": False,
     }
 
-    thread_id = str(uuid.uuid4())  # Generate a single thread_id for the conversation
+    thread_id = str(uuid.uuid4())  # Generate a thread ID for the conversation
+
+    print("=== AKC Framework 3.0 - Data Analyst Agent ===")
+    print("請輸入您的查詢，或輸入 'exit' 離開\n")
 
     while True:
         user_input = input("您: ")
@@ -32,35 +30,27 @@ def main():
             print("正在離開...")
             break
 
+        # Add user message to state
         state["messages"].append(HumanMessage(content=user_input))
 
-        # The hierarchical graph always starts at "Supervisor"
+        # Invoke the graph (starts from IntentRouter via START edge)
         final_state = app.invoke(state, {"configurable": {"thread_id": thread_id}})
 
+        # Update state for next iteration
         state = final_state
 
-        print("--- Agent Response ---")
-        if state["messages"]:
+        # Display agent response
+        print("\n--- Agent Response ---")
+        if state.get("messages"):
             last_message = state["messages"][-1]
             content = last_message.content
 
-            # Debug: Print raw structure to understand why part is missing
-            # print(f"DEBUG [Run] Content Type: {type(content)}")
-            # if isinstance(content, list):
-            #     print(f"DEBUG [Run] List Length: {len(content)}")
-            #     for i, item in enumerate(content):
-            #         print(f"DEBUG [Run] Item {i} type: {type(item)}")
-
+            # Handle different content formats (string or list)
             if isinstance(content, list):
                 full_text = ""
-                for i, block in enumerate(content):
-                    # Debug:
-                    # print(f"DEBUG [Run] Block {i} Type: {type(block)}")
-                    # print(f"DEBUG [Run] Block {i} Content: {block}")
-
+                for block in content:
                     if isinstance(block, dict):
-                        if "text" in block:
-                            full_text += block["text"]
+                        full_text += block.get("text", "")
                     elif isinstance(block, str):
                         full_text += block
                     else:
@@ -70,6 +60,8 @@ def main():
                 print(content)
         else:
             print("沒有訊息回傳。")
+
+        print()  # Empty line for readability
 
 
 if __name__ == "__main__":

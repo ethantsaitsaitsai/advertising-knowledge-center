@@ -1,0 +1,452 @@
+# SQL Template 索引與元數據
+# Agent 可根據意圖關鍵字自動選擇合適的 templates
+
+templates:
+  campaign_basic:
+    file: campaign_basic.sql
+    description: 活動基本資訊（客戶、活動名稱、日期、預算）
+    keywords:
+      - 基本資訊
+      - 活動名稱
+      - 客戶
+      - 代理商
+      - 走期
+      - 日期
+      - 優化目標
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - client_name
+      - brand
+      - contract_name
+      - campaign_name
+      - start_date
+      - end_date
+      - budget
+      - campaign_status
+      - objective_name
+      - agency_name
+    required_params: []
+    optional_params:
+      - campaign_ids
+      - client_names
+      - start_date
+      - end_date
+    priority: 1  # 通常是必選
+    dependencies: []
+
+  ad_formats:
+    file: ad_formats.sql
+    description: 廣告格式明細（從合約層級）
+    keywords:
+      - 格式
+      - 廣告形式
+      - 秒數
+      - 影片長度
+      - 平台
+      - PC
+      - Mobile
+      - App
+      - In-Stream
+      - Out-Stream
+      - Banner
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - format_name
+      - format_type_id
+      - video_seconds
+      - platform
+      - frequency_cap
+      - media_name
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 2
+    dependencies:
+      - campaign_basic  # 建議先執行 campaign_basic 取得 campaign_ids
+
+  targeting_segments:
+    file: targeting_segments.sql
+    description: 數據鎖定 / 受眾標籤設定
+    keywords:
+      - 數據鎖定
+      - 受眾
+      - 標籤
+      - TA
+      - 目標客群
+      - Segment
+      - 鎖定條件
+      - 人口統計
+      - 興趣
+      - 行為
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - segment_name
+      - segment_en_name
+      - segment_category
+      - audience_size
+      - logic_type
+      - data_source
+      - lookback_days
+      - update_type
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 2
+    dependencies:
+      - campaign_basic
+    notes: 一個 campaign 可能有多個受眾標籤，merge 後需要 groupby 聚合
+
+  media_placements:
+    file: media_placements.sql
+    description: 投放媒體與版位明細（執行層級）
+    keywords:
+      - 媒體
+      - 版位
+      - Placement
+      - 投放位置
+      - 媒體名稱
+      - 廣告版位
+    merge_key: campaign_id
+    secondary_key: placement_id  # 可用於 join ClickHouse performance data
+    returns:
+      - campaign_id
+      - placement_id
+      - pid
+      - pid_name
+      - media_id
+      - media_name
+      - ad_type
+      - ad_format_name
+      - pricing_model
+      - unit_price
+      - budget
+      - target_impressions
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 2
+    dependencies:
+      - campaign_basic
+    notes: L4 層級資料，一個 campaign 對應多個 placements
+
+  product_lines:
+    file: product_lines.sql
+    description: 產品線與購買方式
+    keywords:
+      - 產品線
+      - 購買方式
+      - 保量
+      - 競價
+      - 包版
+      - Reserved
+      - Bidding
+      - Sponsorship
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - product_line_name
+      - product_line_en_name
+      - purchase_way
+      - purchase_way_desc
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 3
+    dependencies:
+      - campaign_basic
+
+  investment_budget:
+    file: investment_budget.sql
+    description: 進單金額/投資金額（委刊有記錄且成功拋轉）
+    keywords:
+      - 進單金額
+      - 投資金額
+      - 投資量
+      - 委刊預算
+      - 合約預算
+      - 應收帳款
+      - AR
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - format_name
+      - investment_amount
+      - investment_gift
+      - pricing_model
+      - unit_price
+      - guaranteed_volume
+      - estimated_gross_margin
+    required_params: []
+    optional_params:
+      - campaign_ids
+      - client_names
+      - start_date
+      - end_date
+    priority: 2
+    dependencies:
+      - campaign_basic
+    notes: 格式層級明細，來自 cue_list_budgets.budget，過濾 status IN ('converted', 'requested')
+
+  execution_budget:
+    file: execution_budget.sql
+    description: 執行金額/認列金額（執行中或已結案）
+    keywords:
+      - 執行金額
+      - 認列金額
+      - 營收認列
+      - 實際執行
+      - 消耗預算
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - execution_id
+      - media_name
+      - execution_amount
+      - execution_gift
+      - execution_status
+      - target_plays
+      - target_reach
+    required_params: []
+    optional_params:
+      - campaign_ids
+      - client_names
+      - start_date
+      - end_date
+    priority: 2
+    dependencies:
+      - campaign_basic
+    notes: 執行單層級明細，來自 pre_campaign.budget，過濾 status IN ('oncue', 'close')
+
+  budget_details:
+    file: budget_details.sql
+    description: 預算摘要（整合投資金額與執行金額的總覽）
+    keywords:
+      - 預算摘要
+      - 預算總覽
+      - 預算缺口
+      - 投資執行對比
+      - 外購
+      - 成本
+      - 毛利
+      - Budget
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - contract_total_budget
+      - contract_external_budget
+      - material_fee
+      - contract_onead_gift
+      - contract_external_gift
+      - campaign_budget
+      - currency_id
+      - exchange_rate
+      - total_investment_amount
+      - total_investment_gift
+      - total_execution_amount
+      - total_execution_gift
+      - budget_gap
+      - gross_type
+      - gsp_type
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 2
+    dependencies:
+      - campaign_basic
+    notes: 包含 L1/L2/L3 三個層級的預算，注意不可直接加總
+
+  contract_kpis:
+    file: contract_kpis.sql
+    description: 合約承諾 KPI（CTR, VTR, CVR, ER 的上下限）
+    keywords:
+      - 成效
+      - KPI
+      - 保證
+      - 承諾
+      - CTR
+      - VTR
+      - CVR
+      - ER
+      - 點擊率
+      - 觀看率
+      - 轉換率
+      - 互動率
+      - 績效
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - format_name
+      - ctr_lower_bound
+      - ctr_upper_bound
+      - vtr_lower_bound
+      - vtr_upper_bound
+      - cvr_lower_bound
+      - cvr_upper_bound
+      - er_lower_bound
+      - er_upper_bound
+      - guaranteed_count
+      - pricing_model
+      - unit_price
+      - estimated_gross_margin
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 2
+    dependencies:
+      - campaign_basic
+    notes: 同一個 campaign 可能有多個格式，每個格式有不同的 KPI
+
+  execution_status:
+    file: execution_status.sql
+    description: 執行狀態與投放控制設定
+    keywords:
+      - 狀態
+      - 投放狀態
+      - 執行狀態
+      - 優先權
+      - 頻率控制
+      - 投放策略
+      - 加速投放
+      - 黑名單
+      - 白名單
+      - 裝置鎖定
+      - 天氣鎖定
+    merge_key: campaign_id
+    returns:
+      - campaign_id
+      - execution_id
+      - status
+      - status_desc
+      - priority
+      - frequency_cap
+      - delivery_strategy
+      - delivery_strategy_desc
+      - publisher_speed
+      - inventory_types
+      - url_filter_type
+      - target_devices
+      - weather_conditions
+      - execution_start_date
+      - execution_end_date
+    required_params:
+      - campaign_ids
+    optional_params: []
+    priority: 3
+    dependencies:
+      - campaign_basic
+    notes: L3 執行層級設定
+
+# 使用範例組合 (Use Case Combinations)
+use_cases:
+  basic_overview:
+    description: 活動基本概覽
+    templates:
+      - campaign_basic
+      - budget_details
+
+  format_analysis:
+    description: 格式分析（格式 + 投資金額）
+    templates:
+      - campaign_basic
+      - ad_formats
+      - budget_details
+
+  targeting_analysis:
+    description: 數據鎖定分析
+    templates:
+      - campaign_basic
+      - targeting_segments
+
+  performance_commitment:
+    description: 成效承諾分析
+    templates:
+      - campaign_basic
+      - ad_formats
+      - contract_kpis
+
+  media_distribution:
+    description: 媒體分布分析
+    templates:
+      - campaign_basic
+      - media_placements
+      - budget_details
+
+  comprehensive_report:
+    description: 完整報告（所有維度）
+    templates:
+      - campaign_basic
+      - ad_formats
+      - targeting_segments
+      - media_placements
+      - product_lines
+      - budget_details
+      - contract_kpis
+      - execution_status
+
+# Agent 選擇邏輯建議
+selection_rules:
+  - rule: 如果查詢包含「格式」關鍵字
+    action: 選擇 ad_formats
+  - rule: 如果查詢包含「數據鎖定」、「受眾」、「TA」
+    action: 選擇 targeting_segments
+  - rule: 如果查詢包含「預算」、「投資」、「金額」、「花費」
+    action: 選擇 budget_details
+  - rule: 如果查詢包含「成效」、「KPI」、「保證」、「CTR」、「VTR」
+    action: 選擇 contract_kpis
+  - rule: 如果查詢包含「媒體」、「版位」、「Placement」
+    action: 選擇 media_placements
+  - rule: 如果查詢包含「產品線」、「購買方式」
+    action: 選擇 product_lines
+  - rule: 如果查詢包含「狀態」、「執行」、「投放」
+    action: 選擇 execution_status
+  - rule: 預設情況（無明確關鍵字）
+    action: 至少選擇 campaign_basic
+
+# 範例查詢對應
+example_queries:
+  - query: "悠遊卡投遞的格式、成效、數據鎖定，格式投資金額"
+    selected_templates:
+      - campaign_basic
+      - ad_formats
+      - targeting_segments
+      - budget_details
+      - contract_kpis
+    reasoning: |
+      - "格式" → ad_formats
+      - "成效" → contract_kpis
+      - "數據鎖定" → targeting_segments
+      - "投資金額" → budget_details
+      - campaign_basic 作為基礎
+
+  - query: "悠遊卡投放在哪些媒體，各媒體的預算？"
+    selected_templates:
+      - campaign_basic
+      - media_placements
+    reasoning: |
+      - "媒體" → media_placements
+      - "預算" → media_placements 已包含 budget 欄位
+      - campaign_basic 作為基礎
+
+  - query: "悠遊卡的 CTR 和 VTR 保證是多少？"
+    selected_templates:
+      - campaign_basic
+      - contract_kpis
+    reasoning: |
+      - "CTR"、"VTR"、"保證" → contract_kpis
+
+  - query: "悠遊卡的受眾標籤有哪些？規模多大？"
+    selected_templates:
+      - campaign_basic
+      - targeting_segments
+    reasoning: |
+      - "受眾標籤"、"規模" → targeting_segments
+
+  - query: "悠遊卡的執行狀態？有沒有設定頻率控制？"
+    selected_templates:
+      - campaign_basic
+      - execution_status
+    reasoning: |
+      - "執行狀態"、"頻率控制" → execution_status

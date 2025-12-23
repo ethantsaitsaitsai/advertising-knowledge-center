@@ -90,26 +90,11 @@ def get_mysql_db():
                     pool_pre_ping=True,  # Check connection before usage (Auto-reconnect)
                     connect_args={'consume_results': True} # Ensure previous results are consumed
                 )
-                target_tables = [
-                    "cue_lists",
-                    "one_campaigns",
-                    "clients",
-                    "agency",
-                    "cue_list_budgets",
-                    "cue_list_ad_formats",
-                    "ad_format_types",
-                    "pricing_models",
-                    "pre_campaign",
-                    "campaign_target_pids",
-                    "target_segments",
-                    "segment_categories"
-                ]
                 metadata = MetaData()
-                metadata.reflect(bind=engine, only=target_tables, resolve_fks=False)
+                metadata.reflect(bind=engine, resolve_fks=False)
                 _mysql_db_instance = SQLDatabase(
                     engine=engine,
                     metadata=metadata,
-                    include_tables=target_tables,
                     lazy_table_reflection=True
                 )
             except Exception as e:

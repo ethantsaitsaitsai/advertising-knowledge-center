@@ -1,0 +1,45 @@
+{#
+  Template: targeting_segments.sql
+  Description: 數據鎖定 / 受眾標籤設定
+  Returns: campaign_id, segment_name, segment_category, audience_size, data_source
+  Merge Key: campaign_id
+  Parameters:
+    - campaign_ids: List[int] (required) - 指定 campaign IDs
+#}
+
+SELECT
+    pre.one_campaign_id AS campaign_id,
+    pre.id AS placement_id,
+    pre.medianame,
+    -- 受眾標籤描述（根據你的範例使用 description）
+    ts.description AS segment_name,
+    ts.name AS segment_code,
+    -- 受眾分類
+    sc.name AS segment_category,
+    -- 受眾規模
+    ts.oneid_qty AS audience_size,
+    -- 數據來源
+    ts.data_source,
+    -- 回溯天數
+    ts.data_source_para AS lookback_days,
+    -- 是否持續更新
+    CASE ts.continuous_updating
+        WHEN 1 THEN 'Dynamic'
+        ELSE 'Static'
+    END AS update_type
+
+FROM pre_campaign pre, campaign_target_pids ctp, target_segments ts
+LEFT JOIN segment_categories sc ON ts.segment_category_id = sc.id
+
+WHERE ctp.source_id = pre.id
+    AND ctp.selection_id = ts.id
+    AND ctp.selection_type = 'TargetSegment'
+
+    {% if campaign_ids %}
+    AND pre.one_campaign_id IN ({{ campaign_ids|join(',') }})
+    {% endif %}
+
+    AND pre.trash = 0
+
+ORDER BY pre.one_campaign_id, ts.description
+LIMIT 100
