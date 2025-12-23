@@ -217,7 +217,12 @@ def pandas_processor(
         
         # 數值格式化
         for col in display_df.select_dtypes(include=['number']).columns:
-            display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
+            col_lower = col.lower()
+            # 針對比率/百分比欄位保留小數點
+            if any(x in col_lower for x in ['ctr', 'vtr', 'er', 'rate', 'ratio', 'percent']):
+                display_df[col] = display_df[col].apply(lambda x: f"{x:,.2f}")
+            else:
+                display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
             
         # 欄位名稱格式化 (snake_case -> Title Case)
         # 目的: 提升可讀性，並降低 LLM 想要自己「修復」表格的慾望

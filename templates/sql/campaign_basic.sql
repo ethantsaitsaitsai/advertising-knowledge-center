@@ -51,6 +51,19 @@ WHERE 1=1
          OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
     {% endif %}
 
+    {% if industry_ids or sub_industry_ids %}
+    AND oc.id IN (
+        SELECT one_campaign_id FROM pre_campaign pc 
+        WHERE pc.trash = 0
+        {% if industry_ids %}
+        AND pc.category_id IN ({{ industry_ids|join(',') }})
+        {% endif %}
+        {% if sub_industry_ids %}
+        AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
+        {% endif %}
+    )
+    {% endif %}
+
     {% if start_date %}
     AND oc.end_date >= '{{ start_date }}'
     {% endif %}

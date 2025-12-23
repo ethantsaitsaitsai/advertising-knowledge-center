@@ -62,6 +62,8 @@ def _render_and_execute_mysql(template_name: str, context: Dict[str, Any]) -> Di
 def query_campaign_basic(
     client_names: Optional[List[str]] = None,
     client_ids: Optional[List[int]] = None,
+    industry_ids: Optional[List[int]] = None,
+    sub_industry_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
@@ -72,6 +74,8 @@ def query_campaign_basic(
     Args:
         client_names: 客戶/廣告主名稱列表 (例如 ['悠遊卡'])
         client_ids: 客戶 ID 列表 (精準搜尋用)
+        industry_ids: 產業類別 (Category) ID 列表
+        sub_industry_ids: 產業子類別 (Sub-Category) ID 列表
         campaign_ids: 直接指定 Campaign IDs (若已知)
         start_date: 開始日期過濾 (YYYY-MM-DD)
         end_date: 結束日期過濾 (YYYY-MM-DD)
@@ -79,6 +83,8 @@ def query_campaign_basic(
     context = {
         "client_names": client_names,
         "client_ids": client_ids,
+        "industry_ids": industry_ids,
+        "sub_industry_ids": sub_industry_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date
