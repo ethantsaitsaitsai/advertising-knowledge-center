@@ -43,5 +43,5 @@ WHERE pcd.enable = 1
     AND pcd.one_campaign_id IN ({{ campaign_ids|join(',') }})
     {% endif %}
 
-ORDER BY pcd.one_campaign_id, pcd.pid
-LIMIT 100
+ORDER BY pcd.one_campaign_id DESC, pcd.pid
+LIMIT {{ limit|default(100) }}

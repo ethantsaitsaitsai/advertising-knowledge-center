@@ -29,6 +29,10 @@ SELECT
     COALESCE(c.advertiser_name, c.company) AS client_name,
     COALESCE(ag.agencyname, 'Direct Client') AS agency_name,
 
+    -- 日期資訊 (用於月份/期間分析)
+    cl.start_date AS investment_start_date,
+    cl.end_date AS investment_end_date,
+
     -- 計價資訊
     pm.name AS pricing_model,
     clb.uniprice AS unit_price,
@@ -61,10 +65,14 @@ WHERE 1=1
     {% endif %}
 
     {% if client_ids %}
-    AND c.id IN ({{ client_ids|join(',') }})
+    AND cl.client_id IN ({{ client_ids|join(',') }})
     {% endif %}
 
-    {% if client_names and not client_ids %}
+    {% if agency_ids %}
+    AND cl.agency_id IN ({{ agency_ids|join(',') }})
+    {% endif %}
+
+    {% if client_names %}
     AND (c.advertiser_name IN ({{ client_names|map('tojson')|join(',') }})
          OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
     {% endif %}
@@ -77,5 +85,5 @@ WHERE 1=1
     AND cl.start_date <= '{{ end_date }}'
     {% endif %}
 
-ORDER BY oc.id, aft.name
+ORDER BY oc.id DESC, aft.name
 LIMIT {{ limit|default(100) }}

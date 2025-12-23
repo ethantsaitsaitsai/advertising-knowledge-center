@@ -90,6 +90,13 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
        - **自動選擇邏輯**: 優先選擇看起來是「啟用中」的那個 (例如排除有 "(暫停使用)" 標記的)。若無法判斷，選擇 ID 較大的那個 (通常是較新的資料)。
        - 直接使用該 ID 呼叫 `resolve_entity(..., selected_id=...)`。
 
+   **多重實體處理 (Batch Processing)**:
+   - 若 `entity_keywords` 包含多個關鍵字 (例如 "台北, 亞思博, 聖洋科技")：
+     - 請務必對 **每一個** 關鍵字都呼叫 `resolve_entity`。
+     - **不要** 在第一個關鍵字需要確認時就直接停止，請先解析完所有關鍵字。
+     - 若有多個實體需要確認，請在同一次回應中列出所有的確認選項。
+     - 若部分實體已確認 (Exact Match)，部分需要確認，請暫存已確認的 IDs，並針對模糊的項目提問。
+
    - **規則 2: 編號選擇**
      - 若使用者回覆數字 (如 "1")，對應選項清單的編號。
 
@@ -107,6 +114,13 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
        - 廣告主排名：針對 `client_name` 進行 `groupby_sum`。
        - 代理商排名：針對 `agency_name` 進行 `groupby_sum`。
      - **數量說明**：若最終結果少於使用者要求的數量（例如求 Top 20 但只列出 5 個），請在回應中說明「該期間僅有 5 筆符合條件的資料」。
+
+   **每月/週期性分析 (Monthly / Period Analysis)**:
+   - 若使用者要求「每月」、「每季」、「年度趨勢」：
+     1. 呼叫 SQL 工具（如 `query_investment_budget`），確保資料中包含日期欄位。
+     2. 呼叫 `pandas_processor(operation="add_time_period", date_col="...", period="month")` 生成 `period` 欄位。
+     3. 再次呼叫 `pandas_processor(operation="groupby_sum", groupby_col="period, agency_name", ...)` 進行匯總。
+     4. 絕對不要因為原始數據中沒有 "month" 欄位就直接說無法彙整，你必須主動使用工具生成它。
 
 4. **資料處理 (CRITICAL!)**
 
@@ -147,6 +161,7 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    **進階工具**:
    - `execute_sql_template`: 通用模板執行器
      - 適用：media_placements.sql, product_lines.sql, contract_kpis.sql, execution_status.sql
+     - **重要**: 若使用者詢問「**廣告格式與執行金額**」(按格式分出的認列金額)，請優先使用 `media_placements.sql`。該模板包含 `ad_format_name` 與執行層級的 `budget`。
      - 只在上述專用工具不適用時才使用
 
 3. **判斷日期範圍 (重要)**
@@ -383,21 +398,57 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                             llm_result = result
 
                         elif status == "needs_confirmation":
-                            # 格式化多選項展示
+                            # 格式化多選項展示 (分組化)
                             candidates = result.get("data", [])
-                            formatted_options = []
-                            for idx, candidate in enumerate(candidates, 1):
-                                formatted_options.append(
-                                    f"{idx}. {candidate['name']} ({candidate['type']}) - 來自 {candidate['table']}.{candidate['column']}"
-                                )
+                            
+                            # 按類型分組
+                            grouped = {}
+                            for c in candidates:
+                                c_type = c.get("type", "other")
+                                if c_type not in grouped:
+                                    grouped[c_type] = []
+                                grouped[c_type].append(c)
+                            
+                            type_labels = {
+                                "client": "🏢 客戶 (Clients)",
+                                "agency": "🏢 代理商 (Agencies)",
+                                "brand": "🏷️ 品牌/產品 (Brands)",
+                                "campaign": "📢 執行活動 (Campaigns)",
+                                "contract": "📄 合約/排期 (Contracts)",
+                                "other": "❓ 其他"
+                            }
+                            
+                            formatted_lines = []
+                            global_idx = 1
+                            
+                            # 按照優先順序顯示類別
+                            for t in ["client", "agency", "brand", "campaign", "contract", "other"]:
+                                if t in grouped:
+                                    formatted_lines.append(f"\n**{type_labels.get(t, t)}**")
+                                    for item in grouped[t]:
+                                        meta_str = ""
+                                        if "metadata" in item:
+                                            m = item["metadata"]
+                                            meta_parts = []
+                                            if "year" in m: meta_parts.append(str(m["year"]))
+                                            if "status" in m: meta_parts.append(m["status"])
+                                            if meta_parts:
+                                                meta_str = f" _({', '.join(meta_parts)})_"
+                                        
+                                        formatted_lines.append(
+                                            f"{global_idx}. {item['name']}{meta_str}"
+                                        )
+                                        # 更新候選人數據中的索引，以便後續匹配
+                                        item["temp_idx"] = global_idx
+                                        global_idx += 1
 
                             llm_result = {
                                 "status": "needs_confirmation",
                                 "message": result.get("message"),
-                                "instruction": "⚠️ 找到多個匹配項，請向使用者展示以下選項並要求其選擇：",
-                                "options": formatted_options,
-                                "candidates_data": candidates,  # 保留完整數據供後續使用
-                                "note": "當使用者回覆後，使用 resolve_entity(keyword='...', selected_id=X, selected_type='Y') 確認選擇"
+                                "instruction": "⚠️ 找到多個匹配項，請向使用者展示以下分組選項並要求其選擇：",
+                                "formatted_list": "\n".join(formatted_lines),
+                                "candidates_data": candidates,
+                                "note": "當使用者回覆後，優先根據編號或名稱進行匹配"
                             }
 
                         elif status == "rag_results":

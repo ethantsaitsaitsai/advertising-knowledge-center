@@ -5,42 +5,46 @@ from config.database import get_mysql_db
 from utils.rag_service import RagService
 
 # 定義搜尋範圍配置
-# 根據使用者需求：優先搜尋 client, agency, brand (高層級實體)，最後才是 campaign
 SEARCH_CONFIGS = [
     {
         "type": "client",
         "table": "clients",
         "id_col": "id",
         "name_col": "company",
-        "desc": "客戶公司名稱"
+        "desc": "客戶公司名稱",
+        "meta_cols": []
     },
     {
         "type": "agency",
         "table": "agency",
         "id_col": "id",
         "name_col": "agencyname",
-        "desc": "代理商名稱"
+        "desc": "代理商名稱",
+        "meta_cols": []
     },
     {
         "type": "brand",
         "table": "clients",
         "id_col": "id",
         "name_col": "product",
-        "desc": "產品/品牌名稱"
+        "desc": "產品/品牌名稱",
+        "meta_cols": []
     },
     {
         "type": "campaign",
         "table": "one_campaigns",
         "id_col": "id",
         "name_col": "name",
-        "desc": "執行活動名稱"
+        "desc": "執行活動名稱",
+        "meta_cols": ["start_date", "status"]
     },
     {
         "type": "contract",
         "table": "cue_lists",
         "id_col": "id",
         "name_col": "campaign_name",
-        "desc": "合約/排期名稱"
+        "desc": "合約/排期名稱",
+        "meta_cols": ["start_date", "status"]
     }
 ]
 
@@ -48,30 +52,63 @@ def _search_table(conn, config: Dict, keyword: str) -> List[Dict[str, Any]]:
     """
     執行單一表格的 SQL 搜尋（LIKE 查詢）
     """
+    meta_select = ""
+    if config.get("meta_cols"):
+        meta_select = ", " + ", ".join(config["meta_cols"])
+
     # 過濾掉空字串或 NULL 的欄位
     query = text(f"""
-        SELECT {config['id_col']} as id, {config['name_col']} as name
+        SELECT {config['id_col']} as id, {config['name_col']} as name {meta_select}
         FROM {config['table']}
         WHERE {config['name_col']} LIKE :kw
           AND {config['name_col']} IS NOT NULL
           AND {config['name_col']} != ''
-        LIMIT 10
+        ORDER BY {config['id_col']} DESC
+        LIMIT 15
     """)
 
     try:
         result = conn.execute(query, {"kw": f"%{keyword}%"})
+        columns = result.keys()
         rows = result.fetchall()
-        return [
-            {
-                "id": row[0],
-                "name": row[1],
+        
+        candidates = []
+        for row in rows:
+            row_dict = dict(zip(columns, row))
+            candidate = {
+                "id": row_dict["id"],
+                "name": row_dict["name"],
                 "type": config["type"],
                 "table": config["table"],
-                "column": config["name_col"],  # 記錄來自哪個欄位
-                "description": f"{row[1]} ({config['desc']})"
+                "column": config["name_col"],
+                "description": f"{row_dict['name']} ({config['desc']})"
             }
-            for row in rows
-        ]
+            
+            # 處理 Metadata
+            meta = {}
+            if "start_date" in row_dict and row_dict["start_date"]:
+                # 轉為年份
+                try:
+                    meta["year"] = row_dict["start_date"].year if hasattr(row_dict["start_date"], 'year') else str(row_dict["start_date"])[:4]
+                except:
+                    meta["year"] = str(row_dict["start_date"])[:4]
+            
+            if "status" in row_dict:
+                status_map = {
+                    "converted": "已轉正式",
+                    "requested": "需求中",
+                    "oncue": "投放中",
+                    "close": "已結案",
+                    "deleted": "已刪除"
+                }
+                meta["status"] = status_map.get(row_dict["status"], row_dict["status"])
+            
+            if meta:
+                candidate["metadata"] = meta
+                
+            candidates.append(candidate)
+            
+        return candidates
     except Exception as e:
         print(f"⚠️ LIKE search failed for {config['table']}.{config['name_col']}: {e}")
         return []

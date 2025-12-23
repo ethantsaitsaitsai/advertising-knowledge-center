@@ -13,14 +13,17 @@ def pandas_processor(
     merge_data: Optional[List[Dict[str, Any]]] = None,
     merge_on: Optional[str] = None,
     merge_how: str = "inner",
-    ascending: bool = False
+    ascending: bool = False,
+    date_col: Optional[str] = None,
+    new_col: Optional[str] = None,
+    period: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     對資料進行 Pandas 處理與分析，並回傳 Markdown 表格。
 
     Args:
         data: 原始資料列表 (List of Dicts)。
-        operation: 執行的操作 ('groupby_sum', 'top_n', 'merge')。
+        operation: 執行的操作 ('groupby_sum', 'top_n', 'merge', 'add_time_period')。
         groupby_col: 分組欄位名稱。
         sum_col: 需要加總的數值欄位。
         sort_col: 排序依據的欄位。
@@ -29,6 +32,9 @@ def pandas_processor(
         merge_on: (用於 merge 操作) 合併的鍵值欄位 (如 'format_name')。
         merge_how: (用於 merge 操作) 合併方式 ('inner', 'left', 'right', 'outer')。
         ascending: 排序方向 (True=升序, False=降序)。
+        date_col: (用於 add_time_period) 來源日期欄位。
+        new_col: (用於 add_time_period) 新生成的欄位名稱 (預設 'period')。
+        period: (用於 add_time_period) 提取週期 ('month', 'year', 'quarter')。
 
     Returns:
         {
@@ -47,6 +53,42 @@ def pandas_processor(
         }
 
     df = pd.DataFrame(data)
+
+    # 0. 輔助功能：新增時間週期欄位
+    if operation == 'add_time_period':
+        # 使用直接傳入的參數，而非 kwargs
+        target_new_col = new_col if new_col else 'period'
+        target_period = period if period else 'month'
+
+        if not date_col or date_col not in df.columns:
+            return {
+                "status": "error",
+                "markdown": f"❌ Error: add_time_period 需要有效的 date_col。現有欄位: {list(df.columns)}",
+                "data": data,
+                "count": len(df)
+            }
+
+        try:
+            # 轉換為 datetime
+            df[date_col] = pd.to_datetime(df[date_col])
+            
+            if target_period == 'month':
+                df[target_new_col] = df[date_col].dt.strftime('%Y-%m')
+            elif target_period == 'year':
+                df[target_new_col] = df[date_col].dt.strftime('%Y')
+            elif target_period == 'quarter':
+                df[target_new_col] = df[date_col].dt.to_period('Q').astype(str)
+            
+            result_df = df
+            processed_data = result_df.to_dict('records')
+            return {
+                "status": "success",
+                "markdown": f"✅ 已新增 {target_new_col} 欄位 ({target_period})。前 5 筆預覽：\n\n" + result_df.head(5).to_markdown(index=False),
+                "data": processed_data,
+                "count": len(result_df)
+            }
+        except Exception as e:
+            return {"status": "error", "markdown": f"❌ Time processing error: {str(e)}", "data": data, "count": len(df)}
 
     # 1. 強制型別轉換：將所有能轉成數字的欄位都轉成數字 (處理 Decimal, String 數字)
     for col in df.columns:

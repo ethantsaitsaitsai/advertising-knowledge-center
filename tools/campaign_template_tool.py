@@ -106,6 +106,7 @@ def query_budget_details(
 def query_investment_budget(
     client_names: Optional[List[str]] = None,
     client_ids: Optional[List[int]] = None,
+    agency_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -118,6 +119,7 @@ def query_investment_budget(
     Args:
         client_names: 客戶名稱列表
         client_ids: 客戶 ID 列表
+        agency_ids: 代理商 ID 列表
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
@@ -126,6 +128,7 @@ def query_investment_budget(
     context = {
         "client_names": client_names,
         "client_ids": client_ids,
+        "agency_ids": agency_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date,
@@ -137,6 +140,7 @@ def query_investment_budget(
 def query_execution_budget(
     client_names: Optional[List[str]] = None,
     client_ids: Optional[List[int]] = None,
+    agency_ids: Optional[List[int]] = None,
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -149,6 +153,7 @@ def query_execution_budget(
     Args:
         client_names: 客戶名稱列表
         client_ids: 客戶 ID 列表
+        agency_ids: 代理商 ID 列表
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
@@ -157,6 +162,7 @@ def query_execution_budget(
     context = {
         "client_names": client_names,
         "client_ids": client_ids,
+        "agency_ids": agency_ids,
         "campaign_ids": campaign_ids,
         "start_date": start_date,
         "end_date": end_date,
@@ -203,8 +209,10 @@ def execute_sql_template(
     template_name: str,
     campaign_ids: Optional[List[int]] = None,
     client_names: Optional[List[str]] = None,
+    agency_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    limit: int = 1000
 ) -> Dict[str, Any]:
     """
     [進階] 通用 SQL 模板執行器。只有在上述專用工具不適用時才使用。
@@ -220,13 +228,17 @@ def execute_sql_template(
         template_name: SQL 檔案名稱 (ex: 'media_placements.sql')
         campaign_ids: Campaign IDs
         client_names: 客戶名稱
+        agency_ids: 代理商 ID 列表
         start_date: 開始日期
         end_date: 結束日期
+        limit: 返回筆數限制 (預設 1000)
     """
     context = {
         "campaign_ids": campaign_ids,
         "client_names": client_names,
+        "agency_ids": agency_ids,
         "start_date": start_date,
-        "end_date": end_date
+        "end_date": end_date,
+        "limit": limit
     }
     return _render_and_execute_mysql(template_name, context)

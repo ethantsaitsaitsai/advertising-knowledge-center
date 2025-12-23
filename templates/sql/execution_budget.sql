@@ -68,6 +68,10 @@ WHERE 1=1
     AND c.id IN ({{ client_ids|join(',') }})
     {% endif %}
 
+    {% if agency_ids %}
+    AND cl.agency_id IN ({{ agency_ids|join(',') }})
+    {% endif %}
+
     {% if client_names and not client_ids %}
     AND (c.advertiser_name IN ({{ client_names|map('tojson')|join(',') }})
          OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
