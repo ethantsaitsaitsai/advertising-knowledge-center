@@ -1,4 +1,5 @@
 # ui.py
+import os
 import chainlit as cl
 from langchain_core.messages import HumanMessage
 from agent.graph import app
