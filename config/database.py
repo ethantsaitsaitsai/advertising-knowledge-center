@@ -28,61 +28,71 @@ def get_mysql_db():
         db_host = os.getenv('DB_HOST')
         db_port = int(os.getenv('DB_PORT', 3306))
 
-        # SSH Connection details
-        ssh_host = os.getenv('SSH_HOST')
-        ssh_port = int(os.getenv('SSH_PORT', 22))
-        ssh_user = os.getenv('SSH_USER')
-        ssh_password = os.getenv('SSH_PASSWORD')
+        # Check if SSH Tunnel is enabled (Default to True for backward compatibility)
+        use_ssh_tunnel = os.getenv('USE_SSH_TUNNEL', 'True').lower() == 'true'
 
-        print(f"🛡️  Establishing SSH Tunnel to {ssh_host}...")
+        current_host = db_host
+        current_port = db_port
 
-        ssh_args = {
-            "ssh_address_or_host": (ssh_host, ssh_port),
-            "ssh_username": ssh_user,
-            "remote_bind_address": (db_host, db_port),
-            "ssh_password": ssh_password,
-            "set_keepalive": 30.0, # Send keepalive packets every 30 seconds
-        }
+        if use_ssh_tunnel:
+            # SSH Connection details
+            ssh_host = os.getenv('SSH_HOST')
+            ssh_port = int(os.getenv('SSH_PORT', 22))
+            ssh_user = os.getenv('SSH_USER')
+            ssh_password = os.getenv('SSH_PASSWORD')
 
-        # Retry mechanism for SSH connection
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                if _ssh_tunnel:
-                    _ssh_tunnel.stop()
-                
-                _ssh_tunnel = SSHTunnelForwarder(**ssh_args)
-                _ssh_tunnel.start()
-                
-                # Verify tunnel is active
-                if _ssh_tunnel.is_active:
-                    break
-            except BaseSSHTunnelForwarderError as e:
-                print(f"⚠️ SSH Tunnel connection failed (Attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(5) # Wait before retry
-                else:
+            print(f"🛡️  Establishing SSH Tunnel to {ssh_host}...")
+
+            ssh_args = {
+                "ssh_address_or_host": (ssh_host, ssh_port),
+                "ssh_username": ssh_user,
+                "remote_bind_address": (db_host, db_port),
+                "ssh_password": ssh_password,
+                "set_keepalive": 30.0, # Send keepalive packets every 30 seconds
+            }
+
+            # Retry mechanism for SSH connection
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    if _ssh_tunnel:
+                        _ssh_tunnel.stop()
+                    
+                    _ssh_tunnel = SSHTunnelForwarder(**ssh_args)
+                    _ssh_tunnel.start()
+                    
+                    # Verify tunnel is active
+                    if _ssh_tunnel.is_active:
+                        break
+                except BaseSSHTunnelForwarderError as e:
+                    print(f"⚠️ SSH Tunnel connection failed (Attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(5) # Wait before retry
+                    else:
+                        print("❌ Detailed Error Traceback:")
+                        traceback.print_exc()
+                        raise ValueError("Error: Could not establish SSH Tunnel after multiple attempts.") from e
+                except Exception as e:
                     print("❌ Detailed Error Traceback:")
                     traceback.print_exc()
-                    raise ValueError("Error: Could not establish SSH Tunnel after multiple attempts.") from e
-            except Exception as e:
-                print("❌ Detailed Error Traceback:")
-                traceback.print_exc()
-                raise ValueError(f"Error: Unexpected error during SSH connection: {e}") from e
+                    raise ValueError(f"Error: Unexpected error during SSH connection: {e}") from e
 
-        if _ssh_tunnel and _ssh_tunnel.is_active:
-            print(f"✅ SSH Tunnel established! Local bind port: {_ssh_tunnel.local_bind_port}")
+            if _ssh_tunnel and _ssh_tunnel.is_active:
+                print(f"✅ SSH Tunnel established! Local bind port: {_ssh_tunnel.local_bind_port}")
+                # Override host and port to use the tunnel
+                current_host = "127.0.0.1"
+                current_port = _ssh_tunnel.local_bind_port
+            else:
+                 raise ValueError("Error: SSH Tunnel is not active.")
+        else:
+            print(f"🚀 Skipping SSH Tunnel. Connecting directly to MySQL at {current_host}:{current_port}...")
 
-            # Override host and port to use the tunnel
-            current_host = "127.0.0.1"
-            current_port = _ssh_tunnel.local_bind_port
+        db_uri = (
+            f"mysql+mysqlconnector://{db_user}:{db_password}"
+            f"@{current_host}:{current_port}/{db_name}"
+        )
 
-            db_uri = (
-                f"mysql+mysqlconnector://{db_user}:{db_password}"
-                f"@{current_host}:{current_port}/{db_name}"
-            )
-
-            try:
+        try:
                 # Add connection pooling settings
                 engine = create_engine(
                     db_uri,
