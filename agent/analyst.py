@@ -602,6 +602,36 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     content=error_msg
                 ))
 
+    # Ensure final_data is JSON safe
+    if final_data:
+        # Re-define or reuse convert_to_json_safe if needed, but since it was inner function, 
+        # we need to define it again or rely on the fact that we process final_data if we caught it inside the loop.
+        # However, final_data was assigned result BEFORE conversion in the loop:
+        # if isinstance(result, dict) and result.get("status") == "success": final_data = result
+        # So final_data still has Decimals.
+        
+        from decimal import Decimal
+        from datetime import datetime, date
+        import math
+        
+        def _final_convert(obj):
+            if isinstance(obj, float):
+                if math.isnan(obj) or math.isinf(obj):
+                    return None
+                return obj
+            elif isinstance(obj, dict):
+                return {k: _final_convert(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_final_convert(item) for item in obj]
+            elif isinstance(obj, Decimal):
+                return float(obj)
+            elif isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            else:
+                return obj
+                
+        final_data = _final_convert(final_data)
+
     # Return updated state
     return {
         "analyst_data": final_data,
