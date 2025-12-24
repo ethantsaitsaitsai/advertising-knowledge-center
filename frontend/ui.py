@@ -129,6 +129,10 @@ async def main(message: cl.Message):
                     try:
                         data = json.loads(line[6:])  # 移除 'data: ' prefix
                         
+                        # Debug Logging
+                        with open("ui_debug.log", "a") as f:
+                            f.write(f"Chunk received: {json.dumps(data, ensure_ascii=False)}\n")
+                        
                         # --- 狀態更新邏輯 ---
                         if isinstance(data, dict):
                             for node_name in data.keys():
