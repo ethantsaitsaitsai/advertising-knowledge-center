@@ -89,14 +89,11 @@ async def main(message: cl.Message):
 
                 current_msg = None
                 
-                # 節點狀態對照表
+                # 節點狀態對照表 (根據完成的節點提示下一步)
                 NODE_STATUS_MAP = {
-                    "IntentAnalyzer": "🧠 正在分析您的查詢意圖...",
-                    "Supervisor": "👨‍✈️ 正在規劃查詢路徑...",
-                    "CampaignAgent": "🔍 正在查詢 MySQL 活動資料...",
-                    "PerformanceAgent": "📈 正在查詢 ClickHouse 成效數據...",
-                    "DataFusion": "🔄 正在進行數據融合與驗證...",
-                    "ResponseSynthesizer": "✍️ 正在撰寫分析報告..."
+                    "InputAdapter": "🧠 正在分析您的查詢意圖...",
+                    "IntentRouter": "🔍 正在查詢資料庫與分析數據...",  # 這步通常最久
+                    "DataAnalyst": "✍️ 正在整理分析結果...",
                 }
 
                 # Async iterate over lines
