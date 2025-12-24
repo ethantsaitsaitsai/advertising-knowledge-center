@@ -93,32 +93,29 @@ def get_mysql_db():
         )
 
         try:
-                # Add connection pooling settings
-                engine = create_engine(
-                    db_uri,
-                    pool_recycle=3600,  # Recycle connections every hour
-                    pool_pre_ping=True,  # Check connection before usage (Auto-reconnect)
-                    connect_args={'consume_results': True} # Ensure previous results are consumed
-                )
-                metadata = MetaData()
-                metadata.reflect(bind=engine, resolve_fks=False)
-                _mysql_db_instance = SQLDatabase(
-                    engine=engine,
-                    metadata=metadata,
-                    lazy_table_reflection=True
-                )
-            except Exception as e:
-                print("❌ Database Engine Creation Failed:")
-                traceback.print_exc()
-                if _ssh_tunnel:
-                    _ssh_tunnel.stop()
-                    _ssh_tunnel = None
-                raise ValueError("Error: Could not create MySQL Engine.") from e
-        else:
-             raise ValueError("Error: SSH Tunnel is not active.")
+            # Add connection pooling settings
+            engine = create_engine(
+                db_uri,
+                pool_recycle=3600,  # Recycle connections every hour
+                pool_pre_ping=True,  # Check connection before usage (Auto-reconnect)
+                connect_args={'consume_results': True} # Ensure previous results are consumed
+            )
+            metadata = MetaData()
+            metadata.reflect(bind=engine, resolve_fks=False)
+            _mysql_db_instance = SQLDatabase(
+                engine=engine,
+                metadata=metadata,
+                lazy_table_reflection=True
+            )
+        except Exception as e:
+            print("❌ Database Engine Creation Failed:")
+            traceback.print_exc()
+            if _ssh_tunnel:
+                _ssh_tunnel.stop()
+                _ssh_tunnel = None
+            raise ValueError("Error: Could not create MySQL Engine.") from e
              
     return _mysql_db_instance
-
 
 # ClickHouse Connection
 _ch_db_instance = None
