@@ -2,6 +2,7 @@
 import os
 import json
 import httpx
+import asyncio
 import chainlit as cl
 from langchain_core.messages import HumanMessage
 from agent.graph import app
@@ -55,9 +56,28 @@ async def start():
 async def main(message: cl.Message):
     """處理用戶訊息"""
 
-    # 顯示思考狀態
-    thinking_msg = cl.Message(content="🤔 思考中...", author="System")
+    # 狀態管理
+    current_status = "🤔 思考中"
+    stop_animation = False
+    
+    # 顯示思考狀態訊息
+    thinking_msg = cl.Message(content=current_status, author="System")
     await thinking_msg.send()
+
+    # 定義動畫任務：循環顯示 . .. ...
+    async def animate_dots():
+        while not stop_animation:
+            for dots in ["", ".", "..", "..."]:
+                if stop_animation: break
+                try:
+                    thinking_msg.content = f"{current_status}{dots}"
+                    await thinking_msg.update()
+                except Exception:
+                    break
+                await asyncio.sleep(0.5)
+    
+    # 啟動動畫背景任務
+    animation_task = asyncio.create_task(animate_dots())
 
     # 準備輸入 (LangServe 格式)
     input_data = {
@@ -79,6 +99,7 @@ async def main(message: cl.Message):
             async with client.stream("POST", f"{LANGSERVE_URL}/stream", json=input_data) as response:
                 
                 if response.status_code != 200:
+                    stop_animation = True # 停止動畫
                     # 處理非 200 錯誤
                     error_detail = await response.aread()
                     await cl.Message(
@@ -90,10 +111,11 @@ async def main(message: cl.Message):
                 current_msg = None
                 
                 # 節點狀態對照表 (根據完成的節點提示下一步)
+                # 注意：這裡不帶點點，因為動畫會自動補上
                 NODE_STATUS_MAP = {
-                    "InputAdapter": "🧠 正在分析您的查詢意圖...",
-                    "IntentRouter": "🔍 正在查詢資料庫與分析數據...",  # 這步通常最久
-                    "DataAnalyst": "✍️ 正在整理分析結果...",
+                    "InputAdapter": "🧠 正在分析您的查詢意圖",
+                    "IntentRouter": "🔍 正在查詢資料庫與分析數據",  # 這步通常最久
+                    "DataAnalyst": "✍️ 正在整理分析結果",
                 }
 
                 # Async iterate over lines
@@ -107,20 +129,12 @@ async def main(message: cl.Message):
                     try:
                         data = json.loads(line[6:])  # 移除 'data: ' prefix
                         
-                        # Debug Logging
-                        with open("ui_debug.log", "a") as f:
-                            f.write(f"Chunk received: {json.dumps(data, ensure_ascii=False)}\n")
-
                         # --- 狀態更新邏輯 ---
-                        # 檢查哪個節點正在輸出，並更新思考訊息
                         if isinstance(data, dict):
                             for node_name in data.keys():
                                 if node_name in NODE_STATUS_MAP:
-                                    status_text = NODE_STATUS_MAP[node_name]
-                                    # 如果狀態改變了，更新訊息
-                                    if thinking_msg.content != status_text:
-                                        thinking_msg.content = status_text
-                                        await thinking_msg.update()
+                                    # 更新基礎文字，動畫任務會自動抓取並補上點點
+                                    current_status = NODE_STATUS_MAP[node_name]
 
                         messages_list = []
                         
@@ -161,10 +175,11 @@ async def main(message: cl.Message):
                                 msg_type = getattr(msg, 'type', "")
                             
                             if content and msg_type == 'ai':
-                                final_content = content
-                                # 一旦開始生成最終回應，移除思考訊息
+                                # 一旦開始生成最終回應，停止動畫並移除思考訊息
+                                stop_animation = True
                                 await thinking_msg.remove()
                                 
+                                final_content = content
                                 if current_msg:
                                     current_msg.content = final_content
                                     await current_msg.update()
@@ -174,28 +189,37 @@ async def main(message: cl.Message):
 
                     except json.JSONDecodeError:
                         pass
-                    except Exception as e:
-                        with open("ui_debug.log", "a") as f:
-                            f.write(f"Error processing chunk: {e}\n")
+                    except Exception:
                         continue
                 
-                # 確保迴圈結束後思考訊息被移除 (如果還沒移除的話)
-                await thinking_msg.remove()
+                # 確保迴圈結束後動畫停止
+                stop_animation = True
 
     except httpx.TimeoutException:
+        stop_animation = True
         await cl.Message(
             content="⏰ 查詢超時，請稍後再試或簡化查詢條件。",
             author="Error"
         ).send()
 
     except httpx.RequestError as e:
+        stop_animation = True
         await cl.Message(
             content=f"❌ 無法連接到後端服務: {str(e)}\n\n請檢查後端是否啟動。",
             author="Error"
         ).send()
 
     except Exception as e:
+        stop_animation = True
         await cl.Message(
             content=f"❌ 未知錯誤: {str(e)}",
             author="Error"
         ).send()
+    
+    finally:
+        # 最終確保動畫停止
+        stop_animation = True
+        try:
+            await thinking_msg.remove()
+        except:
+            pass
