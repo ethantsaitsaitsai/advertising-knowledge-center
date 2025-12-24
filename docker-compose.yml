@@ -5,7 +5,7 @@ services:
     build: .
     command: uv run backend/server.py
     ports:
-      - "8000:8000"
+      - "8002:8000"
     env_file: .env  # 載入您的環境變數 (GCP key, DB config)
     volumes:
       - ./ssh_keys:/root/.ssh:ro  # 掛載 SSH Key 讓容器能連線 MySQL
