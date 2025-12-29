@@ -260,9 +260,58 @@ def pandas_processor(
             else:
                 display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
             
-        # 欄位名稱格式化 (snake_case -> Title Case)
-        # 目的: 提升可讀性，並降低 LLM 想要自己「修復」表格的慾望
-        display_df.columns = [c.replace('_', ' ').title() for c in display_df.columns]
+        # 欄位名稱映射 (Column Mapping) - 自動翻譯常見欄位
+        column_mapping = {
+            # Identifiers
+            'Campaign Id': '活動編號',
+            'Format Type Id': '格式ID',
+            'Placement Id': '版位ID',
+            'Execution Id': '執行單ID',
+            
+            # Names
+            'Campaign Name': '活動名稱',
+            'Client Name': '客戶名稱',
+            'Agency Name': '代理商',
+            'Brand': '品牌',
+            'Contract Name': '合約名稱',
+            'Format Name': '廣告格式',
+            'Segment Name': '受眾標籤',
+            'Ad Format Type': '廣告類型',
+            
+            # Dates
+            'Start Date': '開始日期',
+            'End Date': '結束日期',
+            'Investment Start Date': '走期開始',
+            'Investment End Date': '走期結束',
+            
+            # Money
+            'Investment Amount': '投資金額',
+            'Investment Gift': '贈送金額',
+            'Execution Amount': '執行金額',
+            'Budget': '預算',
+            
+            # Targeting
+            'Targeting Segments': '數據鎖定',
+            'Segment Category': '受眾分類',
+            
+            # Performance
+            'Effective Impressions': '有效曝光',
+            'Total Clicks': '總點擊',
+            'Total Engagements': '總互動',
+            'Total Q100 Views': '完整觀看數',
+            'Ctr': '點擊率 (CTR%)',
+            'Vtr': '觀看率 (VTR%)',
+            'Er': '互動率 (ER%)'
+        }
+        
+        # 欄位名稱格式化 (snake_case -> Title Case -> Mapping)
+        new_columns = []
+        for c in display_df.columns:
+            title_case = c.replace('_', ' ').title()
+            # 優先使用映射，若無則保留 Title Case
+            new_columns.append(column_mapping.get(title_case, title_case))
+            
+        display_df.columns = new_columns
 
         # 最終修飾：將 NaN 替換為空字串，避免表格出現 "nan"
         display_df = display_df.fillna("")
