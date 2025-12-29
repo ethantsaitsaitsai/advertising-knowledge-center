@@ -10,7 +10,6 @@
 SELECT
     pre.one_campaign_id AS campaign_id,
     pre.id AS placement_id,
-    pre.medianame,
     -- 受眾標籤描述（根據你的範例使用 description）
     ts.description AS segment_name,
     ts.name AS segment_code,
