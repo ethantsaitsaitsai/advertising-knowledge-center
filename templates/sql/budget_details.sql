@@ -13,15 +13,9 @@ SELECT
 
     -- L1: 合約總預算（應收帳款）
     cl.total_budget AS contract_total_budget,
-    cl.external_budget AS contract_external_budget,
-    cl.material_fee,
-    cl.onead_gift AS contract_onead_gift,
-    cl.external_gift AS contract_external_gift,
 
     -- L2: 活動執行預算
     oc.budget AS campaign_budget,
-    oc.currency AS currency_id,
-    oc.exchange_rate,
 
     -- 投資金額總和（進單金額）- 來自 cue_list_budgets
     COALESCE(investment_agg.total_investment, 0) AS total_investment_amount,
@@ -29,23 +23,7 @@ SELECT
 
     -- 執行金額總和（認列金額）- 來自 pre_campaign
     COALESCE(execution_agg.total_execution, 0) AS total_execution_amount,
-    COALESCE(execution_agg.total_execution_gift, 0) AS total_execution_gift,
-
-    -- 預算缺口分析
-    COALESCE(investment_agg.total_investment, 0) - COALESCE(execution_agg.total_execution, 0) AS budget_gap,
-
-    -- 預算類型
-    CASE cl.gross_type
-        WHEN 1 THEN 'Net'
-        WHEN 2 THEN 'Gross'
-        ELSE 'Unknown'
-    END AS gross_type,
-
-    -- GSP 購買標記
-    CASE oc.gsp_buy
-        WHEN 1 THEN 'GSP (保證型)'
-        ELSE 'Non-GSP'
-    END AS gsp_type
+    COALESCE(execution_agg.total_execution_gift, 0) AS total_execution_gift
 
 FROM one_campaigns oc
 JOIN cue_lists cl ON oc.cue_list_id = cl.id

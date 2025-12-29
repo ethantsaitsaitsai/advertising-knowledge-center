@@ -1,7 +1,7 @@
 {#
   Template: campaign_basic.sql
   Description: 活動基本資訊（客戶、活動名稱、日期、預算）
-  Returns: campaign_id, client_name, contract_name, campaign_name, start_date, end_date, budget, status
+  Returns: campaign_id, client_name, contract_name, campaign_name, start_date, end_date
   Merge Key: campaign_id
   Parameters:
     - campaign_ids: List[int] (optional) - 指定 campaign IDs
@@ -19,10 +19,6 @@ SELECT
     oc.name AS campaign_name,
     oc.start_date,
     oc.end_date,
-    oc.budget,
-    oc.status AS campaign_status,
-    cl.status AS contract_status,
-    oc.objective_id,
     -- 使用 LEFT JOIN 確保沒有代理商時也能查到
     COALESCE(ag.agencyname, 'Direct Client') AS agency_name
 

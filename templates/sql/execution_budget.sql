@@ -3,7 +3,7 @@
   Description: 執行金額/認列金額（執行中或已結案）
   Data Source: pre_campaign.budget
   Status Filter: pre_campaign.status IN ('oncue', 'close') AND pre_campaign.trash = 0
-  Returns: campaign_id, execution_amount, media_name, client_name, agency_name
+  Returns: campaign_id, execution_amount, client_name, agency_name
   Merge Key: campaign_id
   Parameters:
     - campaign_ids: List[int] (optional) - 指定 campaign IDs
@@ -19,7 +19,6 @@ SELECT
 
     -- 執行單資訊
     pc.id AS execution_id,
-    pc.medianame AS media_name,
 
     -- 客戶與代理商資訊 (用於排名分析)
     COALESCE(c.advertiser_name, c.company) AS client_name,
@@ -29,21 +28,9 @@ SELECT
     pc.budget AS execution_amount,
     pc.onead_gift AS execution_gift,
 
-    -- 目標數量
-    pc.play_times AS target_plays,
-    pc.ta_one_plus_reach AS target_reach,
-
     -- 執行日期
     pc.start_date AS execution_start_date,
     pc.end_date AS execution_end_date,
-
-    -- 執行狀態
-    pc.status AS execution_status,
-    CASE pc.status
-        WHEN 'oncue' THEN '投放中'
-        WHEN 'close' THEN '已結案'
-        ELSE pc.status
-    END AS status_desc,
 
     -- 預定與結案時間
     pc.booked_at,

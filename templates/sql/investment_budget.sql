@@ -3,7 +3,7 @@
   Description: 進單金額/投資金額（委刊有記錄且成功拋轉）
   Data Source: cue_list_budgets.budget
   Status Filter: cue_lists.status IN ('converted', 'requested')
-  Returns: campaign_id, format_name, investment_amount, unit_price, client_name, agency_name
+  Returns: campaign_id, format_name, investment_amount, client_name, agency_name
   Merge Key: campaign_id
   Parameters:
     - campaign_ids: List[int] (optional) - 指定 campaign IDs
@@ -23,7 +23,6 @@ SELECT
 
     -- 投資金額（進單金額）- 來自合約預算表
     clb.budget AS investment_amount,
-    clb.budget_gift AS investment_gift,
 
     -- 客戶與代理商資訊 (用於排名分析)
     COALESCE(c.advertiser_name, c.company) AS client_name,
@@ -31,20 +30,7 @@ SELECT
 
     -- 日期資訊 (用於月份/期間分析)
     cl.start_date AS investment_start_date,
-    cl.end_date AS investment_end_date,
-
-    -- 計價資訊
-    pm.name AS pricing_model,
-    clb.uniprice AS unit_price,
-
-    -- 保證量
-    clb.counting AS guaranteed_volume,
-
-    -- 預估毛利
-    clb.estimated_gross_margin,
-
-    -- 服務費比例
-    clb.service_fee_pct
+    cl.end_date AS investment_end_date
 
 FROM one_campaigns oc
 JOIN cue_lists cl ON oc.cue_list_id = cl.id

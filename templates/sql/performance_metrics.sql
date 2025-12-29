@@ -1,4 +1,5 @@
-/* Template: performance_metrics.sql
+{#
+   Template: performance_metrics.sql
    Description: 查詢 ClickHouse 成效數據 (CTR, VTR, ER)
    Engine: ClickHouse
    Parameters:
@@ -7,7 +8,7 @@
      - dimension: 'campaign' (預設) | 'format' | 'daily'
      - cmp_ids: List[int] (Optional, 對應 cmpid)
      - format_ids: List[int] (Optional, 對應 ad_format_type_id)
-*/
+#}
 
 SELECT
     -- 1. 動態維度選擇 (Grouping Dimensions)
