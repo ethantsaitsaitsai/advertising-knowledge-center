@@ -8,8 +8,8 @@ __pycache__
 .venv
 .env
 .env.example
-uv.lock
-pyproject.toml
+# uv.lock        <-- 移除這一行 (必須保留)
+# pyproject.toml <-- 移除這一行 (必須保留)
 
 # IDE / Editors
 .vscode
