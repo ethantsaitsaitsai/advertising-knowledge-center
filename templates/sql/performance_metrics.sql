@@ -13,14 +13,14 @@
 SELECT
     -- 1. 動態維度選擇 (Grouping Dimensions)
     {% if dimension == 'campaign' %}
-        cmpid,
+        cmpid AS campaign_id,
         campaign_name,
         -- 若需要同時看 campaign 下的不同格式表現，可在此加入 format
-        ad_format_type_id,
-        ad_format_type,
+        ad_format_type_id AS format_type_id,
+        ad_format_type AS format_name,
     {% elif dimension == 'format' %}
-        ad_format_type_id,
-        ad_format_type,
+        ad_format_type_id AS format_type_id,
+        ad_format_type AS format_name,
     {% elif dimension == 'daily' %}
         day_local,
     {% endif %}
