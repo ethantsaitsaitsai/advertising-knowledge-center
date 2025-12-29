@@ -8,6 +8,8 @@ def pandas_processor(
     operation: str,
     groupby_col: Optional[str] = None,
     sum_col: Optional[str] = None,
+    concat_col: Optional[str] = None,
+    sep: str = ", ",
     sort_col: Optional[str] = None,
     top_n: Optional[int] = None,
     merge_data: Optional[List[Dict[str, Any]]] = None,
@@ -23,9 +25,11 @@ def pandas_processor(
 
     Args:
         data: 原始資料列表 (List of Dicts)。
-        operation: 執行的操作 ('groupby_sum', 'top_n', 'merge', 'add_time_period')。
+        operation: 執行的操作 ('groupby_sum', 'groupby_concat', 'top_n', 'merge', 'add_time_period')。
         groupby_col: 分組欄位名稱。
-        sum_col: 需要加總的數值欄位。
+        sum_col: (用於 groupby_sum) 需要加總的數值欄位。
+        concat_col: (用於 groupby_concat) 需要合併的字串欄位 (多欄位以逗號分隔)。
+        sep: (用於 groupby_concat) 字串分隔符號 (預設為 ', ')。
         sort_col: 排序依據的欄位。
         top_n: 取得前幾筆。
         merge_data: (用於 merge 操作) 要合併的第二個數據集。
@@ -189,6 +193,40 @@ def pandas_processor(
             effective_sort_col = sort_col if sort_col and sort_col in result_df.columns else sum_cols_list[0]
             
             result_df = result_df.sort_values(by=effective_sort_col, ascending=ascending)
+
+        elif operation == 'groupby_concat':
+            # 新增：字串聚合功能
+            # 參數：groupby_col (必要), concat_col (必要), sep (可選)
+            concat_col = kwargs.get('concat_col')
+            sep = kwargs.get('sep', ', ')
+            
+            if not groupby_col or not concat_col:
+                return {
+                    "status": "error",
+                    "markdown": "❌ Error: groupby_concat 需要 groupby_col 與 concat_col。",
+                    "data": [],
+                    "count": 0
+                }
+
+            groupby_cols_list = [col.strip() for col in groupby_col.split(',')]
+            concat_cols_list = [col.strip() for col in concat_col.split(',')]
+            
+            # 檢查欄位是否存在
+            valid_groupby = [c for c in groupby_cols_list if c in df.columns]
+            valid_concat = [c for c in concat_cols_list if c in df.columns]
+            
+            if not valid_groupby or not valid_concat:
+                return {
+                     "status": "error", 
+                     "markdown": f"❌ Error: Columns not found. Groupby: {valid_groupby}, Concat: {valid_concat}",
+                     "data": [],
+                     "count": 0
+                }
+                
+            # 執行聚合 (使用 lambda 確保非字串也能轉字串並去重)
+            result_df = df.groupby(valid_groupby)[valid_concat].agg(
+                lambda x: sep.join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != '')))
+            ).reset_index()
 
         elif operation == 'top_n':
             if not sort_col:
