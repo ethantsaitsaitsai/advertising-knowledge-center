@@ -197,8 +197,6 @@ def pandas_processor(
         elif operation == 'groupby_concat':
             # 新增：字串聚合功能
             # 參數：groupby_col (必要), concat_col (必要), sep (可選)
-            concat_col = kwargs.get('concat_col')
-            sep = kwargs.get('sep', ', ')
             
             if not groupby_col or not concat_col:
                 return {
