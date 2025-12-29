@@ -1,7 +1,7 @@
 {#
   Template: targeting_segments.sql
   Description: 數據鎖定 / 受眾標籤設定
-  Returns: campaign_id, segment_name, segment_category, data_source
+  Returns: campaign_id, segment_name, segment_category
   Merge Key: campaign_id
   Parameters:
     - campaign_ids: List[int] (required) - 指定 campaign IDs
@@ -14,9 +14,7 @@ SELECT
     ts.description AS segment_name,
     ts.name AS segment_code,
     -- 受眾分類
-    sc.name AS segment_category,
-    -- 數據來源
-    ts.data_source
+    sc.name AS segment_category
 
 FROM pre_campaign pre, campaign_target_pids ctp, target_segments ts
 LEFT JOIN segment_categories sc ON ts.segment_category_id = sc.id
