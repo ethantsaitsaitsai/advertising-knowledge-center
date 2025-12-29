@@ -40,7 +40,6 @@ JOIN cue_list_product_lines clpl ON clpl.cue_list_id = cl.id
 JOIN cue_list_ad_formats claf ON claf.cue_list_product_line_id = clpl.id
 JOIN cue_list_budgets clb ON clb.cue_list_ad_format_id = claf.id
 JOIN ad_format_types aft ON claf.ad_format_type_id = aft.id
-JOIN pricing_models pm ON clb.pricing_model_id = pm.id
 
 WHERE 1=1
     -- 投資金額定義：委刊有記錄且成功拋轉

@@ -13,13 +13,12 @@ SELECT
     COALESCE(aft.title, aft.name, 'Unspecified') AS format_name,
     aft.id AS format_type_id
 
-FROM one_campaigns oc, cue_lists cl, cue_list_product_lines clpl, cue_list_ad_formats claf, ad_format_types aft, video_seconds_options vso
+FROM one_campaigns oc, cue_lists cl, cue_list_product_lines clpl, cue_list_ad_formats claf, ad_format_types aft
 
 WHERE oc.cue_list_id = cl.id
     AND clpl.cue_list_id = cl.id
     AND claf.cue_list_product_line_id = clpl.id
     AND claf.ad_format_type_id = aft.id
-    AND claf.video_seconds_option_id = vso.id
 
     {% if campaign_ids %}
     AND oc.id IN ({{ campaign_ids|join(',') }})

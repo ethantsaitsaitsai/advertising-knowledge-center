@@ -20,7 +20,6 @@ SELECT
 FROM pre_campaign_detail pcd
 JOIN pre_campaign pc ON pcd.pre_campaign_id = pc.id
 LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id
-LEFT JOIN pricing_models pm ON pcd.pricing_model_id = pm.id
 
 WHERE pcd.enable = 1
 
