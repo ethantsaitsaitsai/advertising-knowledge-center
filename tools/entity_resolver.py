@@ -229,7 +229,63 @@ def resolve_entity(
 
     print(f"📊 [EntityResolver] LIKE query found {len(unique_candidates)} unique results")
 
-    # 判斷 LIKE 查詢結果
+    # 策略三: 類型感知優先級 (Type-Aware Exact Match Priority) & 層級過濾 (Hierarchy Filtering)
+    
+    # 定義父子層級關係
+    PARENT_TYPES = {'client', 'brand', 'agency', 'industry', 'sub_industry'}
+    CHILD_TYPES = {'campaign', 'contract'}
+    
+    # 輔助函數: 正規化名稱 (移除常見後綴)
+    def _normalize_name(name: str) -> str:
+        suffixes = ['股份有限公司', '有限公司', 'company', 'ltd', 'inc', 'corp']
+        n = name.strip().lower()
+        for s in suffixes:
+            n = n.replace(s, '')
+        return n.strip()
+
+    normalized_keyword = _normalize_name(keyword)
+    
+    # 1. 找出完全匹配 (Exact Matches) - 使用正規化名稱比對
+    exact_matches = [
+        c for c in unique_candidates 
+        if _normalize_name(c['name']) == normalized_keyword
+    ]
+    
+    has_exact_match_anchor = False
+    
+    if exact_matches:
+        has_exact_match_anchor = True
+        covered_types = set(c['type'] for c in exact_matches)
+        print(f"🎯 [EntityResolver] Found exact matches for types: {covered_types}")
+        
+        filtered_candidates = []
+        for c in unique_candidates:
+            # 判斷是否為 Exact Match (使用正規化名稱)
+            is_exact = _normalize_name(c['name']) == normalized_keyword
+            
+            if is_exact:
+                filtered_candidates.append(c)
+            elif c['type'] not in covered_types:
+                # 該類型還沒有完全匹配，保留模糊結果 (如: 悠遊卡股份有限公司)
+                filtered_candidates.append(c)
+            else:
+                # 該類型已有完全匹配，丟棄模糊雜訊 (如: 教育部體育署)
+                print(f"🗑️ [EntityResolver] Discarding noise: {c['name']} ({c['type']})")
+        
+        # 2. 層級過濾 (Hierarchy Filtering)
+        # 如果結果中包含父層級 (Client/Brand/Agency)，則移除所有子層級 (Campaign/Contract)
+        # 避免 SQL 中同時傳入 client_id 和少數幾個 campaign_id 導致查詢範圍被錯誤限縮
+        has_parent = any(c['type'] in PARENT_TYPES for c in filtered_candidates)
+        if has_parent:
+            original_count = len(filtered_candidates)
+            filtered_candidates = [c for c in filtered_candidates if c['type'] not in CHILD_TYPES]
+            removed_count = original_count - len(filtered_candidates)
+            if removed_count > 0:
+                print(f"🧹 [EntityResolver] Hierarchy Filter: Removed {removed_count} child entities (campaigns/contracts) because parent entity (client/brand) was found.")
+
+        unique_candidates = filtered_candidates
+
+    # 判斷結果
     if len(unique_candidates) == 1:
         # 只有一筆結果 → 直接返回
         return {
@@ -239,10 +295,27 @@ def resolve_entity(
             "source": "like_query"
         }
     elif len(unique_candidates) > 1:
-        # 多筆結果 → 需要使用者確認
+        # 策略二修正: 自動合併 (Auto-Merge)
+        # 觸發條件:
+        # 1. 名字全部一樣 (原有邏輯)
+        # 2. OR 剛剛觸發了 Type-Aware Filter (代表我們已經鎖定了特定關鍵字，剩下的都是跨類型的相關實體)
+        
+        first_name = unique_candidates[0]['name'].strip().lower()
+        all_same_name = all(c['name'].strip().lower() == first_name for c in unique_candidates)
+        
+        if all_same_name or has_exact_match_anchor:
+            print(f"✅ [EntityResolver] Auto-merging {len(unique_candidates)} entities. (Same Name: {all_same_name}, Anchored: {has_exact_match_anchor})")
+            return {
+                "status": "merged_match",
+                "data": unique_candidates,
+                "message": f"✅ Found {len(unique_candidates)} related entities for '{keyword}'. Merging results.",
+                "source": "like_query_merged"
+            }
+
+        # 多筆結果且名字不同，且沒有完全匹配的錨點 → 需要使用者確認
         return {
             "status": "needs_confirmation",
-            "data": unique_candidates[:20],  # 最多顯示 20 筆
+            "data": unique_candidates[:20],
             "message": f"⚠️ Found {len(unique_candidates)} matches. Please select one:",
             "source": "like_query"
         }

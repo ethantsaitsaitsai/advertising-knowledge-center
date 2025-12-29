@@ -286,7 +286,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
     # Format resolved entities for context
     resolved_context_str = ""
     if resolved_entities_state:
-        resolved_names = [f"{e.get('name')} (ID: {e.get('id')})" for e in resolved_entities_state]
+        resolved_names = [f"{e.get('name')} ({e.get('type', 'unknown')}, ID: {e.get('id')})" for e in resolved_entities_state]
         resolved_context_str = f"\n**已確認的實體 (無需再次詢問):** {', '.join(resolved_names)}"
         print(f"DEBUG [DataAnalyst] Loaded resolved entities: {resolved_names}")
 
@@ -413,6 +413,20 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                             # 儲存已確認的實體
                             resolved_entities.append(result.get("data"))
                             llm_result = result
+
+                        elif status == "merged_match":
+                            # 自動合併多個同名實體
+                            merged_list = result.get("data", [])
+                            resolved_entities.extend(merged_list)
+                            
+                            # 建立訊息告知 LLM
+                            names_str = ", ".join([f"{item['name']} ({item['type']} ID:{item['id']})" for item in merged_list])
+                            llm_result = {
+                                "status": "success", 
+                                "message": f"✅ 已自動合併 {len(merged_list)} 個同名實體: {names_str}",
+                                "data": merged_list,
+                                "instruction": "請根據上述 ID 分別呼叫對應的工具 (例如 query_campaign_basic 用 client_ids, query_investment_budget 用 agency_ids)"
+                            }
 
                         elif status == "needs_confirmation":
                             # 格式化多選項展示 (分組化)
