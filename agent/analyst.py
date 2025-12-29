@@ -581,6 +581,11 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     # Store processed data
                     if isinstance(result, dict) and result.get("status") == "success":
                         final_data = result
+                        # 重要修正：當 pandas_processor 成功產出 markdown 表格時，強制更新 markdown_response
+                        # 這樣即使 LLM 在下一步直接結束對話，也能確保表格被回傳
+                        if "markdown" in result:
+                            markdown_response = result["markdown"]
+                            print(f"DEBUG [DataAnalyst] Updated final response with markdown table ({len(markdown_response)} chars)")
                     llm_result = result
 
                 else:
