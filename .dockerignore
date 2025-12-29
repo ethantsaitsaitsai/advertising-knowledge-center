@@ -1,10 +1,37 @@
+# Git
+.git
+.gitignore
+.dockerignore
+
+# Python / UV / Environment
 __pycache__
 .venv
-.git
-.gemini
-.claude
 .env
+.env.example
+uv.lock
+pyproject.toml
+
+# IDE / Editors
+.vscode
+.idea
+*.swp
+*.swo
+
+# Project specific logs & temp
 *.log
 *.pid
-ssh_keys/
 ui_debug.log
+.gemini
+.claude
+.langgraph_api
+site-packages/
+
+# Documentation & Tests
+docs/
+tests/
+README.md
+chainlit.md
+TECHNICAL_ARCHITECTURE.md
+
+# Sensitive keys (雖然 docker-compose 有掛載，但 build 時不應該 copy 進去)
+ssh_keys/

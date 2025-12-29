@@ -3,22 +3,36 @@ version: '3.8'
 services:
   backend:
     build: .
-    command: uv run backend/server.py
+    # 直接使用 python 執行，不透過 uv run，減少記憶體開銷
+    command: python backend/server.py
     ports:
       - "8002:8000"
-    env_file: .env  # 載入您的環境變數 (GCP key, DB config)
+    env_file: .env
     volumes:
-      - ./ssh_keys:/root/.ssh:ro  # 掛載 SSH Key 讓容器能連線 MySQL
+      - ./ssh_keys:/root/.ssh:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'        # 限制最多使用 50% CPU
+          memory: 512M        # 硬限制 512MB RAM
+        reservations:
+          memory: 256M        # 保證至少有 256MB
     restart: always
 
   frontend:
     build: .
-    command: uv run chainlit run frontend/ui.py --port 8001 --host 0.0.0.0
+    # 直接使用 chainlit 執行
+    command: chainlit run frontend/ui.py --port 8001 --host 0.0.0.0
     ports:
       - "8001:8001"
     environment:
-      - LANGSERVE_URL=http://backend:8000/agent # Chainlit 連接到 LangServe 後端
-    env_file: .env # Chainlit 也可能需要 .env 中的其他變數
+      - LANGSERVE_URL=http://backend:8000/agent
+    env_file: .env
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
     restart: always
