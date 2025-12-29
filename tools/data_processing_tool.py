@@ -264,6 +264,9 @@ def pandas_processor(
         # 目的: 提升可讀性，並降低 LLM 想要自己「修復」表格的慾望
         display_df.columns = [c.replace('_', ' ').title() for c in display_df.columns]
 
+        # 最終修飾：將 NaN 替換為空字串，避免表格出現 "nan"
+        display_df = display_df.fillna("")
+
         markdown_table = display_df.to_markdown(index=False)
 
         return {
