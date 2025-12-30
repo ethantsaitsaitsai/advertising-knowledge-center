@@ -165,11 +165,15 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
    **成效數據工具**:
    - `query_performance_metrics`: 查詢 ClickHouse 成效數據（CTR, VTR, ER, Impressions, Clicks）
      - 適用：所有成效相關問題
-     - 參數：client_names 或 cmp_ids, dimension ('format' or 'campaign')
-     - **產業成效查詢策略 (Industry Bridge)**:
-       - 若查詢「某產業」的成效：
-       - 1. 先呼叫 `query_campaign_basic(industry_ids=[...])` 取得 Campaign IDs。
-       - 2. 再將取得的 IDs 傳入 `query_performance_metrics(cmp_ids=[...])`。
+     - **參數強制規則 (Mandatory Params)**:
+       - **必須且只能使用 `cmp_ids`**。
+       - **嚴禁** 使用 `client_names` 查詢成效，因為 ClickHouse 中的名稱匹配極不穩定。
+       - **標準流程**:
+         1. 永遠先呼叫 `query_campaign_basic` 取得該客戶或活動的 Campaign IDs。
+         2. 將取得的 `campaign_id` 列表傳入 `query_performance_metrics(cmp_ids=[...])`。
+     - **維度說明**:
+       - `dimension='format'`: 按廣告格式分組（預設）。
+       - `dimension='campaign'`: 按活動分組。
 
    **進階工具**:
    - `execute_sql_template`: 通用模板執行器
@@ -216,42 +220,32 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
      )
      ```
 
-   **合併數據策略 (Merge Strategy - 製作單一大表)**:
-   - **核心原則**: 無論使用者問了多少個維度，最終**只能輸出一張整合表格**。
-   - **Step 1: 決定主表 (Anchor Table)**
-     - 若查詢包含「投資金額」、「預算分配」→ 主表為 `query_investment_budget` (Format Level)。
-     - 若查詢包含「廣告格式」、「成效」→ 主表為 `query_ad_formats` 或 `query_performance_metrics` (Format Level)。
-     - 若僅查詢「活動列表」→ 主表為 `query_campaign_basic` (Campaign Level)。
-   - **Step 2: 準備屬性資料 (Attributes)**
-     - **Campaign Info**: 呼叫 `query_campaign_basic`。
-     - **Segments**: 呼叫 `query_targeting_segments`，並**務必**先用 `groupby_concat` 壓平成 "One Row per Campaign" (concat_col="segment_name")。
-   - **Step 3: 執行合併 (Left Join Sequence)**
-     - 以 **主表** 為基礎 (Left)。
-     - 使用 `merge` (Left Join) 將 Campaign Info 合併進來 (On `campaign_id`)。
-     - 使用 `merge` (Left Join) 將 壓平後的 Segments 合併進來 (On `campaign_id`)。
-     - 使用 `merge` (Left Join) 將 成效數據合併進來 (On `format_type_id` 或 `campaign_id`)。
-   **Step 4: 最終輸出 (Final Output)**
-     - 呼叫 `pandas_processor` 輸出最終的 merged table。
-     - **欄位篩選 (Column Selection)**:
-       - 為了避免表格過寬導致跑版，請使用 `pandas_processor` 的隱式篩選（目前雖未直接支援 select_cols，但你可以透過 `groupby_sum` 或 `groupby_concat` 時只保留必要欄位）。
-       - **建議保留**: `活動名稱`, `廣告格式`, `開始日期`, `結束日期`, `受眾標籤`, `投資金額` 以及成效指標 (`CTR`, `VTR`, `ER`)。
-       - **建議移除**: `Campaign Id`, `Format Type Id`, `Placement Id`, `Client Name`, `Agency Name`, `Brand`, `Contract Name` (除非使用者特別詢問)。
-     - **重要**: 工具已經會自動將欄位名稱翻譯成中文 (例如 "Investment Amount" -> "投資金額")。
-     - **絕對禁止** 自己手動修改 Markdown 表格內容或標題，這會導致格式錯亂。
-     - 請直接將工具回傳的 `markdown` 字串原封不動地複製到回應中。
-
-   **資料處理安全檢查**:
-   - 在呼叫 `pandas_processor` 前，請檢查 Tool Output 中的 `columns` 列表。
-   - **不要** 對不存在的欄位進行 GroupBy 或 Sum。例如 `campaign_basic` 結果中沒有 `format_name`，請勿嘗試對其分組。
-
+      **合併數據策略 (Merge Strategy - 製作單一大表)**:
+      - **核心原則**: 無論使用者問了多少個維度，最終**只能輸出一張整合表格**。
+      - **Step 1: 決定主表 (Anchor Table)**
+        - 若查詢包含「投資金額」、「預算分配」→ 主表為 `query_investment_budget` (Format Level)。
+        - 若查詢包含「廣告格式」、「成效」→ 主表為 `query_ad_formats` 或 `query_performance_metrics` (Format Level)。
+      - **Step 2: 準備屬性資料 (Attributes)**
+        - **Segments**: 呼叫 `query_targeting_segments`，並**務必**先用 `groupby_concat` 壓平成 "One Row per Campaign" (concat_col="segment_name")。
+      - **Step 3: 執行合併 (Left Join Sequence) - 這是最關鍵的一步！**
+        - 你不能分開展示「投資金額表」和「成效表」。你必須使用 `pandas_processor(operation="merge", ...)` 將它們合而為一。
+        - **順序**:
+          1. 取得主表資料 (例如 Investment)。
+          2. 取得副表資料 (例如 Performance)。
+          3. 呼叫 `pandas_processor(operation="merge", data=主表, merge_data=副表, merge_on="format_type_id" or "campaign_id", ...)`。
+          4. 若還有 Segments，再將結果與 Segments 表進行 Merge。
+      
+      **Mandatory Output Step (強制輸出步驟)**:
+      - **當你已經呼叫了任何 `query_*` 工具並獲得資料後，你必須且只能做一件事：**
+      - **呼叫 `pandas_processor` 輸出最終合併表**。
+      - **重要參數**: 
+        - 務必使用 `select_columns` 指定使用者感興趣的所有欄位 (例如 `['廣告格式', '投資金額', 'CTR', '數據鎖定']`)。
+        - 如果你沒指定 `select_columns`，或者你的表中缺少了某些欄位 (因為沒 Merge)，使用者會覺得你沒回答完整。
+      - **禁止**：禁止在獲得 SQL 資料後，不經過 pandas_processor 直接回答「資料如下...」。
+      - **禁止**：禁止分開輸出多張小表，必須 Merge 成一張大表。
 5. **最終回應 (Critical)**
-   - `pandas_processor` 工具會回傳一個 `markdown` 欄位，其中包含已格式化好的表格。
-   - **請直接將該 `markdown` 字串複製到您的回應中**。
-   - **表格輸出規則**:
-     - 確保表格前後都有空行。
-     - **絕對不要** 嘗試重新對齊表格的垂直線 `|`，特別是當內容包含中文字時。
-     - **絕對不要** 嘗試閱讀 JSON `data` 欄位並自己重新手寫表格，這會導致錯位或亂碼 (Hallucination)。
-   - **若 Analyst Data 中有資料，絕不可回傳空字串或「查無資料」**。
+   - 請提供簡潔的數據洞察，並以「詳細數據如下表：」作為結尾。
+   - **不要** 輸出表格內容。
 
 **當前情境:**
 - 使用者查詢: {original_query}
@@ -321,9 +315,25 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
     if not isinstance(original_query, str):
         original_query = str(original_query)
 
+    # Initialize logs
+    execution_logs = []
+
     print(f"DEBUG [DataAnalyst] Starting analysis for: {original_query[:100]}...")
     print(f"DEBUG [DataAnalyst] Context: entities={entity_keywords}, time={time_keywords}, hint={analysis_hint}")
     print(f"DEBUG [DataAnalyst] Current date: {current_date}, Year: {current_year}")
+
+    # Log initial context
+    execution_logs.append({
+        "step": "start",
+        "timestamp": datetime.now().isoformat(),
+        "query": original_query,
+        "context": {
+            "entity_keywords": entity_keywords,
+            "time_keywords": time_keywords,
+            "analysis_hint": analysis_hint,
+            "resolved_entities_count": len(resolved_entities_state)
+        }
+    })
 
     # Build conversation with system prompt
     messages = [
@@ -342,6 +352,9 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
     # Agent ReAct Loop (max 15 iterations to prevent infinite loops)
     final_data = None
     markdown_response = ""
+    cached_markdown_table = ""  # Store the perfect table from tool
+    has_reminded_to_process = False # Failsafe flag
+
     # Initialize with state values to preserve memory
     resolved_entities = list(resolved_entities_state)
     latest_query_data = None  # Store complete SQL result for pandas_processor
@@ -351,10 +364,23 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
 
         # Invoke LLM with tools
         response = llm_with_tools.invoke(messages)
-        messages.append(response)
-
+        
         # Check if LLM returned final answer (no tool calls)
         if not response.tool_calls:
+            # --- [NEW] Failsafe: Check if LLM tried to finish without processing data ---
+            has_query = any("query_" in str(log.get("tool")) or log.get("tool") == "execute_sql_template" 
+                            for log in execution_logs if log.get("step") == "tool_call")
+            has_processor = any(log.get("tool") == "pandas_processor" 
+                                for log in execution_logs if log.get("step") == "tool_call")
+            
+            if has_query and not has_processor and not has_reminded_to_process:
+                print("DEBUG [DataAnalyst] LLM tried to finish without pandas_processor. Injecting reminder.")
+                has_reminded_to_process = True
+                messages.append(AIMessage(content="我已經收集完資料，現在準備進行整合。")) # 讓歷史記錄連貫
+                messages.append(HumanMessage(content="[系統提示] 你已經查詢了數據，但尚未呼叫 pandas_processor 進行資料合併與表格產出。請務必使用 pandas_processor(operation='merge', ...) 整合所有維度（包含投資金額、成效、受眾等）並輸出最終表格。禁止直接結束！"))
+                continue # Re-run loop with the reminder
+            
+            messages.append(response)
             markdown_response = response.content
             if isinstance(markdown_response, list):
                 markdown_response = " ".join([
@@ -362,8 +388,15 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     for item in markdown_response
                 ])
             print(f"DEBUG [DataAnalyst] Agent finished with response: {markdown_response[:200]}...")
+            
+            execution_logs.append({
+                "step": "finish",
+                "timestamp": datetime.now().isoformat(),
+                "response_preview": markdown_response[:200]
+            })
             break
 
+        messages.append(response)
         # Execute tool calls
         for tool_call in response.tool_calls:
             tool_name = tool_call["name"]
@@ -371,6 +404,15 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
 
             print(f"DEBUG [DataAnalyst] Calling tool: {tool_name}")
             print(f"DEBUG [DataAnalyst] Arguments: {args}")
+
+            # Log tool call
+            execution_logs.append({
+                "step": "tool_call",
+                "timestamp": datetime.now().isoformat(),
+                "iteration": iteration + 1,
+                "tool": tool_name,
+                "args": args
+            })
 
             # Map tool name to function
             tool_map = {
@@ -388,10 +430,17 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
 
             tool_func = tool_map.get(tool_name)
             if not tool_func:
+                error_msg = f"Error: Tool '{tool_name}' not found."
                 messages.append(ToolMessage(
                     tool_call_id=tool_call["id"],
-                    content=f"Error: Tool '{tool_name}' not found."
+                    content=error_msg
                 ))
+                execution_logs.append({
+                    "step": "tool_error",
+                    "timestamp": datetime.now().isoformat(),
+                    "tool": tool_name,
+                    "error": error_msg
+                })
                 continue
 
             # Pre-process: Inject data for pandas_processor BEFORE execution
@@ -415,20 +464,37 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
 
                     args["data"] = _safe_convert(latest_query_data)
                     print(f"DEBUG [DataAnalyst] Injected {len(latest_query_data)} complete records into pandas_processor")
+                    
+                    execution_logs.append({
+                        "step": "data_injection",
+                        "timestamp": datetime.now().isoformat(),
+                        "tool": tool_name,
+                        "data_count": len(latest_query_data)
+                    })
 
                 # Execute tool
                 result = tool_func.invoke(args)
+                
+                # Log tool result (summary)
+                log_entry = {
+                    "step": "tool_result",
+                    "timestamp": datetime.now().isoformat(),
+                    "tool": tool_name,
+                    "status": "unknown"
+                }
 
                 # Post-process: Handle results based on tool type
                 if tool_name == "resolve_entity":
                     # Store entity resolution results
                     if isinstance(result, dict):
                         status = result.get("status")
+                        log_entry["status"] = status
 
                         if status == "exact_match":
                             # 儲存已確認的實體
                             resolved_entities.append(result.get("data"))
                             llm_result = result
+                            log_entry["details"] = f"Resolved: {result.get('data', {}).get('name')}"
 
                         elif status == "merged_match":
                             # 自動合併多個同名實體
@@ -443,6 +509,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                                 "data": merged_list,
                                 "instruction": "請根據上述 ID 分別呼叫對應的工具 (例如 query_campaign_basic 用 client_ids, query_investment_budget 用 agency_ids)"
                             }
+                            log_entry["details"] = f"Merged {len(merged_list)} entities"
 
                         elif status == "needs_confirmation":
                             # 格式化多選項展示 (分組化)
@@ -499,6 +566,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                                 "candidates_data": candidates,
                                 "note": "當使用者回覆後，優先根據編號或名稱進行匹配"
                             }
+                            log_entry["details"] = f"Found {len(candidates)} candidates"
 
                         elif status == "rag_results":
                             # 格式化 RAG 結果展示
@@ -516,6 +584,7 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                                 "rag_suggestions": formatted_rag,
                                 "note": "請向使用者確認是否使用這些建議，或要求其提供更準確的名稱"
                             }
+                            log_entry["details"] = f"Returned {len(rag_data)} RAG results"
 
                         else:
                             # not_found 或其他狀態
@@ -528,6 +597,10 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     if isinstance(result, dict):
                         final_data = result
                         latest_query_data = result.get("data", [])  # Store complete data
+                        
+                        log_entry["status"] = result.get("status")
+                        log_entry["row_count"] = result.get("count")
+                        log_entry["generated_sql"] = result.get("generated_sql", "")
 
                         # Convert Decimal to float for JSON serialization
                         from decimal import Decimal
@@ -561,6 +634,9 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     if isinstance(result, dict):
                         final_data = result
                         latest_query_data = result.get("data", [])
+                        
+                        log_entry["status"] = result.get("status")
+                        log_entry["row_count"] = result.get("count")
 
                         from decimal import Decimal
                         def _convert_decimals(obj):
@@ -590,15 +666,21 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     # Store processed data
                     if isinstance(result, dict) and result.get("status") == "success":
                         final_data = result
-                        # 重要修正：當 pandas_processor 成功產出 markdown 表格時，強制更新 markdown_response
-                        # 這樣即使 LLM 在下一步直接結束對話，也能確保表格被回傳
-                        if "markdown" in result:
-                            markdown_response = result["markdown"]
-                            print(f"DEBUG [DataAnalyst] Updated final response with markdown table ({len(markdown_response)} chars)")
+                        log_entry["status"] = "success"
+                        log_entry["processed_count"] = result.get("count")
+                        
+                        # Capture the perfect markdown table
+                        if "markdown" in result and result["markdown"]:
+                            cached_markdown_table = result["markdown"]
+                            print(f"DEBUG [DataAnalyst] Cached markdown table ({len(cached_markdown_table)} chars)")
+
                     llm_result = result
 
                 else:
                     llm_result = result
+
+                # Append log entry
+                execution_logs.append(log_entry)
 
                 # Convert result to JSON-safe format (handle Decimal, datetime, etc.)
                 def convert_to_json_safe(obj):
@@ -636,6 +718,12 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                     tool_call_id=tool_call["id"],
                     content=error_msg
                 ))
+                execution_logs.append({
+                    "step": "tool_exception",
+                    "timestamp": datetime.now().isoformat(),
+                    "tool": tool_name,
+                    "error": str(e)
+                })
 
     # Ensure final_data is JSON safe
     if final_data:
@@ -666,6 +754,34 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                 return obj
                 
         final_data = _final_convert(final_data)
+        
+        # Remove generated_sql from final output (keep it in debug_logs only)
+        if isinstance(final_data, dict) and "generated_sql" in final_data:
+            del final_data["generated_sql"]
+
+    # --- Programmatic Table Append Logic ---
+    # If we have a cached perfect table from pandas_processor, append it to the final response.
+    # This prevents the LLM from trying to re-type it and hallucinating format errors.
+    if cached_markdown_table:
+        # [NEW] Anti-Duplication Filter
+        # Check if LLM already hallucinated a table in markdown_response
+        import re
+        # Look for typical markdown table headers or separators
+        table_pattern = re.compile(r'\|.*\|.*[\r\n]+\|[-:| ]+\|', re.MULTILINE)
+        
+        if markdown_response:
+            match = table_pattern.search(markdown_response)
+            if match:
+                print(f"DEBUG [DataAnalyst] Detected hallucinated table in text response. Truncating...")
+                # Keep text before the table
+                markdown_response = markdown_response[:match.start()].strip()
+                # Ensure we have a nice transition
+                if not markdown_response.endswith("：") and not markdown_response.endswith(":"):
+                    markdown_response += "\n\n詳細數據如下表："
+
+        # Append the perfect cached table
+        markdown_response = (markdown_response or "詳細數據如下表：") + "\n\n" + cached_markdown_table
+        print(f"DEBUG [DataAnalyst] Appended cached table to final response")
 
     # Return updated state
     return {
@@ -673,5 +789,6 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
         "resolved_entities": resolved_entities,
         "final_response": markdown_response,
         "messages": [AIMessage(content=markdown_response)],
+        "debug_logs": execution_logs,  # [NEW] Return the detailed execution logs
         "next": "END"
     }

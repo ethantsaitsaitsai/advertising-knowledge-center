@@ -34,5 +34,8 @@ class AgentState(TypedDict, total=False):
     resolved_entities: Optional[List[Dict[str, Any]]]
     # Contains: id, name, type, table
 
+    # Debugging / Traceability
+    debug_logs: Annotated[List[Dict[str, Any]], operator.add]
+
     # Error handling
     error_message: Optional[str]

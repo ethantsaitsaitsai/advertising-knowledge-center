@@ -54,45 +54,28 @@ def _get_cmp_ids_from_mysql(client_names: List[str], start_date: str, end_date: 
 def query_performance_metrics(
     start_date: str,
     end_date: str,
-    client_names: Optional[List[str]] = None,
-    dimension: str = 'format',
-    cmp_ids: Optional[List[int]] = None
+    cmp_ids: List[int],
+    dimension: str = 'format'
 ) -> Dict[str, Any]:
     """
     查詢 ClickHouse 成效數據 (Impressions, Clicks, CTR, VTR, ER)。
-    支援自動將客戶名稱 (client_names) 轉換為 Campaign IDs。
 
     Args:
         start_date: 開始日期 (YYYY-MM-DD)
         end_date: 結束日期 (YYYY-MM-DD)
-        client_names: 客戶名稱列表 (選填, 系統會自動去 MySQL 查找對應的 Campaign IDs)
+        cmp_ids: 指定 Campaign IDs 列表 (必要，請先透過 query_campaign_basic 取得)
         dimension: 分析維度 ('campaign', 'format', 'daily')
-        cmp_ids: 直接指定 Campaign IDs (選填, 若有 client_names 則會自動覆蓋/合併)
     """
     
-    # 1. Resolve Client Names to Campaign IDs if needed
-    target_cmp_ids = cmp_ids or []
-    if client_names:
-        resolved_ids = _get_cmp_ids_from_mysql(client_names, start_date, end_date)
-        if resolved_ids:
-            # Combine distinct IDs
-            target_cmp_ids = list(set(target_cmp_ids + resolved_ids))
-            print(f"DEBUG [PerformanceTool] Resolved {len(resolved_ids)} campaign IDs for clients: {client_names}")
-        else:
-             print(f"DEBUG [PerformanceTool] No campaigns found for clients: {client_names} in range")
-             # If client names were provided but no campaigns found, we should probably return empty or handle gracefully
-             # However, passing empty list to IN clause might break SQL or return all if not handled.
-             # The template uses {% if cmp_ids %}, so empty list means "no filter". 
-             # But here "no filter" is WRONG (it would query EVERYTHING).
-             # We must force a filter that returns nothing if resolution failed but client filter was requested.
-             return {
-                 "status": "success",
-                 "data": [],
-                 "count": 0,
-                 "message": f"No campaigns found for clients {client_names} in the specified date range."
-             }
+    if not cmp_ids:
+        return {
+            "status": "success",
+            "data": [],
+            "count": 0,
+            "message": "No campaign IDs provided."
+        }
 
-    # 2. Render ClickHouse SQL
+    # 1. Render ClickHouse SQL
     try:
         template = env.get_template("performance_metrics.sql")
         # Prepare context
@@ -100,8 +83,7 @@ def query_performance_metrics(
             "start_date": start_date,
             "end_date": end_date,
             "dimension": dimension,
-            "cmp_ids": target_cmp_ids,
-            # format_ids could be supported in future
+            "cmp_ids": cmp_ids,
         }
         rendered_sql = template.render(**context)
     except Exception as e:

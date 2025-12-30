@@ -18,7 +18,8 @@ def pandas_processor(
     ascending: bool = False,
     date_col: Optional[str] = None,
     new_col: Optional[str] = None,
-    period: Optional[str] = None
+    period: Optional[str] = None,
+    select_columns: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     對資料進行 Pandas 處理與分析，並回傳 Markdown 表格。
@@ -39,6 +40,7 @@ def pandas_processor(
         date_col: (用於 add_time_period) 來源日期欄位。
         new_col: (用於 add_time_period) 新生成的欄位名稱 (預設 'period')。
         period: (用於 add_time_period) 提取週期 ('month', 'year', 'quarter')。
+        select_columns: (選填) 指定要顯示的欄位列表 (支援中文或英文欄位名)，若提供將覆蓋預設白名單。
 
     Returns:
         {
@@ -245,6 +247,53 @@ def pandas_processor(
         if top_n and operation != 'top_n':
             result_df = result_df.head(top_n)
 
+        # --- [NEW] Automatic Rate Recalculation (自動重算成效指標) ---
+        # 如果 groupby_sum 導致百分比指標遺失，但分子分母存在，則自動算回來
+        # 欄位名稱可能是原始 snake_case 或帶有後綴
+        
+        def safe_div(n, d):
+            return (n / d * 100) if d > 0 else 0
+
+        # 標準化欄位查找 (處理 potential suffixes)
+        def find_col(base_name):
+            if base_name in result_df.columns: return base_name
+            if f"{base_name}_1" in result_df.columns: return f"{base_name}_1"
+            if f"{base_name}_x" in result_df.columns: return f"{base_name}_x"
+            return None
+
+        col_imps = find_col("effective_impressions")
+        col_clicks = find_col("total_clicks")
+        col_q100 = find_col("total_q100_views")
+        col_eng = find_col("total_engagements")
+
+        if col_imps:
+            # CTR
+            if col_clicks:
+                result_df['ctr'] = result_df.apply(lambda row: safe_div(row[col_clicks], row[col_imps]), axis=1)
+            # VTR
+            if col_q100:
+                result_df['vtr'] = result_df.apply(lambda row: safe_div(row[col_q100], row[col_imps]), axis=1)
+            # ER
+            if col_eng:
+                result_df['er'] = result_df.apply(lambda row: safe_div(row[col_eng], row[col_imps]), axis=1)
+
+        # --- [NEW] Column Name Cleanup (自動清理 Merge 後綴) ---
+        # 救回因 Merge 而變成 _1 的欄位
+        clean_rename_map = {}
+        for col in result_df.columns:
+            if col.endswith('_1'):
+                original_name = col[:-2]
+                if original_name not in result_df.columns:
+                    clean_rename_map[col] = original_name
+            elif col.endswith('_x'):
+                original_name = col[:-2]
+                if original_name not in result_df.columns:
+                    clean_rename_map[col] = original_name
+        
+        if clean_rename_map:
+            print(f"DEBUG [PandasProcessor] Renaming suffixed columns: {clean_rename_map}")
+            result_df = result_df.rename(columns=clean_rename_map)
+
         # 2. 保存處理後的數據（數值格式）供後續使用
         processed_data = result_df.to_dict('records')
 
@@ -313,15 +362,205 @@ def pandas_processor(
             
         display_df.columns = new_columns
 
-        # 最終修飾：將 NaN 替換為空字串，避免表格出現 "nan"
+        # --- 新增：處理重複欄位 ---
+        # 移除重複的欄位（保留第一個出現的）
+        display_df = display_df.loc[:, ~display_df.columns.duplicated()]
+
+        # --- 欄位過濾 (動態選擇 vs 白名單) ---
+        
+        target_columns = []
+
+        if select_columns and len(select_columns) > 0:
+            # 建立反向映射表 (English Key -> Chinese Column Name)
+            # 幫助 Agent 用英文 Key 也能找到中文欄位
+            REVERSE_MAPPING = {v: k for k, v in column_mapping.items()}  # Chinese -> Title Case
+            
+            # 手動補充常見的 Key 對應
+            EXTRA_MAPPING = {
+                "format_name": "廣告格式",
+                "format": "廣告格式",
+                "ad_format": "廣告格式",
+                "格式": "廣告格式",
+                "廣告形式": "廣告格式",
+                "campaign_name": "活動名稱",
+                "campaign": "活動名稱",
+                "client_name": "客戶名稱",
+                "client": "客戶名稱",
+                "agency_name": "代理商",
+                "agency": "代理商",
+                "investment_amount": "投資金額",
+                "amount": "投資金額",
+                "budget": "預算",
+                "start_date": "開始日期",
+                "end_date": "結束日期",
+                "targeting_segments": "受眾標籤",
+                "segments": "受眾標籤",
+                "segment_name": "受眾標籤",
+                "數據鎖定": "受眾標籤",
+                "鎖定": "受眾標籤",
+                "受眾": "受眾標籤",
+                "ta": "受眾標籤",
+                "targeting": "受眾標籤",
+                "effective_impressions": "有效曝光",
+                "impressions": "有效曝光",
+                "clicks": "總點擊",
+                "total_clicks": "總點擊",
+                "ctr": "點擊率 (CTR%)",
+                "vtr": "觀看率 (VTR%)",
+                "er": "互動率 (ER%)",
+                "engagements": "總互動",
+                "total_engagements": "總互動",
+                "total_q100_views": "完整觀看數",
+                "q100": "完整觀看數"
+            }
+
+            # 策略 A: 使用者指定欄位 (Dynamic Selection)
+            for req_col in select_columns:
+                found = False
+                req_lower = req_col.lower()
+
+                # 1. 嘗試透過 EXTRA_MAPPING 找中文名
+                if req_lower in EXTRA_MAPPING:
+                    target_zh = EXTRA_MAPPING[req_lower]
+                    if target_zh in display_df.columns:
+                        target_columns.append(target_zh)
+                        found = True
+                
+                # 2. 直接匹配 (中文或原本就存在的欄位)
+                if not found and req_col in display_df.columns:
+                    target_columns.append(req_col)
+                    found = True
+
+                # 3. 嘗試模糊匹配
+                if not found:
+                    # 針對 DataFrame 中的每個欄位
+                    for df_col in display_df.columns:
+                        # 檢查是否包含 (例如 "格式" in "廣告格式")
+                        if req_col in df_col:
+                            target_columns.append(df_col)
+                            found = True
+                            
+            # 如果匹配不到任何欄位，退回預設白名單，以免表格全空
+            if not target_columns:
+                print(f"DEBUG [PandasProcessor] select_columns provided {select_columns} but no match found. Falling back to whitelist.")
+                # Fallthrough to default whitelist logic below
+        
+        # --- [NEW] Macro Expansion Logic (巨集展開) ---
+        # 允許 Agent 傳入集合名詞 (如 "成效")，自動展開為多個具體欄位
+        
+        COLUMN_GROUPS = {
+            "成效": ["有效曝光", "總點擊", "點擊率 (CTR%)", "觀看率 (VTR%)", "互動率 (ER%)", "總互動", "完整觀看數"],
+            "performance": ["有效曝光", "總點擊", "點擊率 (CTR%)", "觀看率 (VTR%)", "互動率 (ER%)", "總互動", "完整觀看數"],
+            "預算": ["投資金額", "執行金額", "贈送金額"],
+            "budget": ["投資金額", "執行金額", "贈送金額"],
+            "金額": ["投資金額", "執行金額", "贈送金額"],
+            "基本資訊": ["客戶名稱", "活動名稱", "代理商", "品牌", "開始日期", "結束日期"],
+            "info": ["客戶名稱", "活動名稱", "代理商", "品牌", "開始日期", "結束日期"],
+            "數據鎖定": ["受眾標籤", "受眾分類"],
+            "targeting": ["受眾標籤", "受眾分類"],
+        }
+        
+        # 如果使用者有指定欄位，檢查是否包含這些關鍵字並展開
+        if target_columns:
+            expanded_columns = []
+            for col in target_columns:
+                # 檢查這個欄位是否是 Group Key (例如 "成效")
+                matched_group = None
+                for group_key, group_cols in COLUMN_GROUPS.items():
+                    if group_key == col or group_key in col: 
+                        matched_group = group_cols
+                        break
+                
+                if matched_group:
+                    # 如果是群組關鍵字，將其展開為實際欄位 (只加入 DataFrame 中存在的)
+                    for expanded_col in matched_group:
+                        if expanded_col in display_df.columns:
+                            expanded_columns.append(expanded_col)
+                else:
+                    # 如果不是群組關鍵字，保留原欄位
+                    expanded_columns.append(col)
+            
+            # 更新 target_columns 並去重
+            if expanded_columns:
+                seen = set()
+                target_columns = [x for x in expanded_columns if not (x in seen or seen.add(x))]
+
+        if not target_columns:
+            # 策略 B: 預設白名單 (Default Whitelist)
+            DEFAULT_WHITELIST = [
+                "客戶名稱",
+                "品牌",
+                "代理商",
+                "活動名稱",
+                "廣告格式",
+                "受眾標籤",
+                "開始日期",
+                "結束日期",
+                "投資金額",
+                "有效曝光",
+                "總點擊",
+                "點擊率 (CTR%)",
+                "觀看率 (VTR%)",
+                "完整觀看數",
+                "總互動",
+                "互動率 (ER%)",
+            ]
+            target_columns = [c for c in DEFAULT_WHITELIST if c in display_df.columns]
+
+        # 執行過濾
+        if target_columns:
+            # 去重並保持順序
+            seen = set()
+            final_cols = [x for x in target_columns if not (x in seen or seen.add(x))]
+            display_df = display_df[final_cols]
+
+        # --- 強制資料清洗 (防止 Markdown 表格壞掉) ---
+        # 1. 清洗資料內容 (Data Cells)
+        # 對「所有欄位」執行清洗，確保沒有任何換行符 (\n) 或管線符 (|) 殘留
+        for col in display_df.columns:
+            display_df[col] = (
+                display_df[col]
+                .astype(str)
+                .str.replace(r'[\r\n]+', ' ', regex=True)
+                .str.replace(r'\|', '/', regex=True)
+                .str.strip()
+            )
+
+        # 2. 清洗表頭名稱 (Column Headers)
+        # 避免表頭中有換行符導致分隔線錯位
+        display_df.columns = [
+            str(c).replace('\n', ' ').replace('\r', '').replace('|', '/').strip()
+            for c in display_df.columns
+        ]
+
+        # 最終修飾：將 NaN 替換為空字串
         display_df = display_df.fillna("")
 
-        markdown_table = display_df.to_markdown(index=False)
+        # --- Custom Markdown Formatter (取代 to_markdown) ---
+        # 避免使用 tabulate (pandas default)，因為它在處理中文字寬與換行時容易導致表格結構破裂。
+        # 這裡採用「不對齊 (No Alignment Padding)」的純結構輸出，交由前端渲染器處理對齊。
+        
+        headers = list(display_df.columns)
+        
+        # 1. 建立表頭
+        md_lines = ["| " + " | ".join(headers) + " |"]
+        
+        # 2. 建立分隔線 (全部靠左對齊 :---，這是最安全的寫法)
+        md_lines.append("| " + " | ".join([":---"] * len(headers)) + " |")
+        
+        # 3. 建立資料列
+        for _, row in display_df.iterrows():
+            # 確保所有值都是字串，且已經過清洗
+            row_vals = [str(val) for val in row]
+            md_lines.append("| " + " | ".join(row_vals) + " |")
+            
+        markdown_table = "\n".join(md_lines)
 
         return {
             "status": "success",
             "markdown": markdown_table,
-            "data": processed_data,  # 原始數值格式（供後續合併使用）
+            "data": processed_data,  # 原始數值格式（供後續計算使用）
+            "display_data": display_df.to_dict('records'),  # 格式化後的字串格式（供 UI 渲染使用）
             "count": len(result_df)
         }
 
