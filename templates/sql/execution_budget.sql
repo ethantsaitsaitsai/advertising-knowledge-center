@@ -72,13 +72,14 @@ WHERE 1=1
          OR c.company IN ({{ client_names|map('tojson')|join(',') }}))
     {% endif %}
 
-    {% if start_date %}
+    {% if start_date and end_date %}
+    -- YTD logic: Show all historical data up to end_date (cumulative)
+    AND pc.booked_at <= '{{ end_date }}'
+    {% elif start_date %}
     AND pc.end_date >= '{{ start_date }}'
-    {% endif %}
-
-    {% if end_date %}
-    AND pc.start_date <= '{{ end_date }}'
+    {% elif end_date %}
+    AND pc.booked_at <= '{{ end_date }}'
     {% endif %}
 
 ORDER BY pc.one_campaign_id, pc.start_date DESC
-LIMIT {{ limit|default(100) }}
+LIMIT {{ limit|default(5000) }}

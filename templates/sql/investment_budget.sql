@@ -45,6 +45,10 @@ WHERE 1=1
     -- 投資金額定義：委刊有記錄且成功拋轉
     AND cl.status IN ('converted', 'requested')
 
+    -- 過濾已退役格式
+    AND aft.title NOT LIKE '%已退役%'
+    AND aft.name NOT LIKE '%已退役%'
+
     {% if campaign_ids %}
     AND oc.id IN ({{ campaign_ids|join(',') }})
     {% endif %}
@@ -84,4 +88,4 @@ WHERE 1=1
     {% endif %}
 
 ORDER BY oc.id DESC, aft.name
-LIMIT {{ limit|default(100) }}
+LIMIT {{ limit|default(5000) }}

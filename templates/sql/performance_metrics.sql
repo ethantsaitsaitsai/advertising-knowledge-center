@@ -19,6 +19,9 @@ SELECT
         ad_format_type_id AS format_type_id,
         ad_format_type AS format_name,
     {% elif dimension == 'format' %}
+        -- [FIX] Ensure campaign_id is present for merging
+        cmpid AS campaign_id,
+        campaign_name,
         ad_format_type_id AS format_type_id,
         ad_format_type AS format_name,
     {% elif dimension == 'daily' %}
@@ -63,6 +66,9 @@ WHERE
     -- 時間範圍過濾
     day_local BETWEEN toDate('{{ start_date }}') AND toDate('{{ end_date }}')
 
+    -- 過濾已退役格式
+    AND ad_format_type NOT LIKE '%已退役%'
+
     -- 篩選 Campaign ID (Int32)
     {% if cmp_ids %}
         AND cmpid IN ({{ cmp_ids | join(', ') }})
@@ -80,6 +86,9 @@ GROUP BY
         ad_format_type_id,
         ad_format_type
     {% elif dimension == 'format' %}
+        -- [FIX] Group by campaign context as well
+        cmpid,
+        campaign_name,
         ad_format_type_id,
         ad_format_type
     {% elif dimension == 'daily' %}

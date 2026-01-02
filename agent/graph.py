@@ -2,15 +2,12 @@
 AKC Framework 3.0 - Main Graph
 
 Simplified architecture:
-User Input → Intent Router → Data Analyst Agent → Output
-
-No more Supervisor-Worker pattern, no SubGraphs.
-All business logic is in Python SQL Templates and Pandas processing.
+User Input → Intent Router → Data Analyst Subgraph (Retriever -> Reporter) → Output
 """
 from langgraph.graph import StateGraph, END, START
 from agent.state import AgentState
 from agent.router import intent_router_node
-from agent.analyst import data_analyst_node
+from agent.analyst_graph import analyst_graph # [NEW] Import Subgraph
 from langchain_core.messages import HumanMessage, BaseMessage
 from typing import Dict, Any
 
@@ -64,7 +61,7 @@ workflow = StateGraph(AgentState)
 # Add Nodes
 workflow.add_node("InputAdapter", input_adapter_node)
 workflow.add_node("IntentRouter", intent_router_node)
-workflow.add_node("DataAnalyst", data_analyst_node)
+workflow.add_node("DataAnalyst", analyst_graph) # [NEW] Use Subgraph
 
 # Add Edges
 # User input → Input Adapter → Intent Router
@@ -76,12 +73,12 @@ workflow.add_conditional_edges(
     "IntentRouter",
     lambda x: x.get("next", "END"),
     {
-        "DataAnalyst": "DataAnalyst",
+        "DataAnalyst": "DataAnalyst", # Points to Subgraph
         "END": END
     }
 )
 
-# Data Analyst → END (always terminates after analysis)
+# Data Analyst Subgraph → END
 workflow.add_edge("DataAnalyst", END)
 
 # Compile the graph

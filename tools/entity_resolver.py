@@ -61,6 +61,14 @@ SEARCH_CONFIGS = [
         "name_col": "name",
         "desc": "產業子類別",
         "meta_cols": []
+    },
+    {
+        "type": "ad_format",
+        "table": "ad_format_types",
+        "id_col": "id",
+        "name_col": "title",
+        "desc": "廣告格式",
+        "meta_cols": []
     }
 ]
 

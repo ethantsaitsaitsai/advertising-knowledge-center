@@ -1,0 +1,31 @@
+{
+  "standard_dictionary": {
+    "format_name": "廣告格式",
+    "format_name_1": "廣告格式",
+    "ad_format": "廣告格式",
+    "investment_amount": "投資金額",
+    "investment_amount_1": "投資金額",
+    "targeting_segments": "受眾標籤",
+    "segment_category": "受眾分類",
+    "effective_impressions": "有效曝光",
+    "total_clicks": "總點擊",
+    "ctr": "點擊率 (CTR%)",
+    "vtr": "觀看率 (VTR%)",
+    "er": "互動率 (ER%)",
+    "campaign_name": "活動名稱",
+    "client_name": "客戶名稱",
+    "agency_name": "廣告代理商",
+    "investment_start_date": "開始日期",
+    "investment_end_date": "結束日期",
+    "start_date": "開始日期",
+    "end_date": "結束日期"
+  },
+  "concept_expansion": {
+    "成效": ["有效曝光", "總點擊", "點擊率 (CTR%)", "觀看率 (VTR%)", "互動率 (ER%)"],
+    "表現": ["有效曝光", "總點擊", "點擊率 (CTR%)", "觀看率 (VTR%)", "互動率 (ER%)"],
+    "預算": ["投資金額"],
+    "金額": ["投資金額"],
+    "數據鎖定": ["受眾標籤", "受眾分類"],
+    "受眾": ["受眾標籤", "受眾分類"]
+  }
+}

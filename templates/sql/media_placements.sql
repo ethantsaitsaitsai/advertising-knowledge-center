@@ -1,7 +1,7 @@
 {#
   Template: media_placements.sql
   Description: 投放媒體與版位明細（執行層級）
-  Returns: campaign_id, placement_id, ad_type
+  Returns: campaign_id, placement_id, format_name
   Merge Key: campaign_id
   Parameters:
     - campaign_ids: List[int] (required) - 指定 campaign IDs
@@ -11,12 +11,7 @@ SELECT
     pcd.one_campaign_id AS campaign_id,
     pcd.id AS placement_detail_id,
     pcd.pre_campaign_id AS placement_id,
-    -- 廣告格式
-    aft.name AS ad_format_name,
-    -- 影片秒數
-    pcd.flv_second AS video_seconds,
-    -- 預算
-    pcd.budget
+    COALESCE(aft.title, aft.name, 'Unspecified') AS format_name
 FROM pre_campaign_detail pcd
 JOIN pre_campaign pc ON pcd.pre_campaign_id = pc.id
 LEFT JOIN ad_format_types aft ON pcd.ad_format_type_id = aft.id

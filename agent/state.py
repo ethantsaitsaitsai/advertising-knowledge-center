@@ -37,5 +37,9 @@ class AgentState(TypedDict, total=False):
     # Debugging / Traceability
     debug_logs: Annotated[List[Dict[str, Any]], operator.add]
 
+    # Shared Data Store (Retriever -> Reporter)
+    # Stores raw datasets from SQL queries. Key: "dataset_name" (or tool name), Value: List of records
+    data_store: Optional[Dict[str, List[Dict[str, Any]]]]
+
     # Error handling
     error_message: Optional[str]

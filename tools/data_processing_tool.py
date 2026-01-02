@@ -19,36 +19,14 @@ def pandas_processor(
     date_col: Optional[str] = None,
     new_col: Optional[str] = None,
     period: Optional[str] = None,
-    select_columns: Optional[List[str]] = None
+    select_columns: Optional[List[str]] = None,
+    rename_map: Optional[Dict[str, str]] = None  # [NEW] Explicit rename map
 ) -> Dict[str, Any]:
     """
     對資料進行 Pandas 處理與分析，並回傳 Markdown 表格。
 
     Args:
-        data: 原始資料列表 (List of Dicts)。
-        operation: 執行的操作 ('groupby_sum', 'groupby_concat', 'top_n', 'merge', 'add_time_period')。
-        groupby_col: 分組欄位名稱。
-        sum_col: (用於 groupby_sum) 需要加總的數值欄位。
-        concat_col: (用於 groupby_concat) 需要合併的字串欄位 (多欄位以逗號分隔)。
-        sep: (用於 groupby_concat) 字串分隔符號 (預設為 ', ')。
-        sort_col: 排序依據的欄位。
-        top_n: 取得前幾筆。
-        merge_data: (用於 merge 操作) 要合併的第二個數據集。
-        merge_on: (用於 merge 操作) 合併的鍵值欄位 (如 'format_name')。
-        merge_how: (用於 merge 操作) 合併方式 ('inner', 'left', 'right', 'outer')。
-        ascending: 排序方向 (True=升序, False=降序)。
-        date_col: (用於 add_time_period) 來源日期欄位。
-        new_col: (用於 add_time_period) 新生成的欄位名稱 (預設 'period')。
-        period: (用於 add_time_period) 提取週期 ('month', 'year', 'quarter')。
-        select_columns: (選填) 指定要顯示的欄位列表 (支援中文或英文欄位名)，若提供將覆蓋預設白名單。
-
-    Returns:
-        {
-            "status": "success",
-            "markdown": "...",  # Markdown 表格
-            "data": [...],      # 處理後的數據 (供後續使用)
-            "count": 10
-        }
+        rename_map: (選填) 欄位重命名映射 {old_name: new_name}。在篩選前執行。
     """
     if not data:
         return {
@@ -59,6 +37,9 @@ def pandas_processor(
         }
 
     df = pd.DataFrame(data)
+
+    # --- [MOVED] Explicit Renaming moved to end (after all operations) ---
+    # We'll apply rename_map at the very end to avoid column name mismatch issues
 
     # 0. 輔助功能：新增時間週期欄位
     if operation == 'add_time_period':
@@ -137,6 +118,41 @@ def pandas_processor(
             else:
                 merge_on_keys = merge_on
 
+            # --- [NEW] Auto-Aggregation for Targeting Data (Prevent One-to-Many Explosion) ---
+            # 如果是合併「受眾數據」(segment_name)，則先進行聚合，避免讓主表 (Format Level) 產生重複列
+            if 'segment_name' in df2.columns and 'campaign_id' in df2.columns:
+                print("DEBUG [PandasProcessor] Detected Targeting Data. Auto-aggregating segments by campaign_id...")
+                
+                # 1. 找出除了 merge_on_keys 和 segment_name 以外的欄位，這些通常是雜訊 (如 placement_id)
+                # 我們只保留 merge keys 和要聚合的目標
+                agg_target_col = 'segment_name'
+                
+                # 確保 Key 存在
+                actual_merge_key = merge_on_keys if isinstance(merge_on_keys, list) else [merge_on_keys]
+                
+                # 執行聚合：將多個 segment_name 合併成一個字串
+                df2 = df2.groupby(actual_merge_key)[agg_target_col].agg(
+                    lambda x: ', '.join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != '')))
+                ).reset_index()
+                
+                print(f"DEBUG [PandasProcessor] Aggregated targeting data to {len(df2)} unique campaign rows.")
+
+            # --- [NEW] Smart Merge Key Detection (防止重複) ---
+            # 如果兩邊都有 format_type_id 或 format_name，自動加入 merge key
+            # 這能解決 "Campaign + Format" 層級的資料合併產生 Cartesian Product 的問題
+            candidate_keys = ['format_type_id', 'format_name', 'placement_id']
+            
+            # 確保 merge_on_keys 是 list
+            current_keys = merge_on_keys if isinstance(merge_on_keys, list) else [merge_on_keys]
+            
+            for k in candidate_keys:
+                if k in df.columns and k in df2.columns:
+                    if k not in current_keys:
+                        print(f"DEBUG [PandasProcessor] Smart Merge: Adding '{k}' to merge keys.")
+                        current_keys.append(k)
+            
+            merge_on_keys = current_keys
+
             # 執行 merge
             result_df = pd.merge(df, df2, on=merge_on_keys, how=merge_how, suffixes=('_1', '_2'))
 
@@ -188,13 +204,12 @@ def pandas_processor(
                 }
 
             result_df = df.groupby(valid_groupby_cols)[sum_cols_list].sum().reset_index()
-            
-            # Determine sort column
-            # If explicit sort_col is provided and exists, use it.
-            # Otherwise, use the first column from sum_cols_list.
-            effective_sort_col = sort_col if sort_col and sort_col in result_df.columns else sum_cols_list[0]
-            
-            result_df = result_df.sort_values(by=effective_sort_col, ascending=ascending)
+
+            # [FIX] Don't sort yet - wait until after CTR/VTR/ER calculation
+            # Store sort_col and top_n for later use
+            _pending_sort_col = sort_col
+            _pending_ascending = ascending
+            _pending_top_n = top_n
 
         elif operation == 'groupby_concat':
             # 新增：字串聚合功能
@@ -240,31 +255,88 @@ def pandas_processor(
             if top_n:
                 result_df = result_df.head(top_n)
 
-        # 通用排序和 Top N
-        if sort_col and operation not in ['groupby_sum', 'top_n']:
+        elif operation == 'add_percentage_column':
+            # 新增：計算佔比欄位
+            # 參數：sum_col (必要，要計算佔比的欄位), new_col (可選，新欄位名稱，預設為 "percentage")
+
+            if not sum_col:
+                return {
+                    "status": "error",
+                    "markdown": "❌ Error: add_percentage_column 需要 sum_col 參數（指定要計算佔比的欄位）。",
+                    "data": [],
+                    "count": 0
+                }
+
+            value_col = sum_col.strip()  # 使用 sum_col 作為要計算佔比的欄位
+            percentage_col = new_col if new_col else "percentage"
+
+            if value_col not in df.columns:
+                return {
+                    "status": "error",
+                    "markdown": f"❌ Error: 欄位 '{value_col}' 不存在。現有欄位: {list(df.columns)}",
+                    "data": [],
+                    "count": 0
+                }
+
+            # 確保欄位是數值型
+            try:
+                df[value_col] = pd.to_numeric(df[value_col])
+            except (ValueError, TypeError):
+                return {
+                    "status": "error",
+                    "markdown": f"❌ Error: 欄位 '{value_col}' 無法轉換為數值。",
+                    "data": [],
+                    "count": 0
+                }
+
+            # 計算總和
+            total = df[value_col].sum()
+
+            if total == 0:
+                # 避免除以零
+                result_df[percentage_col] = 0.0
+            else:
+                # 計算佔比 (百分比)
+                result_df[percentage_col] = (df[value_col] / total * 100).round(2)
+
+            print(f"DEBUG [PandasProcessor] Added percentage column '{percentage_col}' based on '{value_col}' (Total: {total:,.0f})")
+
+        # 通用排序和 Top N (for non-groupby_sum operations)
+        if sort_col and operation not in ['groupby_sum', 'top_n', 'add_percentage_column']:
             result_df = result_df.sort_values(by=sort_col, ascending=ascending)
 
-        if top_n and operation != 'top_n':
+        # [FIX] Don't apply top_n here for groupby_sum - will apply after delayed sorting
+        if top_n and operation not in ['groupby_sum', 'top_n', 'add_percentage_column']:
             result_df = result_df.head(top_n)
 
         # --- [NEW] Automatic Rate Recalculation (自動重算成效指標) ---
         # 如果 groupby_sum 導致百分比指標遺失，但分子分母存在，則自動算回來
         # 欄位名稱可能是原始 snake_case 或帶有後綴
-        
+
         def safe_div(n, d):
             return (n / d * 100) if d > 0 else 0
 
-        # 標準化欄位查找 (處理 potential suffixes)
-        def find_col(base_name):
-            if base_name in result_df.columns: return base_name
-            if f"{base_name}_1" in result_df.columns: return f"{base_name}_1"
-            if f"{base_name}_x" in result_df.columns: return f"{base_name}_x"
+        # 標準化欄位查找 (處理 potential suffixes + 支援中文欄位名)
+        def find_col(base_names):
+            """
+            Args:
+                base_names: list of possible column names (English + Chinese)
+            Returns:
+                The first matching column name, or None
+            """
+            if not isinstance(base_names, list):
+                base_names = [base_names]
+
+            for base_name in base_names:
+                if base_name in result_df.columns: return base_name
+                if f"{base_name}_1" in result_df.columns: return f"{base_name}_1"
+                if f"{base_name}_x" in result_df.columns: return f"{base_name}_x"
             return None
 
-        col_imps = find_col("effective_impressions")
-        col_clicks = find_col("total_clicks")
-        col_q100 = find_col("total_q100_views")
-        col_eng = find_col("total_engagements")
+        col_imps = find_col(["effective_impressions", "有效曝光"])
+        col_clicks = find_col(["total_clicks", "總點擊"])
+        col_q100 = find_col(["total_q100_views", "完整觀看數"])
+        col_eng = find_col(["total_engagements", "總互動"])
 
         if col_imps:
             # CTR
@@ -276,6 +348,32 @@ def pandas_processor(
             # ER
             if col_eng:
                 result_df['er'] = result_df.apply(lambda row: safe_div(row[col_eng], row[col_imps]), axis=1)
+
+        # --- [NEW] Apply Delayed Sorting for groupby_sum (After CTR/VTR/ER Calculation) ---
+        # Parse sort_col to extract column name and direction (e.g., "ctr DESC" → col="ctr", asc=False)
+        if operation == 'groupby_sum' and '_pending_sort_col' in locals():
+            if _pending_sort_col:
+                # Parse "ctr DESC" or "ctr ASC" or "ctr"
+                parts = _pending_sort_col.strip().split()
+                actual_col = parts[0]
+                direction = parts[1].upper() if len(parts) > 1 else "DESC"  # Default to DESC
+                sort_ascending = (direction == "ASC")
+
+                if actual_col in result_df.columns:
+                    print(f"DEBUG [PandasProcessor] Applying delayed sort: {actual_col} {'ASC' if sort_ascending else 'DESC'}")
+                    result_df = result_df.sort_values(by=actual_col, ascending=sort_ascending)
+                else:
+                    print(f"WARN [PandasProcessor] Sort column '{actual_col}' not found in result. Available: {list(result_df.columns)}")
+
+            # [NEW] Apply top_n after sorting
+            if '_pending_top_n' in locals() and _pending_top_n:
+                print(f"DEBUG [PandasProcessor] Applying delayed top_n: {_pending_top_n}")
+                result_df = result_df.head(_pending_top_n)
+
+            # Clean up variables
+            del _pending_sort_col, _pending_ascending
+            if '_pending_top_n' in locals():
+                del _pending_top_n
 
         # --- [NEW] Column Name Cleanup (自動清理 Merge 後綴) ---
         # 救回因 Merge 而變成 _1 的欄位
@@ -289,15 +387,23 @@ def pandas_processor(
                 original_name = col[:-2]
                 if original_name not in result_df.columns:
                     clean_rename_map[col] = original_name
-        
+
         if clean_rename_map:
             print(f"DEBUG [PandasProcessor] Renaming suffixed columns: {clean_rename_map}")
             result_df = result_df.rename(columns=clean_rename_map)
 
-        # 2. 保存處理後的數據（數值格式）供後續使用
+        # 2. [NEW] Apply Explicit Rename Map (After all operations completed)
+        # This ensures operations like groupby_sum can find columns by their original names
+        if rename_map:
+            valid_rename = {k: v for k, v in rename_map.items() if k in result_df.columns}
+            if valid_rename:
+                print(f"DEBUG [PandasProcessor] Applying explicit rename: {valid_rename}")
+                result_df = result_df.rename(columns=valid_rename)
+
+        # 3. 保存處理後的數據（數值格式）供後續使用
         processed_data = result_df.to_dict('records')
 
-        # 3. 格式化數值用於展示 (加上千分位)
+        # 4. 格式化數值用於展示 (加上千分位)
         display_df = result_df.copy()
         
         # 數值格式化
@@ -309,58 +415,60 @@ def pandas_processor(
             else:
                 display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
             
-        # 欄位名稱映射 (Column Mapping) - 自動翻譯常見欄位
-        column_mapping = {
-            # Identifiers
-            'Campaign Id': '活動編號',
-            'Format Type Id': '格式ID',
-            'Placement Id': '版位ID',
-            'Execution Id': '執行單ID',
-            
-            # Names
-            'Campaign Name': '活動名稱',
-            'Client Name': '客戶名稱',
-            'Agency Name': '代理商',
-            'Brand': '品牌',
-            'Contract Name': '合約名稱',
-            'Format Name': '廣告格式',
-            'Segment Name': '受眾標籤',
-            'Ad Format Type': '廣告類型',
-            
-            # Dates
-            'Start Date': '開始日期',
-            'End Date': '結束日期',
-            'Investment Start Date': '走期開始',
-            'Investment End Date': '走期結束',
-            
-            # Money
-            'Investment Amount': '投資金額',
-            'Investment Gift': '贈送金額',
-            'Execution Amount': '執行金額',
-            'Budget': '預算',
-            
-            # Targeting
-            'Targeting Segments': '數據鎖定',
-            'Segment Category': '受眾分類',
-            
-            # Performance
-            'Effective Impressions': '有效曝光',
-            'Total Clicks': '總點擊',
-            'Total Engagements': '總互動',
-            'Total Q100 Views': '完整觀看數',
-            'Ctr': '點擊率 (CTR%)',
-            'Vtr': '觀看率 (VTR%)',
-            'Er': '互動率 (ER%)'
-        }
-        
-        # 欄位名稱格式化 (snake_case -> Title Case -> Mapping)
-        new_columns = []
-        for c in display_df.columns:
-            title_case = c.replace('_', ' ').title()
-            # 優先使用映射，若無則保留 Title Case
-            new_columns.append(column_mapping.get(title_case, title_case))
-            
-        display_df.columns = new_columns
+        # 欄位名稱映射 (Column Mapping) - 只在沒有 explicit rename_map 時執行
+        # 如果 LLM 已經提供了 rename_map，就不需要自動翻譯
+        if not rename_map:
+            column_mapping = {
+                # Identifiers
+                'Campaign Id': '活動編號',
+                'Format Type Id': '格式ID',
+                'Placement Id': '版位ID',
+                'Execution Id': '執行單ID',
+
+                # Names
+                'Campaign Name': '活動名稱',
+                'Client Name': '客戶名稱',
+                'Agency Name': '代理商',
+                'Brand': '品牌',
+                'Contract Name': '合約名稱',
+                'Format Name': '廣告格式',
+                'Segment Name': '受眾標籤',
+                'Ad Format Type': '廣告類型',
+
+                # Dates
+                'Start Date': '開始日期',
+                'End Date': '結束日期',
+                'Investment Start Date': '走期開始',
+                'Investment End Date': '走期結束',
+
+                # Money
+                'Investment Amount': '投資金額',
+                'Investment Gift': '贈送金額',
+                'Execution Amount': '執行金額',
+                'Budget': '預算',
+
+                # Targeting
+                'Targeting Segments': '數據鎖定',
+                'Segment Category': '受眾分類',
+
+                # Performance
+                'Effective Impressions': '有效曝光',
+                'Total Clicks': '總點擊',
+                'Total Engagements': '總互動',
+                'Total Q100 Views': '完整觀看數',
+                'Ctr': '點擊率 (CTR%)',
+                'Vtr': '觀看率 (VTR%)',
+                'Er': '互動率 (ER%)'
+            }
+
+            # 欄位名稱格式化 (snake_case -> Title Case -> Mapping)
+            new_columns = []
+            for c in display_df.columns:
+                title_case = c.replace('_', ' ').title()
+                # 優先使用映射，若無則保留 Title Case
+                new_columns.append(column_mapping.get(title_case, title_case))
+
+            display_df.columns = new_columns
 
         # --- 新增：處理重複欄位 ---
         # 移除重複的欄位（保留第一個出現的）
@@ -371,11 +479,7 @@ def pandas_processor(
         target_columns = []
 
         if select_columns and len(select_columns) > 0:
-            # 建立反向映射表 (English Key -> Chinese Column Name)
-            # 幫助 Agent 用英文 Key 也能找到中文欄位
-            REVERSE_MAPPING = {v: k for k, v in column_mapping.items()}  # Chinese -> Title Case
-            
-            # 手動補充常見的 Key 對應
+            # 手動補充常見的 Key 對應 (English -> Chinese)
             EXTRA_MAPPING = {
                 "format_name": "廣告格式",
                 "format": "廣告格式",
@@ -440,78 +544,44 @@ def pandas_processor(
                             target_columns.append(df_col)
                             found = True
                             
-            # 如果匹配不到任何欄位，退回預設白名單，以免表格全空
-            if not target_columns:
-                print(f"DEBUG [PandasProcessor] select_columns provided {select_columns} but no match found. Falling back to whitelist.")
-                # Fallthrough to default whitelist logic below
-        
-        # --- [NEW] Macro Expansion Logic (巨集展開) ---
-        # 允許 Agent 傳入集合名詞 (如 "成效")，自動展開為多個具體欄位
-        
-        COLUMN_GROUPS = {
-            "成效": ["有效曝光", "總點擊", "點擊率 (CTR%)", "觀看率 (VTR%)", "互動率 (ER%)", "總互動", "完整觀看數"],
-            "performance": ["有效曝光", "總點擊", "點擊率 (CTR%)", "觀看率 (VTR%)", "互動率 (ER%)", "總互動", "完整觀看數"],
-            "預算": ["投資金額", "執行金額", "贈送金額"],
-            "budget": ["投資金額", "執行金額", "贈送金額"],
-            "金額": ["投資金額", "執行金額", "贈送金額"],
-            "基本資訊": ["客戶名稱", "活動名稱", "代理商", "品牌", "開始日期", "結束日期"],
-            "info": ["客戶名稱", "活動名稱", "代理商", "品牌", "開始日期", "結束日期"],
-            "數據鎖定": ["受眾標籤", "受眾分類"],
-            "targeting": ["受眾標籤", "受眾分類"],
-        }
-        
-        # 如果使用者有指定欄位，檢查是否包含這些關鍵字並展開
-        if target_columns:
-            expanded_columns = []
-            for col in target_columns:
-                # 檢查這個欄位是否是 Group Key (例如 "成效")
-                matched_group = None
-                for group_key, group_cols in COLUMN_GROUPS.items():
-                    if group_key == col or group_key in col: 
-                        matched_group = group_cols
-                        break
-                
-                if matched_group:
-                    # 如果是群組關鍵字，將其展開為實際欄位 (只加入 DataFrame 中存在的)
-                    for expanded_col in matched_group:
-                        if expanded_col in display_df.columns:
-                            expanded_columns.append(expanded_col)
-                else:
-                    # 如果不是群組關鍵字，保留原欄位
-                    expanded_columns.append(col)
+                        # 如果匹配不到任何欄位，且使用者沒有指定 select_columns，才進入 Fallback
+                            
+                        if not target_columns and (select_columns and len(select_columns) > 0):
+                            
+                             print(f"DEBUG [PandasProcessor] Strict Mode: User requested {select_columns} but no direct match found. Table might be empty or restricted.")
+                            
+                             # 不再進入 Fallback 顯示所有欄位，保持 target_columns 為空或僅包含部分匹配
+                            
+                    
+                            
+                    # (Removed COLUMN_GROUPS logic - moved to LLM Planner)
+                            
             
-            # 更新 target_columns 並去重
-            if expanded_columns:
-                seen = set()
-                target_columns = [x for x in expanded_columns if not (x in seen or seen.add(x))]
-
-        if not target_columns:
-            # 策略 B: 預設白名單 (Default Whitelist)
-            DEFAULT_WHITELIST = [
-                "客戶名稱",
-                "品牌",
-                "代理商",
-                "活動名稱",
-                "廣告格式",
-                "受眾標籤",
-                "開始日期",
-                "結束日期",
-                "投資金額",
-                "有效曝光",
-                "總點擊",
-                "點擊率 (CTR%)",
-                "觀看率 (VTR%)",
-                "完整觀看數",
-                "總互動",
-                "互動率 (ER%)",
-            ]
-            target_columns = [c for c in DEFAULT_WHITELIST if c in display_df.columns]
-
-        # 執行過濾
-        if target_columns:
+                            
+                    if not target_columns:
+                            
+                        # 只有在「完全沒有指定 select_columns」的情況下，才顯示所有非 ID 欄位
+                            
+                        if not select_columns or len(select_columns) == 0:
+                            
+                            target_columns = [c for c in display_df.columns if not c.lower().endswith('id')]
+                            
+                        else:
+                            
+                            # 使用者有指定但找不到，我們至少保留主鍵 (如果有)
+                            
+                            target_columns = [c for c in ["廣告格式", "活動名稱", "日期"] if c in display_df.columns]
+                            
+            
+                            
+                    # 執行過濾 (Strict Filtering)        if target_columns:
             # 去重並保持順序
             seen = set()
             final_cols = [x for x in target_columns if not (x in seen or seen.add(x))]
+            
+            # Ensure we only keep columns that actually exist in the dataframe
+            final_cols = [c for c in final_cols if c in display_df.columns]
+            
             display_df = display_df[final_cols]
 
         # --- 強制資料清洗 (防止 Markdown 表格壞掉) ---
