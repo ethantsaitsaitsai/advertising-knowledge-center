@@ -634,27 +634,23 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     SUMMARY_PROMPT = """
     你是數據報告呈現者。請針對使用者查詢「{query}」與生成的數據表產出回應。
     
-    請回傳 JSON 格式，包含以下兩個欄位：
-    1. "opening": 簡單說明數據範圍與內容。例如：「這是 **{start_date}** 至 **{end_date}** 期間，關於『{query}』的數據資料。」
-    2. "suggestions": 根據數據結果，提供 3 個具體且高度相關的後續查詢建議（帶有 💡 符號與標題，例如：💡 **您還可以嘗試查詢：** ...）。
+    請回傳 JSON 格式，包含以下欄位：
+    1. "suggestions": 根據數據結果，提供 3 個具體且高度相關的後續查詢建議（帶有 💡 符號與標題，例如：💡 **您還可以嘗試查詢：** ...）。
     
     **規則**:
-    - **嚴禁分析**: 不要在 opening 中對數據進行解讀、尋找亮點。
+    - **嚴禁分析**: 不要在輸出中包含任何數據解讀或總結。
     - **JSON 格式**: 只回傳原始 JSON，不要包含 Markdown 標記。
     """
     
-    opening_text = ""
+    # [FIX] Programmatically generate opening to ensure date accuracy
+    opening_text = f"這是 **{start_date}** 至 **{end_date}** 期間，關於『{original_query}』的數據資料。"
     suggestions_text = ""
 
     if final_table:
         try:
             messages = [
                 SystemMessage(content="You are a JSON generator. Output only valid raw JSON."),
-                HumanMessage(content=SUMMARY_PROMPT.format(
-                    query=original_query, 
-                    start_date=start_date,
-                    end_date=end_date
-                ))
+                HumanMessage(content=SUMMARY_PROMPT.format(query=original_query))
             ]
             response = llm.invoke(messages)
             content = response.content
@@ -665,7 +661,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
                 res_json = json.loads(json_match.group(0))
-                opening_text = res_json.get("opening", "")
+                # opening_text is already set programmatically
                 suggestions_data = res_json.get("suggestions", "")
                 
                 if isinstance(suggestions_data, list):
@@ -673,10 +669,9 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 else:
                     suggestions_text = str(suggestions_data)
             else:
-                opening_text = f"這是 {start_date} 至 {end_date} 期間，關於『{original_query}』的數據資料。"
+                print(f"DEBUG [Reporter] JSON not found in summary response.")
         except Exception as e:
             print(f"DEBUG [Reporter] Summary JSON parsing failed: {e}")
-            opening_text = f"這是 {start_date} 至 {end_date} 期間，關於『{original_query}』的數據資料。"
     else:
         opening_text = "抱歉，無法從數據中生成報表。"
 
