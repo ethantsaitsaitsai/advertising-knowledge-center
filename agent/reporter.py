@@ -389,6 +389,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         - **`sum_cols`**: 用於加總的指標欄位 (⚠️ **必須使用原始英文欄位名**)。
         - **`concat_col`**: **(新功能)** 用於字串聚合的欄位。
           - 當你將 `groupby_cols` 設為 `["format_name"]` 時，你應該同時設定 `concat_col="dimension_name"`，這樣系統就會自動將所有產業名稱合併成一個欄位。
+          - **注意**: 系統假設輸入數據在 (groupby_col, concat_col) 組合上是唯一的，這通常由上游 SQL 保證。
 
         **8. 輸出要求**:
         - **rename_map**: 原始欄位 -> 標準中文名稱（用於最終顯示）。
@@ -398,7 +399,9 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         - **groupby_cols**: 根據上述聚合邏輯設定 (英文名)。
         - **concat_col**: 根據上述聚合邏輯設定 (英文名)。
         - **sum_cols**: 用於加總的指標欄位 (英文名)。
-        - **sort_col**: 排序欄位（原始英文欄位名 + " DESC" 或 " ASC"）。如果不需要排序則留空 ""。
+        - **sort_col**: 排序欄位（原始英文欄位名 + " DESC" 或 " ASC"）。
+          - 如果有聚合 (groupby)，請務必使用加總後的欄位（如 "total_budget DESC"）進行排序，以顯示正確的排名。
+          - 如果不需要排序則留空 ""。
         - **limit**: 限制顯示筆數（整數）。如果使用者要「前X」則設為 X，否則設為 0。
         - **time_aggregation**: 時間聚合配置。
         - **percentage_config**: 佔比計算配置。
