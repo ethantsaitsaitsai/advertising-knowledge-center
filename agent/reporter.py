@@ -632,42 +632,53 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     end_date = routing_context.get("end_date", "指定期間")
     
     SUMMARY_PROMPT = """
-    你是數據報告呈現者。
+    你是數據報告呈現者。請針對使用者查詢「{query}」與生成的數據表產出回應。
     
-    請針對使用者查詢「{query}」與生成的數據表，產出回應。
+    請回傳 JSON 格式，包含以下兩個欄位：
+    1. "opening": 簡單說明數據範圍與內容。例如：「這是 **{start_date}** 至 **{end_date}** 期間，關於『{query}』的數據資料。」
+    2. "suggestions": 根據數據結果，提供 3 個具體且高度相關的後續查詢建議（帶有 💡 符號與標題，例如：💡 **您還可以嘗試查詢：** ...）。
     
-    **回應規則**:
-    1. **開場白**: 僅需簡單說明數據範圍與內容。例如：「這是 **{start_date}** 至 **{end_date}** 期間，關於『{query}』的數據資料。」(請修飾得通順一點)。
-    2. **嚴禁分析**: **不要** 對數據進行解讀、總結、尋找亮點或重複表格內容。表格會自動附在下方。
-    3. **後續建議**: 請根據當前的數據結果，提供 3 個具體且高度相關的**後續查詢建議** (Follow-up Questions)，引導使用者進行更深入的分析（例如：從預算查成效、從產業查客戶、從總覽查趨勢）。
-    
-    **輸出範例**:
-    這是 2024-01-01 至 2024-06-30 期間，關於各產業廣告預算分佈的統計數據。
-    
-    💡 **您還可以嘗試查詢：**
-    1. 針對預算最高的「服務類」產業，查詢其詳細的成效數據 (CTR/VTR)。
-    2. ...
-    3. ...
+    **規則**:
+    - **嚴禁分析**: 不要在 opening 中對數據進行解讀、尋找亮點。
+    - **JSON 格式**: 只回傳原始 JSON，不要包含 Markdown 標記。
     """
     
-    if final_table:
-        messages = [
-            HumanMessage(content=SUMMARY_PROMPT.format(
-                query=original_query, 
-                table=final_table,
-                start_date=start_date,
-                end_date=end_date
-            ))
-        ]
-        response = llm.invoke(messages)
-        summary_text = response.content
-        if isinstance(summary_text, list):
-             summary_text = " ".join([item.get("text", "") for item in summary_text])
-    else:
-        summary_text = "抱歉，無法從數據中生成報表。"
+    opening_text = ""
+    suggestions_text = ""
 
-    # Final Assembly
-    final_response = summary_text + "\n\n" + final_table
+    if final_table:
+        try:
+            messages = [
+                SystemMessage(content="You are a JSON generator. Output only valid raw JSON."),
+                HumanMessage(content=SUMMARY_PROMPT.format(
+                    query=original_query, 
+                    start_date=start_date,
+                    end_date=end_date
+                ))
+            ]
+            response = llm.invoke(messages)
+            content = response.content
+            if isinstance(content, list): content = " ".join([c.get("text", "") for c in content])
+            
+            import re
+            content = content.replace("```json", "").replace("```", "").strip()
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                res_json = json.loads(json_match.group(0))
+                opening_text = res_json.get("opening", "")
+                suggestions_text = res_json.get("suggestions", "")
+            else:
+                opening_text = f"這是 {start_date} 至 {end_date} 期間，關於『{original_query}』的數據資料。"
+        except Exception as e:
+            print(f"DEBUG [Reporter] Summary JSON parsing failed: {e}")
+            opening_text = f"這是 {start_date} 至 {end_date} 期間，關於『{original_query}』的數據資料。"
+    else:
+        opening_text = "抱歉，無法從數據中生成報表。"
+
+    # Final Assembly (Correct Order: Opening -> Table -> Suggestions)
+    final_response = opening_text + "\n\n" + final_table
+    if suggestions_text:
+        final_response += "\n\n" + suggestions_text
 
     return {
         "final_response": final_response,
