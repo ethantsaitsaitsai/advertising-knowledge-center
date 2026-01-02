@@ -43,31 +43,47 @@ INTENT_ROUTER_PROMPT = """你是 AKC 智能助手的意圖路由器 (Intent Rout
 - "台北數位" → 代理商名稱
 - "春節檔期" → 活動名稱
 
+**時間判斷 (Time Extraction):**
+- 根據使用者的描述與 **當前日期** ({current_time}) 推算查詢的起始與結束日期。
+- 格式: YYYY-MM-DD
+- 規則:
+  - "今年": {current_year}-01-01 到 {current_year}-12-31
+  - "去年": {last_year}-01-01 到 {last_year}-12-31
+  - "上個月": 上個月的第一天到最後一天
+  - "過去半年": 往前推6個月的日期到當前日期
+  - "2024年": 2024-01-01 到 2024-12-31
+  - "全部時間" / "全期間" / "不限時間": 2020-01-01 到 {current_year}-12-31
+  - 若使用者未提及時間，請回傳 null。
+
 **分析步驟:**
 1. 判斷使用者意圖類型
 2. 提取**具體實體名稱**（不要把維度當成實體）
-3. 提取時間關鍵字
+3. 提取時間關鍵字並計算 start_date/end_date
 4. 判斷分析類型（投資/執行/成效）
 
 **輸出格式 (JSON):**
 ```json
 {{
   "route_to": "DataAnalyst" | "Strategist" | "Chitchat",
-  "entity_keywords": [],  // 只放具體名稱，例如 ["悠遊卡", "Nike"]，不要放 "代理商"、"廣告主" 等維度
-  "time_keywords": ["今年", "2024", "Q1", "YTD"],
+  "entity_keywords": [],  // 只放具體名稱
+  "time_keywords": ["今年"], // 原始時間詞彙
+  "start_date": "YYYY-MM-DD" | null,
+  "end_date": "YYYY-MM-DD" | null,
   "analysis_hint": "執行金額" | "投資金額" | "成效數據" | null,
   "confidence": "high" | "medium" | "low"
 }}
 ```
 
 **範例:**
-- 問題: "代理商 YTD 認列金額"
-  → entity_keywords: []  (因為 "代理商" 是維度，不是具體名稱)
-  → analysis_hint: "執行金額"
+- 問題: "代理商 YTD 認列金額" (假設當前 2024-05-20)
+  → time_keywords: ["YTD"]
+  → start_date: "2024-01-01"
+  → end_date: "2024-05-20"
 
-- 問題: "悠遊卡今年執行金額"
-  → entity_keywords: ["悠遊卡"]  (這是具體的客戶名稱)
-  → analysis_hint: "執行金額"
+- 問題: "悠遊卡成效如何"
+  → time_keywords: []
+  → start_date: null
+  → end_date: null
 
 請分析使用者的問題並回應。
 """
@@ -146,8 +162,16 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
         final_query_for_analysis = f"Original Query: {prev_user_msg}\nUser Selection/Clarification: {last_user_msg}"
 
     # Prepare prompt
-    now = datetime.now().strftime("%Y-%m-%d")
-    system_msg = SystemMessage(content=INTENT_ROUTER_PROMPT.format(current_time=now))
+    now_dt = datetime.now()
+    now_str = now_dt.strftime("%Y-%m-%d")
+    current_year = now_dt.year
+    last_year = current_year - 1
+    
+    system_msg = SystemMessage(content=INTENT_ROUTER_PROMPT.format(
+        current_time=now_str,
+        current_year=current_year,
+        last_year=last_year
+    ))
     user_msg = HumanMessage(content=final_query_for_analysis)
 
     # Invoke LLM
@@ -170,6 +194,8 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
         "route_to": "DataAnalyst",  # Default
         "entity_keywords": [],
         "time_keywords": [],
+        "start_date": None,
+        "end_date": None,
         "analysis_hint": None,
         "confidence": "medium"
     }
@@ -184,6 +210,8 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
 
     # Determine next node
     route = routing_decision.get("route_to", "DataAnalyst")
+    start_date = routing_decision.get("start_date")
+    end_date = routing_decision.get("end_date")
 
     if route == "Chitchat":
         return {
@@ -195,15 +223,26 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
         print("DEBUG [IntentRouter] Strategist not implemented yet, routing to DataAnalyst")
         route = "DataAnalyst"
 
+    # --- [NEW] Time Clarification Logic ---
+    # If routing to DataAnalyst but no time range is determined, ask user.
+    if route == "DataAnalyst" and (not start_date or not end_date):
+        print("DEBUG [IntentRouter] Missing time range. Asking user for clarification.")
+        return {
+            "next": "END", # Stop and wait for user input
+            "messages": [AIMessage(content="請問您想查詢哪個時間段的數據？(例如：今年、過去三個月、2025年Q1)")]
+        }
+
     # Store routing context for Data Analyst
     routing_context = {
         "entity_keywords": routing_decision.get("entity_keywords", []),
         "time_keywords": routing_decision.get("time_keywords", []),
+        "start_date": start_date,
+        "end_date": end_date,
         "analysis_hint": routing_decision.get("analysis_hint"),
         "original_query": final_query_for_analysis
     }
 
-    print(f"DEBUG [IntentRouter] Routing to: {route}")
+    print(f"DEBUG [IntentRouter] Routing to: {route} with dates: {start_date} ~ {end_date}")
 
     return {
         "next": "DataAnalyst",

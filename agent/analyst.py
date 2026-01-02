@@ -210,12 +210,12 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
      - 只在上述專用工具不適用時才使用
 
 3. **判斷日期範圍 (重要)**
-   - **預設範圍**:
-     - **Start Date**: {last_year}-01-01 (預設涵蓋去年與今年，避免遺漏近期活動)
-     - **End Date**: {current_year}-12-31
-   - **例外情況**:
-     - 媒體排期常會預排至明年。若在當年查無特定活動，**請自動將 End Date 延長至明年底** (例如 {current_year}+1-12-31)。
-     - 若使用者明確指定年份，則以使用者指定為準。
+   - **系統已指定查詢範圍**:
+     - **Start Date**: {start_date}
+     - **End Date**: {end_date}
+   - **請務必將此日期範圍應用於所有查詢工具的 `start_date` 與 `end_date` 參數。**
+   - **最終回應要求**:
+     - 在回答開頭或結尾，必須明確說明：「**本數據涵蓋範圍: {start_date} 至 {end_date}**」。
 
    **⚠️ 查無資料時的處理策略 (Retry Strategy)**:
    - 若使用 `query_campaign_basic` 查詢特定客戶但在指定日期內回傳 0 筆結果：
@@ -314,6 +314,18 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
     entity_keywords = routing_context.get("entity_keywords", [])
     time_keywords = routing_context.get("time_keywords", [])
     analysis_hint = routing_context.get("analysis_hint")
+    
+    # [NEW] Extract dates
+    start_date = routing_context.get("start_date")
+    end_date = routing_context.get("end_date")
+    
+    # Fallback default dates if not provided (safety net)
+    if not start_date or not end_date:
+        start_date = f"{last_year}-01-01"
+        end_date = f"{current_year}-12-31"
+        print(f"DEBUG [DataAnalyst] Using fallback dates: {start_date} ~ {end_date}")
+    else:
+        print(f"DEBUG [DataAnalyst] Using router provided dates: {start_date} ~ {end_date}")
 
     # Load previously resolved entities from state
     resolved_entities_state = state.get("resolved_entities", [])
@@ -357,6 +369,8 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
         "context": {
             "entity_keywords": entity_keywords,
             "time_keywords": time_keywords,
+            "start_date": start_date,
+            "end_date": end_date,
             "analysis_hint": analysis_hint,
             "resolved_entities_count": len(resolved_entities_state)
         }
@@ -371,6 +385,8 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
             original_query=original_query,
             entity_keywords=entity_keywords,
             time_keywords=time_keywords,
+            start_date=start_date, # [NEW]
+            end_date=end_date,     # [NEW]
             analysis_hint=analysis_hint or "未指定"
         ) + resolved_context_str),
         HumanMessage(content=f"請協助分析這個查詢：{original_query}")
