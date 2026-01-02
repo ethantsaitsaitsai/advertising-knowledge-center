@@ -425,6 +425,30 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             if json_match:
                 plan_json = json_match.group(0)
                 plan = json.loads(plan_json)
+                
+                # --- [NEW] Schema Plan Optimizer (Rule-Based Overrides) ---
+                # Rule 1: Auto-Aggregate Industry by Format
+                # If the planner tries to group by BOTH format and industry, it creates granular rows.
+                # We want to group by Format and CONCAT Industry for a cleaner report.
+                raw_groupby = plan.get("groupby_cols", [])
+                
+                # Check for Format + Industry combination
+                has_format = "format_name" in raw_groupby
+                has_dimension = "dimension_name" in raw_groupby
+                
+                if has_format and has_dimension:
+                    print(f"DEBUG [Reporter] Plan Optimizer: Detected granular Format+Industry grouping. Switching to Aggregation.")
+                    
+                    # Remove dimension_name from groupby
+                    plan["groupby_cols"] = [col for col in raw_groupby if col != "dimension_name"]
+                    
+                    # Set concat_col to dimension_name
+                    plan["concat_col"] = "dimension_name"
+                    
+                    # Ensure dimension_name is NOT in sum_cols (just in case)
+                    if "sum_cols" in plan:
+                        plan["sum_cols"] = [col for col in plan["sum_cols"] if col != "dimension_name"]
+
                 print(f"DEBUG [Reporter] Schema Plan Success: {plan}")
 
                 # [NEW] Auto-convert Chinese column names to English for groupby/sum operations
