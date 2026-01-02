@@ -626,22 +626,38 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     # --- LLM Summary Generation ---
     # Now we ask LLM to summarize based on the table we generated
     
+    # [NEW] Extract dates for the prompt
+    routing_context = state.get("routing_context", {})
+    start_date = routing_context.get("start_date", "指定期間")
+    end_date = routing_context.get("end_date", "指定期間")
+    
     SUMMARY_PROMPT = """
-    你是數據分析報告者。
+    你是數據報告呈現者。
     
-    以下是根據使用者查詢「{query}」生成的數據表：
+    請針對使用者查詢「{query}」與生成的數據表，產出回應。
     
-    {table}
+    **回應規則**:
+    1. **開場白**: 僅需簡單說明數據範圍與內容。例如：「這是 **{start_date}** 至 **{end_date}** 期間，關於『{query}』的數據資料。」(請修飾得通順一點)。
+    2. **嚴禁分析**: **不要** 對數據進行解讀、總結、尋找亮點或重複表格內容。表格會自動附在下方。
+    3. **後續建議**: 請根據當前的數據結果，提供 3 個具體且高度相關的**後續查詢建議** (Follow-up Questions)，引導使用者進行更深入的分析（例如：從預算查成效、從產業查客戶、從總覽查趨勢）。
     
-    請針對這個表格提供一個簡短的總結（Summary）。
-    - 重點提示數據的亮點。
-    - **不要** 重複輸出表格（表格會自動附在下方）。
-    - 語氣專業且有洞察力。
+    **輸出範例**:
+    這是 2024-01-01 至 2024-06-30 期間，關於各產業廣告預算分佈的統計數據。
+    
+    💡 **您還可以嘗試查詢：**
+    1. 針對預算最高的「服務類」產業，查詢其詳細的成效數據 (CTR/VTR)。
+    2. ...
+    3. ...
     """
     
     if final_table:
         messages = [
-            HumanMessage(content=SUMMARY_PROMPT.format(query=original_query, table=final_table))
+            HumanMessage(content=SUMMARY_PROMPT.format(
+                query=original_query, 
+                table=final_table,
+                start_date=start_date,
+                end_date=end_date
+            ))
         ]
         response = llm.invoke(messages)
         summary_text = response.content
