@@ -666,7 +666,12 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             if json_match:
                 res_json = json.loads(json_match.group(0))
                 opening_text = res_json.get("opening", "")
-                suggestions_text = res_json.get("suggestions", "")
+                suggestions_data = res_json.get("suggestions", "")
+                
+                if isinstance(suggestions_data, list):
+                    suggestions_text = "\n".join(suggestions_data)
+                else:
+                    suggestions_text = str(suggestions_data)
             else:
                 opening_text = f"這是 {start_date} 至 {end_date} 期間，關於『{original_query}』的數據資料。"
         except Exception as e:
