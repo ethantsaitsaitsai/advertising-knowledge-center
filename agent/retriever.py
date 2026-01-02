@@ -57,17 +57,14 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
      - 查「產業預算」或「投放哪些格式」→ 推薦使用 `dimension='sub_industry'` (子類) 以獲得更細緻的分析 (若無特定需求也可選 `dimension='industry'` 大類)。
      - 查「客戶預算」或「誰投了這個格式」→ `dimension='client'`
      - 查「代理商預算」→ `dimension='agency'`
-   - **核心參數 `split_by_format` (決定聚合程度)**:
-     - `True` (預設): 顯示格式細節 (例如: 汽車-Banner, 汽車-Video) -> **適用於「所有格式...」或「各格式...」的詳細分析**。
-     - `False`: 僅顯示維度總計 (例如: 汽車總額) -> 適用於「純產業排名」且不關心格式時。
    - **核心參數 `primary_view` (決定欄位順序)**:
      - `'dimension'` (預設): 第一欄為產業/客戶。
      - `'format'`: 第一欄為格式。**當使用者問「所有格式投放到的...」或「Banner 投放到的...」時，請務必設為 `'format'`**。
    - **過濾參數**:
      - 若指定特定格式 (如「Banner」)，請設 `format_ids` (需先透過 `resolve_entity` 取得格式 ID)。
    - **範例**:
-     - "半年內所有格式投放的產業" (格式視角) → `query_industry_format_budget(dimension='sub_industry', split_by_format=True, primary_view='format', ...)`
-     - "汽車產業投了哪些格式" (產業視角) → `query_industry_format_budget(dimension='industry', split_by_format=True, primary_view='dimension', industry_ids=[...])`
+     - "半年內所有格式投放的產業" (格式視角) → `query_industry_format_budget(dimension='sub_industry', primary_view='format', ...)`
+     - "汽車產業投了哪些格式" (產業視角) → `query_industry_format_budget(dimension='industry', primary_view='dimension', industry_ids=[...])`
 
 2. **全站格式成效 (`query_format_benchmark`)**:
    - 適用：「所有格式的 CTR 排名」、「產業的平均 VTR」。
