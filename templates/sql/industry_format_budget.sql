@@ -5,8 +5,8 @@
   Returns: col1 (Subject), col2 (Object), total_budget, campaign_count
   Parameters:
     - dimension: 'industry' | 'sub_industry' | 'client' | 'agency' (default: 'industry')
-    - split_by_format: bool (default: True) - 若為 False，則不區分格式，僅針對維度聚合
-    - primary_view: 'dimension' | 'format' (default: 'dimension') - 決定第一欄是維度還是格式
+    - split_by_format: bool (default: True) - 強制為 True
+    - primary_view: 'dimension' | 'format' (default: 'dimension')
     - industry_ids: List[int] (optional)
     - sub_industry_ids: List[int] (optional)
     - client_ids: List[int] (optional)
@@ -21,22 +21,18 @@ SELECT
     -- 根據 primary_view 決定欄位順序
     {% if primary_view == 'format' %}
         -- Format First Mode
-        {% if split_by_format|default(true) %}
-            COALESCE(aft.title, aft.name, 'Other') AS format_name,
-            aft.id AS format_id,
-        {% else %}
-            'All Formats' AS format_name,
-            0 AS format_id,
-        {% endif %}
+        COALESCE(aft.title, aft.name, 'Other') AS format_name,
+        aft.id AS format_id,
 
         {% if dimension == 'client' %}
             COALESCE(c.advertiser_name, c.company) AS dimension_name,
         {% elif dimension == 'agency' %}
             COALESCE(ag.agencyname, 'Direct Client') AS dimension_name,
-        {% elif dimension == 'sub_industry' %}
-            pcsc.name AS dimension_name,
+        {% elif dimension in ['industry', 'sub_industry'] %}
+            -- 使用去重後的聚合名稱
+            pc_agg.dimension_name AS dimension_name,
         {% else %}
-            pcc.name AS dimension_name,
+            'Unknown' AS dimension_name,
         {% endif %}
 
     {% else %}
@@ -51,13 +47,8 @@ SELECT
             pcc.name AS dimension_name,
         {% endif %}
 
-        {% if split_by_format|default(true) %}
-            COALESCE(aft.title, aft.name, 'Other') AS format_name,
-            aft.id AS format_id,
-        {% else %}
-            'All Formats' AS format_name,
-            0 AS format_id,
-        {% endif %}
+        COALESCE(aft.title, aft.name, 'Other') AS format_name,
+        aft.id AS format_id,
     {% endif %}
 
     -- 統計數據
@@ -68,9 +59,43 @@ FROM one_campaigns oc
 JOIN cue_lists cl ON oc.cue_list_id = cl.id
 LEFT JOIN clients c ON cl.client_id = c.id
 LEFT JOIN agency ag ON cl.agency_id = ag.id
-JOIN pre_campaign pc ON pc.one_campaign_id = oc.id
-JOIN pre_campaign_categories pcc ON pc.category_id = pcc.id
-LEFT JOIN pre_campaign_sub_categories pcsc ON pc.sub_category_id = pcsc.id
+
+-- [CRITICAL FIX] 處理產業關聯 (防止一對多導致預算倍增)
+{% if dimension in ['industry', 'sub_industry'] and primary_view == 'format' %}
+    -- 針對格式視角：使用 Subquery 預先聚合產業名稱，確保 1:1 關聯
+    JOIN (
+        SELECT 
+            pc.one_campaign_id,
+            GROUP_CONCAT(DISTINCT 
+                {% if dimension == 'sub_industry' %} pcsc.name {% else %} pcc.name {% endif %}
+            SEPARATOR ', ') as dimension_name
+        FROM pre_campaign pc
+        JOIN pre_campaign_categories pcc ON pc.category_id = pcc.id
+        LEFT JOIN pre_campaign_sub_categories pcsc ON pc.sub_category_id = pcsc.id
+        WHERE 1=1
+        {% if industry_ids %}
+            AND pc.category_id IN ({{ industry_ids|join(',') }})
+        {% endif %}
+        {% if sub_industry_ids %}
+            AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
+        {% endif %}
+        GROUP BY pc.one_campaign_id
+    ) pc_agg ON pc_agg.one_campaign_id = oc.id
+
+{% else %}
+    -- 針對產業視角或其他維度：保持原始 Join (允許拆分)
+    JOIN pre_campaign pc ON pc.one_campaign_id = oc.id
+    JOIN pre_campaign_categories pcc ON pc.category_id = pcc.id
+    LEFT JOIN pre_campaign_sub_categories pcsc ON pc.sub_category_id = pcsc.id
+    
+    -- 在此處應用過濾
+    {% if industry_ids %}
+        AND pc.category_id IN ({{ industry_ids|join(',') }})
+    {% endif %}
+    {% if sub_industry_ids %}
+        AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
+    {% endif %}
+{% endif %}
 
 -- 關聯格式與預算
 JOIN cue_list_product_lines clpl ON clpl.cue_list_id = cl.id
@@ -81,14 +106,6 @@ JOIN cue_list_budgets clb ON clb.cue_list_ad_format_id = claf.id
 WHERE 1=1
     AND cl.status IN ('converted', 'requested')
     AND aft.title NOT LIKE '%已退役%'
-
-    {% if industry_ids %}
-    AND pc.category_id IN ({{ industry_ids|join(',') }})
-    {% endif %}
-
-    {% if sub_industry_ids %}
-    AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
-    {% endif %}
 
     {% if client_ids %}
     AND c.id IN ({{ client_ids|join(',') }})
@@ -111,7 +128,6 @@ WHERE 1=1
     {% endif %}
 
 GROUP BY 
-    -- Group By 順序其實不影響聚合結果，但為了邏輯一致性可調整
     {% if primary_view == 'format' %}
         format_name, aft.id, dimension_name
     {% else %}
