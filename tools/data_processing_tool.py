@@ -192,7 +192,6 @@ def pandas_processor(
                 except (ValueError, TypeError):
                     df[col] = 0
 
-            # Group by and sum
             # Check if all groupby cols exist
             valid_groupby_cols = [c for c in groupby_cols_list if c in df.columns]
             if not valid_groupby_cols:
@@ -203,7 +202,18 @@ def pandas_processor(
                     "count": 0
                 }
 
-            result_df = df.groupby(valid_groupby_cols)[sum_cols_list].sum().reset_index()
+            # [NEW] Enhanced Aggregation (Sum + Concat)
+            agg_dict = {col: 'sum' for col in sum_cols_list}
+
+            if concat_col:
+                concat_cols_list = [col.strip() for col in concat_col.split(',')]
+                for c_col in concat_cols_list:
+                    if c_col in df.columns:
+                        # Lambda to concat unique values
+                        agg_dict[c_col] = lambda x: sep.join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != '')))
+
+            # Perform Aggregation
+            result_df = df.groupby(valid_groupby_cols).agg(agg_dict).reset_index()
 
             # [FIX] Don't sort yet - wait until after CTR/VTR/ER calculation
             # Store sort_col and top_n for later use
