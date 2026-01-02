@@ -189,6 +189,64 @@ def query_execution_budget(
     return _render_and_execute_mysql("execution_budget.sql", context)
 
 @tool
+def query_industry_format_budget(
+    dimension: str = 'industry',
+    split_by_format: bool = True,
+    primary_view: str = 'dimension',
+    industry_ids: Optional[List[int]] = None,
+    sub_industry_ids: Optional[List[int]] = None,
+    client_ids: Optional[List[int]] = None,
+    agency_ids: Optional[List[int]] = None,
+    format_ids: Optional[List[int]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 50
+) -> Dict[str, Any]:
+    """
+    多維度預算分佈統計。
+    
+    【核心功能】
+    此工具透過 `dimension` 參數控制「分組維度」，並可選擇是否展開格式細節。
+    
+    【參數說明】
+    - dimension (必填): 決定回傳結果的 GroupBy 對象
+      - 'industry': 依「產業」分組 (預設)
+      - 'client': 依「客戶」分組
+      - 'agency': 依「代理商」分組
+      
+    - split_by_format (bool, default=True):
+      - True: 顯示格式細節 (例如: 汽車產業-Banner, 汽車產業-Video)
+      - False: 僅顯示維度總計 (例如: 汽車產業總額, 金融產業總額) -> 用於「全球排名」
+
+    - primary_view (str, default='dimension'):
+      - 'dimension': 結果第一欄為維度名稱 (產業/客戶)，第二欄為格式。適用於「以產業為主體」的分析。
+      - 'format': 結果第一欄為格式名稱，第二欄為維度名稱。適用於「以格式為主體」的分析 (例如: "Banner 投放到了哪些產業？")。
+    
+    - 篩選條件 (Filters):
+      - format_ids: 若指定，則只看特定格式
+      - industry_ids/client_ids: 若指定，則只看特定範圍
+    
+    【常見應用情境】
+    1. 「所有格式投放到的產業排名」 -> dimension='industry', split_by_format=False, primary_view='format' (這裡其實 split_by_format=False 會讓格式變為 'All Formats'，這時 primary_view='format' 會讓 'All Formats' 在第一欄，強調「針對所有格式」的總表)
+    2. 「Outstream格式投放到的前十大客戶」 -> dimension='client', format_ids=[...], split_by_format=False, primary_view='format'
+    3. 「汽車產業投了哪些格式」 -> dimension='industry', industry_ids=[...], split_by_format=True, primary_view='dimension' (預設)
+    """
+    context = {
+        "dimension": dimension,
+        "split_by_format": split_by_format,
+        "primary_view": primary_view,
+        "industry_ids": industry_ids,
+        "sub_industry_ids": sub_industry_ids,
+        "client_ids": client_ids,
+        "agency_ids": agency_ids,
+        "format_ids": format_ids,
+        "start_date": start_date,
+        "end_date": end_date,
+        "limit": limit
+    }
+    return _render_and_execute_mysql("industry_format_budget.sql", context)
+
+@tool
 def query_targeting_segments(
     campaign_ids: List[int]
 ) -> Dict[str, Any]:

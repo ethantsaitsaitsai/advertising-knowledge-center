@@ -19,9 +19,10 @@ from tools.campaign_template_tool import (
     query_execution_budget,
     query_targeting_segments,
     query_ad_formats,
-    execute_sql_template
+    execute_sql_template,
+    query_industry_format_budget
 )
-from tools.performance_tools import query_performance_metrics
+from tools.performance_tools import query_performance_metrics, query_format_benchmark
 import json
 from datetime import datetime
 
@@ -35,7 +36,9 @@ RETRIEVER_TOOLS = [
     query_targeting_segments,
     query_ad_formats,
     execute_sql_template,
-    query_performance_metrics
+    query_industry_format_budget,
+    query_performance_metrics,
+    query_format_benchmark
 ]
 
 # Bind tools
@@ -45,6 +48,35 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
 
 **你的任務流程 (SOP)**:
 
+**⚠️ 關鍵判斷：何時使用「統計與基準工具」？**
+若使用者的問題屬於「全站/產業層級」的「佔比」或「排名」分析，**請優先使用以下高效工具**，並跳過後續的實體解析與活動查詢步驟：
+
+1. **多維度預算佔比 (`query_industry_format_budget`)**:
+   - 適用：「某產業的格式分佈」、「某格式的產業分佈」、「某格式的客戶分佈」。
+   - **核心參數 `dimension` (決定分析視角)**:
+     - 查「產業預算」或「投放哪些格式」→ `dimension='industry'` (大類) 或 `dimension='sub_industry'` (子類，若需要更細緻的產業分析時推薦使用)
+     - 查「客戶預算」或「誰投了這個格式」→ `dimension='client'`
+     - 查「代理商預算」→ `dimension='agency'`
+   - **核心參數 `split_by_format` (決定聚合程度)**:
+     - `True` (預設): 顯示格式細節 (例如: 汽車-Banner, 汽車-Video) -> **適用於「所有格式...」或「各格式...」的詳細分析**。
+     - `False`: 僅顯示維度總計 (例如: 汽車總額) -> 適用於「純產業排名」且不關心格式時。
+   - **核心參數 `primary_view` (決定欄位順序)**:
+     - `'dimension'` (預設): 第一欄為產業/客戶。
+     - `'format'`: 第一欄為格式。**當使用者問「所有格式投放到的...」或「Banner 投放到的...」時，請務必設為 `'format'`**。
+   - **過濾參數**:
+     - 若指定特定格式 (如「Banner」)，請設 `format_ids` (需先透過 `resolve_entity` 取得格式 ID)。
+   - **範例**:
+     - "半年內所有格式投放的產業" (格式視角) → `query_industry_format_budget(dimension='industry', split_by_format=True, primary_view='format', ...)`
+     - "汽車產業投了哪些格式" (產業視角) → `query_industry_format_budget(dimension='industry', split_by_format=True, primary_view='dimension', industry_ids=[...])`
+
+2. **全站格式成效 (`query_format_benchmark`)**:
+   - 適用：「所有格式的 CTR 排名」、「產業的平均 VTR」。
+   - 範例: "半年內所有格式的 CTR 排名" → `query_format_benchmark(start_date=..., end_date=...)`
+
+---
+
+**一般查詢流程 (針對特定實體/Campaign)**:
+
 **⚠️ 關鍵判斷：何時需要實體解析？**
 在執行 Step 1 之前，請先判斷使用者查詢的類型：
 
@@ -53,6 +85,7 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
     - "悠遊卡的預算" (具體客戶名)
     - "台灣虎航的代理商" (具體客戶名)
     - "美妝產業的活動" (具體產業名)
+    - "Outstream 格式的分佈" (具體格式名)
 
 - **不需要實體解析的查詢** (直接進入 Step 3):
   - 使用者要求**整體排名/匯總/統計**，例如：

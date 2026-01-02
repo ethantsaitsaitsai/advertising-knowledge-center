@@ -193,6 +193,59 @@ templates:
     dependencies:
       - campaign_basic
     notes: 包含 L1/L2/L3 三個層級的預算，注意不可直接加總
+    
+  industry_format_budget:
+    file: industry_format_budget.sql
+    description: 產業/客戶層級的格式預算佔比統計
+    keywords:
+      - 產業預算
+      - 格式預算佔比
+      - 產業分析
+      - 格式花費
+    merge_key: dimension_name
+    returns:
+      - dimension_name
+      - format_name
+      - total_budget
+      - campaign_count
+    required_params: []
+    optional_params:
+      - industry_ids
+      - sub_industry_ids
+      - client_ids
+      - start_date
+      - end_date
+    priority: 1
+    dependencies: []
+    notes: 聚合層級資料，非 Campaign 明細
+
+  format_benchmark:
+    file: format_benchmark.sql
+    description: 格式成效基準 (Benchmark) 與排名
+    keywords:
+      - 格式成效
+      - 格式排名
+      - CTR排名
+      - VTR排名
+      - 基準值
+      - Benchmark
+    merge_key: format_name
+    returns:
+      - format_name
+      - format_id
+      - avg_ctr
+      - avg_vtr
+      - avg_er
+      - total_impressions
+    required_params:
+      - start_date
+      - end_date
+    optional_params:
+      - cmp_ids
+      - format_ids
+    priority: 1
+    dependencies: []
+    notes: ClickHouse 聚合資料，無 Campaign 維度
 
 # 使用範例組合 (Use Case Combinations)
 use_cases:
@@ -231,6 +284,12 @@ use_cases:
       - media_placements
       - budget_details
 
+  industry_analysis:
+    description: 產業/市場分析 (預算佔比與格式基準)
+    templates:
+      - industry_format_budget
+      - format_benchmark
+
 # Agent 選擇邏輯建議
 selection_rules:
   - rule: 如果查詢包含「格式」關鍵字
@@ -241,6 +300,8 @@ selection_rules:
     action: 選擇 budget_details
   - rule: 如果查詢包含「媒體」、「版位」、「Placement」
     action: 選擇 media_placements
+  - rule: 如果查詢包含「佔比」、「排名」、「基準」、「全產業」、「全站」
+    action: 選擇 industry_format_budget 或 format_benchmark (視指標而定)
   - rule: 預設情況（無明確關鍵字）
     action: 至少選擇 campaign_basic
 
@@ -273,3 +334,15 @@ example_queries:
       - targeting_segments
     reasoning: |
       - "受眾標籤" → targeting_segments
+
+  - query: "汽車產業的格式預算佔比如何？"
+    selected_templates:
+      - industry_format_budget
+    reasoning: |
+      - "產業" + "預算佔比" → industry_format_budget
+
+  - query: "半年內所有格式的 CTR 排名？"
+    selected_templates:
+      - format_benchmark
+    reasoning: |
+      - "格式" + "排名" + "CTR" → format_benchmark

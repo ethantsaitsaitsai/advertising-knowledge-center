@@ -18,9 +18,10 @@ from tools.campaign_template_tool import (
     query_execution_budget,
     query_targeting_segments,
     query_ad_formats,
-    execute_sql_template
+    execute_sql_template,
+    query_industry_format_budget
 )
-from tools.performance_tools import query_performance_metrics
+from tools.performance_tools import query_performance_metrics, query_format_benchmark
 from tools.data_processing_tool import pandas_processor
 import json
 
@@ -34,7 +35,9 @@ TOOLS = [
     query_targeting_segments,
     query_ad_formats,
     execute_sql_template,
+    query_industry_format_budget,
     query_performance_metrics,
+    query_format_benchmark,
     pandas_processor
 ]
 
@@ -174,6 +177,30 @@ ANALYST_SYSTEM_PROMPT = """你是 AKC 智能助手的數據分析師 (Data Analy
      - **維度說明**:
        - `dimension='format'`: 按廣告格式分組（預設）。
        - `dimension='campaign'`: 按活動分組。
+
+   **統計與基準工具 (Statistical & Benchmark Tools)**:
+   - `query_industry_format_budget`: 多維度預算分佈統計
+     - **參數 dimension (重要)**:
+       - `dimension='industry'` (預設): 大類產業。
+       - `dimension='sub_industry'`: 子類產業 (推薦用於詳細產業分析)。
+       - `dimension='client'`: 客戶。
+       - `dimension='agency'`: 代理商。
+     - **參數 split_by_format**:
+       - `True`: 顯示格式細節 (預設)。
+       - `False`: 僅顯示總計。
+     - **參數 primary_view**:
+       - `'dimension'` (預設): 第一欄為產業/客戶。
+       - `'format'`: 第一欄為格式。
+     - **使用範例**:
+       - 查「Banner 投到哪些產業」: `dimension='industry'`, `format_ids=[BannerID]`, `primary_view='format'`
+       - 查「Banner 的前十大客戶」: `dimension='client'`, `format_ids=[BannerID]`, `primary_view='format'`
+       - 查「所有格式投放到的產業」: `dimension='industry'`, `primary_view='format'`
+       - 查「汽車產業的格式分佈」: `dimension='industry'`, `industry_ids=[AutoID]`, `primary_view='dimension'`
+
+   - `query_format_benchmark`: 查詢格式成效基準與排名
+     - 適用：查詢「所有格式的 CTR 排名」、「汽車產業的平均 VTR」等**基準型**問題。
+     - **優點**：直接回傳 CTR/VTR 平均值與排名，無需處理個別 Campaign。
+     - 參數：cmp_ids (選填，用於產業篩選), format_ids (選填)。
 
    **進階工具**:
    - `execute_sql_template`: 通用模板執行器
@@ -424,7 +451,9 @@ def data_analyst_node(state: AgentState) -> Dict[str, Any]:
                 "query_targeting_segments": query_targeting_segments,
                 "query_ad_formats": query_ad_formats,
                 "execute_sql_template": execute_sql_template,
+                "query_industry_format_budget": query_industry_format_budget,
                 "query_performance_metrics": query_performance_metrics,
+                "query_format_benchmark": query_format_benchmark,
                 "pandas_processor": pandas_processor
             }
 

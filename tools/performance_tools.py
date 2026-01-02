@@ -117,3 +117,62 @@ def query_performance_metrics(
             "message": f"ClickHouse Query Error: {e}",
             "generated_sql": rendered_sql
         }
+
+@tool
+def query_format_benchmark(
+    start_date: str,
+    end_date: str,
+    cmp_ids: Optional[List[int]] = None,
+    format_ids: Optional[List[int]] = None
+) -> Dict[str, Any]:
+    """
+    查詢【格式成效基準】(Benchmark) 與排名。
+    適用於：
+    1. "所有格式" 的 CTR/VTR 排名。
+    2. "汽車產業" (透過 cmp_ids 篩選) 的格式成效平均值。
+    3. "Mobile Banner" (透過 format_ids 篩選) 的全站平均成效。
+    
+    Args:
+        start_date: 開始日期
+        end_date: 結束日期
+        cmp_ids: Campaign IDs (用於篩選特定產業或客戶群的 Campaign)
+        format_ids: 格式 IDs (用於篩選特定格式)
+    """
+    
+    # Render ClickHouse SQL
+    try:
+        template = env.get_template("format_benchmark.sql")
+        context = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "cmp_ids": cmp_ids,
+            "format_ids": format_ids
+        }
+        rendered_sql = template.render(**context)
+    except Exception as e:
+        return {"status": "error", "message": f"Template Rendering Error: {e}"}
+
+    # Execute
+    try:
+        ch_client = get_clickhouse_db()
+        result = ch_client.query(rendered_sql)
+        
+        columns = result.column_names
+        rows = [dict(zip(columns, row)) for row in result.result_rows]
+        
+        return {
+            "status": "success",
+            "data": rows,
+            "count": len(rows),
+            "generated_sql": rendered_sql,
+            "columns": columns
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"ClickHouse Benchmark Query Error: {e}",
+            "generated_sql": rendered_sql
+        }
