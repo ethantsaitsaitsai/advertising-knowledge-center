@@ -54,7 +54,7 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
 1. **多維度預算佔比 (`query_industry_format_budget`)**:
    - 適用：「某產業的格式分佈」、「某格式的產業分佈」、「某格式的客戶分佈」。
    - **核心參數 `dimension` (決定分析視角)**:
-     - 查「產業預算」或「投放哪些格式」→ `dimension='industry'` (大類) 或 `dimension='sub_industry'` (子類，若需要更細緻的產業分析時推薦使用)
+     - 查「產業預算」或「投放哪些格式」→ 推薦使用 `dimension='sub_industry'` (子類) 以獲得更細緻的分析 (若無特定需求也可選 `dimension='industry'` 大類)。
      - 查「客戶預算」或「誰投了這個格式」→ `dimension='client'`
      - 查「代理商預算」→ `dimension='agency'`
    - **核心參數 `split_by_format` (決定聚合程度)**:
@@ -66,7 +66,7 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
    - **過濾參數**:
      - 若指定特定格式 (如「Banner」)，請設 `format_ids` (需先透過 `resolve_entity` 取得格式 ID)。
    - **範例**:
-     - "半年內所有格式投放的產業" (格式視角) → `query_industry_format_budget(dimension='industry', split_by_format=True, primary_view='format', ...)`
+     - "半年內所有格式投放的產業" (格式視角) → `query_industry_format_budget(dimension='sub_industry', split_by_format=True, primary_view='format', ...)`
      - "汽車產業投了哪些格式" (產業視角) → `query_industry_format_budget(dimension='industry', split_by_format=True, primary_view='dimension', industry_ids=[...])`
 
 2. **全站格式成效 (`query_format_benchmark`)**:

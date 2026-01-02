@@ -383,22 +383,30 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
 
         ⚠️ **重要**: 佔比計算會在 groupby_sum 之後執行，確保先完成數據聚合再計算佔比。
 
-        **7. 輸出要求**:
+        **7. 聚合邏輯 (Aggregation Logic)**:
+        - **`groupby_cols`**: 用於去重的維度欄位 (⚠️ **必須使用原始英文欄位名**)。
+          - 例如，如果使用者查詢「各格式的產業分佈」，你應該設定 `groupby_cols=["format_name"]`。
+        - **`sum_cols`**: 用於加總的指標欄位 (⚠️ **必須使用原始英文欄位名**)。
+        - **`concat_col`**: **(新功能)** 用於字串聚合的欄位。
+          - 當你將 `groupby_cols` 設為 `["format_name"]` 時，你應該同時設定 `concat_col="dimension_name"`，這樣系統就會自動將所有產業名稱合併成一個欄位。
+
+        **8. 輸出要求**:
         - **rename_map**: 原始欄位 -> 標準中文名稱（用於最終顯示）。
         - **display_columns**: 最終要顯示的欄位列表（使用中文名稱）。
           - **規則**: 顯示主鍵 + 使用者明確要求的欄位 + 概念展開的欄位。
           - **禁止**: 嚴禁出現「客戶名稱」「代理商」「活動編號」等內部欄位，除非使用者明確詢問。
-        - **groupby_cols**: 用於去重的維度欄位（⚠️ **必須使用原始英文欄位名**，例如 ["format_name", "segment_name"]）。⚠️ **時間聚合注意**: 如果啟用時間聚合，請不要將時間欄位加入 groupby_cols，系統會自動處理。
-        - **sum_cols**: 用於加總的指標欄位（⚠️ **必須使用原始英文欄位名**，例如 ["investment_amount", "effective_impressions", "total_clicks"]）。
-        - **sort_col**: 排序欄位（原始英文欄位名 + " DESC" 或 " ASC"，例如 "ctr DESC"）。如果不需要排序則留空 ""。
-        - **limit**: 限制顯示筆數（整數）。如果使用者要「前X」則設為 X，否則設為 0（表示不限制）。
-        - **time_aggregation**: 時間聚合配置 {{"enabled": true/false, "period": "month"/"quarter"/"year"}}。如果不需要時間聚合，則設為 {{"enabled": false}}。系統會自動偵測可用的日期欄位。
-        - **percentage_config**: 佔比計算配置 {{"enabled": true/false, "value_col": "investment_amount", "percentage_col": "佔比 (%)"}}。如果不需要佔比計算，則設為 {{"enabled": false}}。
+        - **groupby_cols**: 根據上述聚合邏輯設定 (英文名)。
+        - **concat_col**: 根據上述聚合邏輯設定 (英文名)。
+        - **sum_cols**: 用於加總的指標欄位 (英文名)。
+        - **sort_col**: 排序欄位（原始英文欄位名 + " DESC" 或 " ASC"）。如果不需要排序則留空 ""。
+        - **limit**: 限制顯示筆數（整數）。如果使用者要「前X」則設為 X，否則設為 0。
+        - **time_aggregation**: 時間聚合配置。
+        - **percentage_config**: 佔比計算配置。
 
-        ⚠️ **重要**: `groupby_cols`、`sum_cols`、`sort_col`、`percentage_config.value_col` 使用原始英文欄位名（如 Available Columns 所示），`display_columns`、`percentage_config.percentage_col` 使用 rename_map 後的中文名。
+        ⚠️ **重要**: `groupby_cols`, `sum_cols`, `concat_col`, `sort_col` 等都使用原始英文欄位名, `display_columns` 使用中文名。
 
         請直接回傳 JSON 格式，不要包含任何 Markdown 標記或文字說明。
-        範例格式: {{"rename_map": {{}}, "display_columns": [], "sort_col": "", "groupby_cols": [], "sum_cols": [], "limit": 0, "time_aggregation": {{"enabled": false}}, "percentage_config": {{"enabled": false}}}}
+        範例格式: {{"rename_map": {{}}, "display_columns": [], "sort_col": "", "groupby_cols": [], "sum_cols": [], "concat_col": "", "limit": 0, ...}}
         """
         
         import re
@@ -428,6 +436,11 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 for col in plan.get("groupby_cols", []):
                     # If it's Chinese, convert to English; otherwise keep as is
                     groupby_cols_en.append(reverse_map.get(col, col))
+                
+                # Convert concat_col
+                concat_col_en = plan.get("concat_col", "")
+                if concat_col_en in reverse_map:
+                    concat_col_en = reverse_map[concat_col_en]
 
                 # Convert sum_cols
                 sum_cols_en = []
@@ -435,6 +448,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                     sum_cols_en.append(reverse_map.get(col, col))
 
                 print(f"DEBUG [Reporter] Converted groupby_cols: {plan.get('groupby_cols', [])} -> {groupby_cols_en}")
+                print(f"DEBUG [Reporter] Converted concat_col: {plan.get('concat_col', '')} -> {concat_col_en}")
                 print(f"DEBUG [Reporter] Converted sum_cols: {plan.get('sum_cols', [])} -> {sum_cols_en}")
 
                 # [NEW] Handle Time Aggregation
@@ -525,6 +539,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                         "operation": "groupby_sum",
                         "groupby_col": ",".join(groupby_cols_en),
                         "sum_col": ",".join(sum_cols_en),
+                        "concat_col": concat_col_en,
                         "sort_col": plan.get("sort_col"),
                         "ascending": False,
                         "top_n": top_n
@@ -559,6 +574,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                                 "rename_map": rename_map,
                                 "groupby_col": ",".join(groupby_cols_en),
                                 "sum_col": ",".join(sum_cols_en) + ",percentage",
+                                "concat_col": concat_col_en,
                                 "select_columns": display_columns,
                                 "sort_col": plan.get("sort_col"),
                                 "ascending": False,
@@ -579,6 +595,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                         "rename_map": plan.get("rename_map", {}),
                         "groupby_col": ",".join(groupby_cols_en),
                         "sum_col": ",".join(sum_cols_en),
+                        "concat_col": concat_col_en,
                         "select_columns": plan.get("display_columns", []),
                         "sort_col": plan.get("sort_col"),
                         "ascending": False,
