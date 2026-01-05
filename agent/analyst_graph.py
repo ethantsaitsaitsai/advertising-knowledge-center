@@ -6,7 +6,8 @@ Composes Retriever and Reporter into a cohesive workflow.
 from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 from agent.state import AgentState
-from agent.retriever import data_retriever_node
+# from agent.retriever import data_retriever_node
+from agent.analyst_v2 import data_retriever_v2_node # [NEW] Use V2 Agent
 from agent.reporter import data_reporter_node
 
 def create_analyst_graph():
@@ -16,7 +17,8 @@ def create_analyst_graph():
     workflow = StateGraph(AgentState)
 
     # Add Nodes
-    workflow.add_node("DataRetriever", data_retriever_node)
+    # workflow.add_node("DataRetriever", data_retriever_node)
+    workflow.add_node("DataRetriever", data_retriever_v2_node) # [NEW]
     workflow.add_node("DataReporter", data_reporter_node)
 
     # Define Edges

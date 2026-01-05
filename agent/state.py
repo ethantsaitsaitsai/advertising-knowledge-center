@@ -2,8 +2,9 @@ from typing import Annotated, List, Optional, Union, Sequence, Dict, Any
 from typing_extensions import TypedDict
 import operator
 from langchain_core.messages import BaseMessage
+from langchain.agents import AgentState as BaseAgentState
 
-class AgentState(TypedDict, total=False):
+class AgentState(BaseAgentState, total=False):
     """
     State for AKC Framework 3.0 - Intent-Centric Data Analyst Agent
 

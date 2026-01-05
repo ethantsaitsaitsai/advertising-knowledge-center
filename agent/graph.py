@@ -15,45 +15,56 @@ from typing import Dict, Any
 def input_adapter_node(state: AgentState) -> Dict[str, Any]:
     """
     Input Adapter: Ensures messages are in correct format for LangGraph Studio.
-
-    Handles both CLI and Studio inputs:
-    - CLI: messages already in HumanMessage format
-    - Studio: may need conversion from dict or string format
     """
     messages = state.get("messages", [])
-
-    print(f"DEBUG [InputAdapter] Received {len(messages)} messages")
-
-    # If messages is empty, check for 'input' field (LangGraph Studio format)
-    if not messages and "input" in state:
+    
+    # 1. Handle "input" key (LangGraph Studio / Direct Input)
+    if "input" in state and state["input"]:
         user_input = state["input"]
-        print(f"DEBUG [InputAdapter] Converting 'input' field to HumanMessage: {user_input}")
-        return {"messages": [HumanMessage(content=str(user_input))]}
+        # Check if this input is already the last message to avoid duplication
+        if not messages or (hasattr(messages[-1], "content") and messages[-1].content != user_input):
+             print(f"DEBUG [InputAdapter] Converting 'input' field to HumanMessage: {user_input}")
+             return {"messages": [HumanMessage(content=str(user_input))]}
+        elif isinstance(messages[-1], dict) and messages[-1].get("content") != user_input:
+             return {"messages": [HumanMessage(content=str(user_input))]}
 
-    # Convert dict messages to proper Message objects if needed
-    converted_messages = []
-    for msg in messages:
-        if isinstance(msg, BaseMessage):
-            converted_messages.append(msg)
-        elif isinstance(msg, dict):
-            msg_type = msg.get("type", "human")
-            content = msg.get("content", "")
-            if msg_type == "human":
-                converted_messages.append(HumanMessage(content=content))
-                print(f"DEBUG [InputAdapter] Converted dict to HumanMessage: {content[:50]}...")
-            else:
-                # Keep other message types as-is (shouldn't happen at input)
-                converted_messages.append(msg)
-        else:
-            # If it's a string, treat as human message
-            converted_messages.append(HumanMessage(content=str(msg)))
-            print(f"DEBUG [InputAdapter] Converted string to HumanMessage: {str(msg)[:50]}...")
+    # 2. Handle Dict to Object conversion
+    # Removed to avoid duplication (operator.add appends).
+    # Downstream nodes (IntentRouter) should handle dicts or LangChain should accept them.
+    
+    return {}
 
-    if converted_messages != messages:
-        return {"messages": converted_messages}
-    else:
-        return {}
-
+def data_analyst_wrapper_node(state: AgentState) -> Dict[str, Any]:
+    """
+    Wraps the Analyst Subgraph to prevent message duplication.
+    Calculates the DIFF between input state and output state.
+    """
+    # 1. Capture initial state counts
+    initial_messages_count = len(state.get("messages", []))
+    initial_logs_count = len(state.get("debug_logs", []))
+    
+    # 2. Invoke Subgraph
+    # We must pass the full state to the subgraph
+    result = analyst_graph.invoke(state)
+    
+    # 3. Calculate Diff (New Items Only)
+    final_messages = result.get("messages", [])
+    new_messages = final_messages[initial_messages_count:]
+    
+    final_logs = result.get("debug_logs", [])
+    new_logs = final_logs[initial_logs_count:]
+    
+    print(f"DEBUG [AnalystWrapper] Input msgs: {initial_messages_count}, Output msgs: {len(final_messages)}, New: {len(new_messages)}")
+    
+    # 4. Return update (Parent graph will append these)
+    return {
+        "messages": new_messages,
+        "debug_logs": new_logs,
+        "data_store": result.get("data_store"),
+        "resolved_entities": result.get("resolved_entities"),
+        "analyst_data": result.get("analyst_data"),
+        "final_response": result.get("final_response")
+    }
 
 # Define the workflow
 workflow = StateGraph(AgentState)
@@ -61,7 +72,7 @@ workflow = StateGraph(AgentState)
 # Add Nodes
 workflow.add_node("InputAdapter", input_adapter_node)
 workflow.add_node("IntentRouter", intent_router_node)
-workflow.add_node("DataAnalyst", analyst_graph) # [NEW] Use Subgraph
+workflow.add_node("DataAnalyst", data_analyst_wrapper_node) # [UPDATED] Use Wrapper
 
 # Add Edges
 # User input → Input Adapter → Intent Router
