@@ -11,7 +11,7 @@ SELECT DISTINCT
     oc.id AS campaign_id,
     
     -- 格式名稱：優先顯示合約上的名稱，若無則顯示執行端的
-    COALESCE(aft_cue.title, aft_cue.name, aft_exec.title, aft_exec.name, 'Unspecified') AS format_name,
+    COALESCE(aft_cue.title, aft_exec.title, 'Unspecified') AS format_name,
     
     -- 路徑 A ID: 用於關聯預算 (Investment Budget)
     aft_cue.id AS format_type_id,
@@ -43,9 +43,7 @@ WHERE 1=1
 
     -- 過濾已退役格式
     AND (aft_cue.title IS NULL OR aft_cue.title NOT LIKE '%已退役%')
-    AND (aft_cue.name IS NULL OR aft_cue.name NOT LIKE '%已退役%')
     AND (aft_exec.title IS NULL OR aft_exec.title NOT LIKE '%已退役%')
-    AND (aft_exec.name IS NULL OR aft_exec.name NOT LIKE '%已退役%')
 
 ORDER BY oc.id, format_name
 LIMIT 200
