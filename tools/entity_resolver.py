@@ -296,10 +296,19 @@ def resolve_entity(
     # 判斷結果
     if len(unique_candidates) == 1:
         # 只有一筆結果 → 直接返回
+        entity = unique_candidates[0]
+        msg = f"✅ Found exact match: {entity['name']}"
+        
+        # [Strategy] Add explicit next-step guidance for Industry types to prevent early stopping
+        if entity['type'] in ['industry', 'sub_industry']:
+            msg += f". 👉 Next Step: You MUST use `query_industry_format_budget` with {entity['type']}_ids=[{entity['id']}] to get the data."
+        elif entity['type'] in ['client', 'brand']:
+            msg += f". 👉 Next Step: You MUST use `query_campaign_basic` with {entity['type']}_ids=[{entity['id']}] to get the campaign list."
+
         return {
             "status": "exact_match",
-            "data": unique_candidates[0],
-            "message": f"✅ Found exact match: {unique_candidates[0]['name']}",
+            "data": entity,
+            "message": msg,
             "source": "like_query"
         }
     elif len(unique_candidates) > 1:
@@ -344,7 +353,7 @@ def resolve_entity(
                 return {
                     "status": "rag_results",
                     "data": rag_results,
-                    "message": f"🔍 RAG found {len(rag_results)} similar entities (LIKE query returned 0 results)",
+                    "message": f"🔍 RAG found {len(rag_results)} candidates. ⚠️ These are FUZZY matches without IDs. You MUST pick the most relevant name (e.g. '{rag_results[0]['value']}') and call `resolve_entity` again with that exact name to get the ID.",
                     "source": "rag"
                 }
         except Exception as e:

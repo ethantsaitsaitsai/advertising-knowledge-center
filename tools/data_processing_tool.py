@@ -261,7 +261,8 @@ def pandas_processor(
                     "data": [],
                     "count": 0
                 }
-            result_df = df.sort_values(by=sort_col, ascending=ascending)
+            # [FIX] Ensure ascending parameter is respected
+            result_df = result_df.sort_values(by=sort_col, ascending=ascending)
             if top_n:
                 result_df = result_df.head(top_n)
 
@@ -553,38 +554,15 @@ def pandas_processor(
                         if req_col in df_col:
                             target_columns.append(df_col)
                             found = True
-                            
-                        # 如果匹配不到任何欄位，且使用者沒有指定 select_columns，才進入 Fallback
-                            
-                        if not target_columns and (select_columns and len(select_columns) > 0):
-                            
-                             print(f"DEBUG [PandasProcessor] Strict Mode: User requested {select_columns} but no direct match found. Table might be empty or restricted.")
-                            
-                             # 不再進入 Fallback 顯示所有欄位，保持 target_columns 為空或僅包含部分匹配
-                            
-                    
-                            
-                    # (Removed COLUMN_GROUPS logic - moved to LLM Planner)
-                            
+                            break # Match first candidate only to avoid duplicates from one request
             
-                            
-                    if not target_columns:
-                            
-                        # 只有在「完全沒有指定 select_columns」的情況下，才顯示所有非 ID 欄位
-                            
-                        if not select_columns or len(select_columns) == 0:
-                            
-                            target_columns = [c for c in display_df.columns if not c.lower().endswith('id')]
-                            
-                        else:
-                            
-                            # 使用者有指定但找不到，我們至少保留主鍵 (如果有)
-                            
-                            target_columns = [c for c in ["廣告格式", "活動名稱", "日期"] if c in display_df.columns]
-                            
-            
-                            
-                    # 執行過濾 (Strict Filtering)        if target_columns:
+            # Fallback: If absolutely no columns matched user request, default to safe list
+            if not target_columns and select_columns:
+                 print(f"DEBUG [PandasProcessor] User requested {select_columns} but no matches found. Showing default columns.")
+                 target_columns = [c for c in ["廣告格式", "活動名稱", "日期", "投資金額", "有效曝光", "總點擊"] if c in display_df.columns]
+
+        # 執行過濾 (Strict Filtering)
+        if target_columns:
             # 去重並保持順序
             seen = set()
             final_cols = [x for x in target_columns if not (x in seen or seen.add(x))]

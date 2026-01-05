@@ -78,9 +78,13 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
 
 1. **實體解析 (Step 1 - 僅在需要時執行)**:
    - **只有在使用者提到具體名稱時**，才使用 `resolve_entity` 將名稱轉換為 ID。
+   - **⚠️ RAG 結果處理**: 若 `resolve_entity` 回傳 `rag_results` (模糊搜尋)，這些結果**不含 ID**。你**必須**選擇最相關的一個名稱，**再次呼叫** `resolve_entity` 以取得精確 ID (`exact_match`)。
 
 2. **獲取活動 (Step 2 - 僅在 Step 1 執行後)**:
-   - **取得 ID 後，立刻** 使用 `query_campaign_basic` 取得該客戶的所有活動列表。
+   - **情況 A: 實體是「客戶 (Client)」或「品牌 (Brand)」**:
+     - **取得 ID 後，立刻** 使用 `query_campaign_basic` 取得該客戶的所有活動列表。
+   - **情況 B: 實體是「產業 (Industry/Sub-industry)」**:
+     - **取得 ID 後，請跳過此步驟**，直接進入 Step 3 使用 `query_industry_format_budget` 或 `query_format_benchmark`。
 
 3. **數據蒐集 (Step 3 - 所有查詢都需要)**:
    - 根據使用者需求，呼叫適當的查詢工具：
@@ -96,6 +100,7 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
 
 **結束條件**:
 - 當你收集完所有必要的數據，請停止呼叫工具，並簡單回覆：「數據收集完畢，轉交報告者處理。」
+- ⚠️ **禁止提早結束**: 絕對不能在只呼叫 `resolve_entity` 後就停止。你必須至少呼叫一次數據查詢工具 (如 `query_industry_format_budget`, `query_performance_metrics` 等) 拿到數值資料。
 """
 
 @dynamic_prompt

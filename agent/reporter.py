@@ -153,7 +153,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     current_data = None
 
     # 1. Determine Anchor Table (主表)
-    # Priority: Execution > Investment > Performance > Campaign > Others (but NEVER resolve_entity)
+    # Priority: Execution > Investment > Industry Format > Format Benchmark > Performance > Campaign > Others (but NEVER resolve_entity)
     # Note: resolve_entity should NEVER be used as anchor - it's only for ID lookup
 
     if "query_execution_budget" in data_store:
@@ -162,6 +162,12 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     elif "query_investment_budget" in data_store:
         current_data = data_store["query_investment_budget"]
         print("DEBUG [Reporter] Anchor: Investment Budget")
+    elif "query_industry_format_budget" in data_store: # [NEW] High Priority for Industry Queries
+        current_data = data_store["query_industry_format_budget"]
+        print("DEBUG [Reporter] Anchor: Industry Format Budget")
+    elif "query_format_benchmark" in data_store: # [NEW] High Priority for Format Benchmarks
+        current_data = data_store["query_format_benchmark"]
+        print("DEBUG [Reporter] Anchor: Format Benchmark")
     elif "query_performance_metrics" in data_store:
         current_data = data_store["query_performance_metrics"]
         print("DEBUG [Reporter] Anchor: Performance Metrics")
