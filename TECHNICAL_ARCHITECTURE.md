@@ -1,7 +1,7 @@
 # AKC Framework 3.0 技術架構文件
 
-**版本:** 3.1.1 (Master Branch)
-**日期:** 2025年12月
+**版本:** 3.2.0 (Master Branch)
+**日期:** 2026年1月
 
 ## 1. 執行摘要 (Executive Summary)
 
