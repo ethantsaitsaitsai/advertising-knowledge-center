@@ -65,4 +65,4 @@ def run_cli():
 
 
 if __name__ == "__main__":
-    main()
+    run_cli()

@@ -1,16 +1,24 @@
 # ui.py
 import os
+import sys
 import json
 import httpx
 import asyncio
 import chainlit as cl
+import uuid
+
+# Fix import path for agent module
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
 from langchain_core.messages import HumanMessage
 from agent.graph import app
 from agent.state import AgentState
-import uuid
 
-# LangServe backend URL
-LANGSERVE_URL = os.getenv("LANGSERVE_URL", "http://backend:8000/agent")
+# LangServe backend URL - default to localhost for local dev
+LANGSERVE_URL = os.getenv("LANGSERVE_URL", "http://localhost:8000/agent")
 
 @cl.password_auth_callback
 def auth(username: str, password: str):
@@ -118,6 +126,9 @@ async def main(message: cl.Message):
                     "DataAnalyst": "✍️ 正在整理分析結果",
                 }
 
+                # 追蹤 active steps
+                active_steps = {} # tool_call_id -> cl.Step
+
                 # Async iterate over lines
                 async for line in response.aiter_lines():
                     if not line:
@@ -129,15 +140,10 @@ async def main(message: cl.Message):
                     try:
                         data = json.loads(line[6:])  # 移除 'data: ' prefix
                         
-                        # Debug Logging
-                        with open("ui_debug.log", "a") as f:
-                            f.write(f"Chunk received: {json.dumps(data, ensure_ascii=False)}\n")
-                        
                         # --- 狀態更新邏輯 ---
                         if isinstance(data, dict):
                             for node_name in data.keys():
                                 if node_name in NODE_STATUS_MAP:
-                                    # 更新基礎文字，動畫任務會自動抓取並補上點點
                                     current_status = NODE_STATUS_MAP[node_name]
 
                         messages_list = []
@@ -157,6 +163,7 @@ async def main(message: cl.Message):
                             return found
 
                         if isinstance(data, dict):
+                            # ... (keep existing message extraction logic)
                             if 'ResponseSynthesizer' in data:
                                 node_data = data['ResponseSynthesizer']
                                 if 'messages' in node_data:
@@ -170,20 +177,72 @@ async def main(message: cl.Message):
                         for msg in messages_list:
                             content = ""
                             msg_type = ""
+                            tool_calls = []
+                            tool_call_id = ""
                             
                             if isinstance(msg, dict):
                                 content = msg.get('content', "")
                                 msg_type = msg.get('type', "")
+                                tool_calls = msg.get('tool_calls', [])
+                                tool_call_id = msg.get('tool_call_id', "")
                             elif hasattr(msg, 'content'): 
                                 content = msg.content
                                 msg_type = getattr(msg, 'type', "")
+                                tool_calls = getattr(msg, 'tool_calls', [])
+                                tool_call_id = getattr(msg, 'tool_call_id', "")
                             
-                            if content and msg_type == 'ai':
+                            # 1. 處理 AI 的思考 (決定要呼叫工具)
+                            if msg_type == 'ai' and tool_calls:
+                                for tc in tool_calls:
+                                    tc_id = tc.get('id')
+                                    tc_name = tc.get('name')
+                                    tc_args = json.dumps(tc.get('args', {}), ensure_ascii=False)
+                                    
+                                    step = cl.Step(name=f"🛠️ 執行工具: {tc_name}", type="tool")
+                                    step.input = f"參數: {tc_args}"
+                                    await step.send()
+                                    active_steps[tc_id] = step
+
+                            # 2. 處理工具的回傳結果 (ToolMessage)
+                            elif msg_type == 'tool' and tool_call_id:
+                                if tool_call_id in active_steps:
+                                    step = active_steps[tool_call_id]
+                                    # 格式化輸出資料，如果是 JSON 則美化它
+                                    try:
+                                        parsed_content = json.loads(content)
+                                        step.output = json.dumps(parsed_content, indent=2, ensure_ascii=False)
+                                    except:
+                                        step.output = content
+                                    
+                                    await step.update()
+                                    # 這裡不刪除 active_steps，保留記錄
+
+                            # 3. 處理最終回應 (有內容的 AIMessage)
+                            elif content and msg_type == 'ai':
                                 # 一旦開始生成最終回應，停止動畫並移除思考訊息
                                 stop_animation = True
-                                await thinking_msg.remove()
+                                try:
+                                    await thinking_msg.remove()
+                                except:
+                                    pass
                                 
+                                # [FIX] Handle list content (Google GenAI style)
                                 final_content = content
+                                if isinstance(content, list):
+                                    text_parts = []
+                                    for item in content:
+                                        if isinstance(item, dict) and 'text' in item:
+                                            text_parts.append(item['text'])
+                                        elif isinstance(item, str):
+                                            text_parts.append(item)
+                                    if text_parts:
+                                        final_content = "".join(text_parts)
+                                    else:
+                                        # Fallback: if list but no text found, json dump it (but likely it has text)
+                                        final_content = str(content)
+
+                                print(f"DEBUG [UI] Received AI Content (First 100 chars): {final_content[:100]!r}")
+                                
                                 if current_msg:
                                     current_msg.content = final_content
                                     await current_msg.update()

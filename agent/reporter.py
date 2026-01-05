@@ -13,6 +13,7 @@ from agent.state import AgentState
 from tools.data_processing_tool import pandas_processor
 import json
 import pandas as pd
+import re
 
 # Tools for Reporter (Pandas Only)
 REPORTER_TOOLS = [pandas_processor]
@@ -49,7 +50,65 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     """
     Auto-Drive Reporter: Programmatically merges data and lets LLM summarize.
     """
-    data_store = state.get("data_store", {})
+    data_store = state.get("data_store", {}) or {}
+    
+    # --- [NEW] Reconstruct data_store from messages if empty ---
+    # This ensures compatibility with agents that don't manually update data_store (like create_agent)
+    if not data_store:
+        print("DEBUG [Reporter] data_store is empty. Reconstructing from ToolMessages...")
+        from langchain_core.messages import ToolMessage
+        
+        # We need a way to know which tool produced which message.
+        tool_call_map = {}
+        for msg in state.get("messages", []):
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_call_map[tc["id"]] = tc["name"]
+        
+        for msg in state.get("messages", []):
+            if isinstance(msg, ToolMessage):
+                tool_name = tool_call_map.get(msg.tool_call_id)
+                if not tool_name: continue
+                
+                print(f"DEBUG [Reporter] Parsing {tool_name} message: {msg.content[:100]}...")
+                try:
+                    # Clean content (might have guidance text appended)
+                    content = msg.content
+                    if "\n\n✅" in content:
+                        content = content.split("\n\n✅")[0]
+                    
+                    # Try to parse content
+                    result = None
+                    try:
+                        result = json.loads(content)
+                    except json.JSONDecodeError:
+                        # Fallback for Python-style dict strings (single quotes)
+                        # We use a safer way to handle some common non-JSON types if they exist
+                        cleaned_content = content.replace("Decimal('", "").replace("')", "")
+                        try:
+                            import ast
+                            result = ast.literal_eval(cleaned_content)
+                        except:
+                            print(f"DEBUG [Reporter] Failed to parse content for {tool_name}")
+                            continue
+
+                    if isinstance(result, dict) and "data" in result:
+                        data = result.get("data")
+                        if data and isinstance(data, list):
+                            if tool_name not in data_store:
+                                data_store[tool_name] = []
+                            
+                            # Deduplicate
+                            existing_data_str = {json.dumps(row, sort_keys=True, default=str) for row in data_store[tool_name]}
+                            for row in data:
+                                row_str = json.dumps(row, sort_keys=True, default=str)
+                                if row_str not in existing_data_str:
+                                    data_store[tool_name].append(row)
+                                    existing_data_str.add(row_str)
+                            print(f"DEBUG [Reporter] Reconstructed {len(data)} rows for {tool_name}")
+                except Exception as e:
+                    print(f"DEBUG [Reporter] Error processing {tool_name}: {e}")
+
     original_query = state.get("routing_context", {}).get("original_query", "")
     execution_logs = state.get("debug_logs", [])
 
@@ -412,7 +471,6 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         範例格式: {{"rename_map": {{}}, "display_columns": [], "sort_col": "", "groupby_cols": [], "sum_cols": [], "concat_col": "", "limit": 0, ...}}
         """
         
-        import re
         try:
             # Use a simpler LLM call for JSON planning
             plan_response = llm.invoke([
@@ -473,6 +531,38 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 sum_cols_en = []
                 for col in plan.get("sum_cols", []):
                     sum_cols_en.append(reverse_map.get(col, col))
+
+                # [NEW] Auto-inject Performance Raw Metrics into sum_cols
+                # If the plan requests Rate metrics (CTR/VTR/ER) but forgets Raw metrics (Impressions/Clicks),
+                # pandas_processor cannot calculate the weighted average rate.
+                # We must ensure raw metrics are present in the aggregation.
+                rate_metrics = ["ctr", "vtr", "er"]
+                raw_metrics_map = {
+                    "ctr": ["effective_impressions", "total_clicks"],
+                    "vtr": ["total_q100_views", "effective_impressions"], # Simplified VTR calc
+                    "er": ["total_engagements", "effective_impressions"]
+                }
+                
+                # Check if any rate metric is in display_columns (mapped to Chinese) or sum_cols (English)
+                # Display columns are in Chinese, map back to English
+                requested_cols_en = []
+                for col_cn in plan.get("display_columns", []):
+                    requested_cols_en.append(reverse_map.get(col_cn, col_cn))
+                
+                # Also check sort_col
+                sort_col_raw = plan.get("sort_col", "").split(" ")[0]
+                if sort_col_raw: requested_cols_en.append(sort_col_raw)
+
+                for rate in rate_metrics:
+                    # If rate is requested (either in display or sort)
+                    if any(rate in col.lower() for col in requested_cols_en):
+                        raws = raw_metrics_map.get(rate, [])
+                        for raw in raws:
+                            if raw not in sum_cols_en:
+                                # Only add if it exists in the dataframe
+                                if raw in available_cols:
+                                    sum_cols_en.append(raw)
+                                    print(f"DEBUG [Reporter] Auto-injected '{raw}' into sum_cols for {rate} calculation")
 
                 print(f"DEBUG [Reporter] Converted groupby_cols: {plan.get('groupby_cols', [])} -> {groupby_cols_en}")
                 print(f"DEBUG [Reporter] Converted concat_col: {plan.get('concat_col', '')} -> {concat_col_en}")
@@ -647,8 +737,6 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         final_result = {"markdown": ""}
 
     final_table = final_result.get("markdown", "")
-
-    final_table = final_result.get("markdown", "")
     
     # --- LLM Summary Generation ---
     # Now we ask LLM to summarize based on the table we generated
@@ -683,7 +771,6 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             content = response.content
             if isinstance(content, list): content = " ".join([c.get("text", "") for c in content])
             
-            import re
             content = content.replace("```json", "").replace("```", "").strip()
             json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
@@ -695,6 +782,13 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                     suggestions_text = "\n".join(suggestions_data)
                 else:
                     suggestions_text = str(suggestions_data)
+                
+                # [NEW] Sanitize suggestions_text specifically
+                suggestions_text = suggestions_text.strip()
+                if suggestions_text.startswith("```"):
+                    suggestions_text = re.sub(r"^```[a-zA-Z]*\n?", "", suggestions_text)
+                    suggestions_text = re.sub(r"\n?```$", "", suggestions_text)
+                suggestions_text = suggestions_text.strip()
             else:
                 print(f"DEBUG [Reporter] JSON not found in summary response.")
         except Exception as e:
@@ -706,6 +800,37 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     final_response = opening_text + "\n\n" + final_table
     if suggestions_text:
         final_response += "\n\n" + suggestions_text
+
+    # --- [NEW] Robust Sanitization ---
+    # This prevents the UI from rendering the entire report as a raw code block
+    print(f"DEBUG [Reporter] Pre-sanitization response length: {len(final_response)}")
+    print(f"DEBUG [Reporter] Pre-sanitization start: {final_response[:50]!r}")
+    
+    # 1. Strip leading/trailing whitespace
+    final_response = final_response.strip()
+    
+    # 2. Force remove wrapping code blocks using string methods (more reliable than regex)
+    if final_response.startswith("```"):
+        # Find the first newline to identify the language tag line
+        first_newline = final_response.find("\n")
+        if first_newline != -1:
+            # Check if the first line is just ``` or ```text etc.
+            first_line = final_response[:first_newline].strip()
+            # If it starts with ```, we assume it's a code block header
+            print(f"DEBUG [Reporter] Removing start block header: {first_line!r}")
+            final_response = final_response[first_newline+1:]
+        else:
+             # Single line case, just remove the backticks
+             final_response = final_response.replace("```", "")
+
+    # Remove end block
+    if final_response.endswith("```"):
+        print("DEBUG [Reporter] Removing end block footer")
+        final_response = final_response[:-3].strip()
+    
+    final_response = final_response.strip()
+    print(f"DEBUG [Reporter] Post-sanitization response length: {len(final_response)}")
+    print(f"DEBUG [Reporter] Post-sanitization start: {final_response[:50]!r}")
 
     return {
         "final_response": final_response,
