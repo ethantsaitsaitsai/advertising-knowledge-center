@@ -40,6 +40,7 @@ def auth(username: str, password: str):
 @cl.on_chat_start
 async def start():
     """初始化對話"""
+    print("DEBUG [UI] start() triggered - New Session or Reload")
     await cl.Message(
         content="""# 歡迎使用廣告知識中心 🚀
 
@@ -63,6 +64,7 @@ async def start():
 @cl.on_message
 async def main(message: cl.Message):
     """處理用戶訊息"""
+    print(f"DEBUG [UI] main() triggered with message: {message.content}")
 
     # 狀態管理
     current_status = "🤔 思考中"
@@ -250,15 +252,19 @@ async def main(message: cl.Message):
                                     current_msg = cl.Message(content=final_content, author="AI Agent")
                                     await current_msg.send()
 
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        print(f"DEBUG [UI] JSON Decode Error: {e}")
                         pass
-                    except Exception:
+                    except Exception as e:
+                        print(f"DEBUG [UI] Loop Error: {e}")
                         continue
                 
                 # 確保迴圈結束後動畫停止
                 stop_animation = True
+                print("DEBUG [UI] Stream finished")
 
     except httpx.TimeoutException:
+        print("DEBUG [UI] HTTP Timeout")
         stop_animation = True
         await cl.Message(
             content="⏰ 查詢超時，請稍後再試或簡化查詢條件。",
@@ -266,6 +272,7 @@ async def main(message: cl.Message):
         ).send()
 
     except httpx.RequestError as e:
+        print(f"DEBUG [UI] HTTP Request Error: {e}")
         stop_animation = True
         await cl.Message(
             content=f"❌ 無法連接到後端服務: {str(e)}\n\n請檢查後端是否啟動。",
@@ -273,6 +280,7 @@ async def main(message: cl.Message):
         ).send()
 
     except Exception as e:
+        print(f"DEBUG [UI] Main Error: {e}")
         stop_animation = True
         await cl.Message(
             content=f"❌ 未知錯誤: {str(e)}",

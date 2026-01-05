@@ -118,7 +118,7 @@ def query_investment_budget(
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 100
+    limit: int = 5000
 ) -> Dict[str, Any]:
     """
     查詢「進單/投資」金額 (Investment Budget)，包含各格式的單價、預算分配。
@@ -133,7 +133,7 @@ def query_investment_budget(
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
-        limit: 返回筆數限制 (預設 100，排名分析時建議設為 500-1000)
+        limit: 返回筆數限制 (預設 5000，排名分析時建議設為 500-1000)
     """
     context = {
         "client_names": client_names,
@@ -158,7 +158,7 @@ def query_execution_budget(
     campaign_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 100
+    limit: int = 5000
 ) -> Dict[str, Any]:
     """
     查詢「執行/認列」金額 (Execution Budget)，包含實際執行的媒體、金額與狀態。
@@ -173,7 +173,7 @@ def query_execution_budget(
         campaign_ids: Campaign IDs 列表
         start_date: 開始日期
         end_date: 結束日期
-        limit: 返回筆數限制 (預設 100，排名分析時建議設為 500-1000)
+        limit: 返回筆數限制 (預設 5000，排名分析時建議設為 500-1000)
     """
     context = {
         "client_names": client_names,
@@ -199,7 +199,7 @@ def query_industry_format_budget(
     format_ids: Optional[List[int]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 50
+    limit: int = 5000
 ) -> Dict[str, Any]:
     """
     多維度預算分佈統計 (強制包含格式細節)。
@@ -209,7 +209,8 @@ def query_industry_format_budget(
     
     【參數說明】
     - dimension (必填): 決定回傳結果的 GroupBy 對象
-      - 'industry': 依「產業」分組 (預設)
+      - 'industry': 依「主產業」分組 (預設)。若用戶只說「產業」，請優先使用此選項。
+      - 'sub_industry': 依「子產業」分組。僅在用戶明確要求「子產業」、「細分產業」時使用。
       - 'client': 依「客戶」分組
       - 'agency': 依「代理商」分組
 
@@ -221,11 +222,36 @@ def query_industry_format_budget(
       - format_ids: 若指定，則只看特定格式
       - industry_ids/client_ids: 若指定，則只看特定範圍
     
+    - limit: 返回筆數限制 (預設 5000)。
+      ⚠️ 注意: 若要計算「佔比」(Share) 或「總排名」，請勿設定過小的 limit (例如 50)，以免分母被截斷導致佔比計算錯誤。
+      除非用戶明確要求「前 N 名」，否則請保持預設值或設為較大數值 (如 1000)。
+    
     【常見應用情境】
     1. 「所有格式投放到的產業排名」 -> dimension='industry', primary_view='format' (這時 'format' 會在第一欄，強調「針對各格式」的總表)
     2. 「Outstream格式投放到的前十大客戶」 -> dimension='client', format_ids=[...], primary_view='format'
     3. 「汽車產業投了哪些格式」 -> dimension='industry', industry_ids=[...], primary_view='dimension' (預設)
     """
+    # 1. 參數清理 (Sanitization)
+    def clean_list(lst):
+        if not lst: return None
+        # 過濾掉 None 和空字串，若過濾後為空則回傳 None
+        cleaned = [x for x in lst if x is not None and str(x).strip() != '']
+        return cleaned if cleaned else None
+
+    industry_ids = clean_list(industry_ids)
+    sub_industry_ids = clean_list(sub_industry_ids)
+    client_ids = clean_list(client_ids)
+    agency_ids = clean_list(agency_ids)
+    format_ids = clean_list(format_ids)
+
+    # 2. 邏輯檢查 (Validation): 遇到無效維度，回傳錯誤讓 Agent 自行修正
+    valid_dimensions = ['industry', 'sub_industry', 'client', 'agency']
+    if dimension not in valid_dimensions:
+        return {
+            "status": "error",
+            "message": f"Invalid dimension value: '{dimension}'. Allowed values are: {valid_dimensions}. Please check your input and retry."
+        }
+
     context = {
         "dimension": dimension,
         "split_by_format": True, # 強制依格式拆分，不再支援 False (All Formats)

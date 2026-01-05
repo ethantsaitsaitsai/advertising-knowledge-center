@@ -649,7 +649,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 needs_percentage = percentage_config.get("enabled", False)
 
                 if needs_percentage:
-                    # Step 1: Aggregate without rename (keep English column names)
+                    # Step 1: Aggregate WITHOUT truncation to get correct total
                     print(f"DEBUG [Reporter] Percentage mode: Aggregating first (keeping English column names)")
                     aggregated_result = pandas_processor.invoke({
                         "data": current_data,
@@ -659,11 +659,11 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                         "concat_col": concat_col_en,
                         "sort_col": plan.get("sort_col"),
                         "ascending": False,
-                        "top_n": top_n
+                        "top_n": 0  # CRITICAL FIX: Must encompass ALL rows for correct denominator
                     })
 
                     if aggregated_result.get("status") == "success":
-                        # Step 2: Calculate percentage
+                        # Step 2: Calculate percentage (Denominator = Sum of all rows)
                         value_col = percentage_config.get("value_col")
                         percentage_col_cn = percentage_config.get("percentage_col", "佔比 (%)")
 
@@ -676,7 +676,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                         })
 
                         if percentage_result.get("status") == "success":
-                            # Step 3: Apply rename_map and select_columns
+                            # Step 3: Apply rename_map, select_columns AND TRUNCATION
                             rename_map = plan.get("rename_map", {})
                             rename_map["percentage"] = percentage_col_cn
 
@@ -687,7 +687,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                             print(f"DEBUG [Reporter] Applying rename and select with percentage column")
                             final_result = pandas_processor.invoke({
                                 "data": percentage_result.get("data", []),
-                                "operation": "groupby_sum",
+                                "operation": "groupby_sum", # Just for rename/select/sort/limit
                                 "rename_map": rename_map,
                                 "groupby_col": ",".join(groupby_cols_en),
                                 "sum_col": ",".join(sum_cols_en) + ",percentage",
@@ -695,7 +695,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                                 "select_columns": display_columns,
                                 "sort_col": plan.get("sort_col"),
                                 "ascending": False,
-                                "top_n": top_n
+                                "top_n": top_n # NOW we apply the limit
                             })
                         else:
                             print(f"WARN [Reporter] Percentage calculation failed: {percentage_result.get('markdown', 'Unknown error')}")

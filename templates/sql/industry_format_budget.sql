@@ -41,10 +41,10 @@ SELECT
             COALESCE(c.advertiser_name, c.company) AS dimension_name,
         {% elif dimension == 'agency' %}
             COALESCE(ag.agencyname, 'Direct Client') AS dimension_name,
-        {% elif dimension == 'sub_industry' %}
-            pcsc.name AS dimension_name,
+        {% elif dimension in ['industry', 'sub_industry'] %}
+            pc_agg.dimension_name AS dimension_name,
         {% else %}
-            pcc.name AS dimension_name,
+            'Unknown' AS dimension_name,
         {% endif %}
 
         COALESCE(aft.title, aft.name, 'Other') AS format_name,
@@ -61,13 +61,14 @@ LEFT JOIN clients c ON cl.client_id = c.id
 LEFT JOIN agency ag ON cl.agency_id = ag.id
 
 -- [CRITICAL FIX] 處理產業關聯 (防止一對多導致預算倍增)
-{% if dimension in ['industry', 'sub_industry'] and primary_view == 'format' %}
-    -- 針對格式視角：使用 Subquery 預先聚合產業名稱，確保 1:1 關聯
+-- 統一使用 Subquery 預先聚合產業名稱，確保 1:1 關聯，無論何種 view
+{% if dimension in ['industry', 'sub_industry'] %}
     JOIN (
         SELECT 
             pc.one_campaign_id,
             GROUP_CONCAT(DISTINCT 
                 {% if dimension == 'sub_industry' %} pcsc.name {% else %} pcc.name {% endif %}
+                ORDER BY {% if dimension == 'sub_industry' %} pcsc.name {% else %} pcc.name {% endif %} ASC
             SEPARATOR ', ') as dimension_name
         FROM pre_campaign pc
         JOIN pre_campaign_categories pcc ON pc.category_id = pcc.id
@@ -82,22 +83,24 @@ LEFT JOIN agency ag ON cl.agency_id = ag.id
         GROUP BY pc.one_campaign_id
     ) pc_agg ON pc_agg.one_campaign_id = oc.id
 
-{% else %}
-    -- 針對產業視角或其他維度：保持原始 Join (允許拆分)
-    JOIN pre_campaign pc ON pc.one_campaign_id = oc.id
-    JOIN pre_campaign_categories pcc ON pc.category_id = pcc.id
-    LEFT JOIN pre_campaign_sub_categories pcsc ON pc.sub_category_id = pcsc.id
-    
-    -- 在此處應用過濾
-    {% if industry_ids %}
-        AND pc.category_id IN ({{ industry_ids|join(',') }})
-    {% endif %}
-    {% if sub_industry_ids %}
-        AND pc.sub_category_id IN ({{ sub_industry_ids|join(',') }})
-    {% endif %}
+{% elif industry_ids or sub_industry_ids %}
+    -- 非產業維度 (Client/Agency) 但有產業篩選：使用 DISTINCT Subquery 過濾
+    JOIN (
+        SELECT DISTINCT one_campaign_id
+        FROM pre_campaign
+        WHERE 1=1
+        {% if industry_ids %}
+            AND category_id IN ({{ industry_ids|join(',') }})
+        {% endif %}
+        {% if sub_industry_ids %}
+            AND sub_category_id IN ({{ sub_industry_ids|join(',') }})
+        {% endif %}
+    ) pc_filter ON pc_filter.one_campaign_id = oc.id
 {% endif %}
 
 -- 關聯格式與預算
+-- ... (rest of joins)
+
 JOIN cue_list_product_lines clpl ON clpl.cue_list_id = cl.id
 JOIN cue_list_ad_formats claf ON claf.cue_list_product_line_id = clpl.id
 JOIN ad_format_types aft ON claf.ad_format_type_id = aft.id
