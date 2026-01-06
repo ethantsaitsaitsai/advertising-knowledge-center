@@ -61,7 +61,20 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
      - 若指定特定格式 (如「Banner」)，請設 `format_ids` (需先透過 `resolve_entity` 取得格式 ID)。
 
 2. **全站格式成效 (`query_format_benchmark`)**:
-   - 適用：「所有格式的 CTR 排名」、「產業的平均 VTR」。
+   - **適用場景** (這是專門用於格式成效排名的工具):
+     - 「所有格式的 CTR 排名」
+     - 「汽車產業所有格式的 VTR 平均」
+     - 「某個格式在全站的成效表現」
+   - **使用規則**:
+     - ⚠️ **關鍵判斷**: 如果使用者查詢同時包含「格式」和「成效指標 (CTR/VTR/ER/點擊率/觀看率)」,**必須優先考慮使用此工具**
+     - **參數說明**:
+       - `cmp_ids` (可選): 如果要查詢特定產業/客戶的格式成效,請傳入 campaign_ids (需先透過 `query_campaign_basic` 取得)
+       - `format_ids` (可選): 如果要查詢特定格式的成效,請傳入 format_ids (需先透過 `resolve_entity` 取得)
+       - 如果兩者都不傳,則返回「全站所有格式」的成效基準
+   - **執行順序** (針對產業查詢):
+     1. 使用 `resolve_entity` 解析產業名稱 → 取得產業 ID
+     2. 使用 `query_campaign_basic` 取得該產業的所有活動 → 取得 campaign_ids 列表
+     3. 使用 `query_format_benchmark(cmp_ids=[...])` 查詢該產業的格式成效
 
 ---
 
@@ -84,7 +97,8 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
    - **情況 A: 實體是「客戶 (Client)」或「品牌 (Brand)」**:
      - **取得 ID 後，立刻** 使用 `query_campaign_basic` 取得該客戶的所有活動列表。
    - **情況 B: 實體是「產業 (Industry/Sub-industry)」**:
-     - **取得 ID 後，請跳過此步驟**，直接進入 Step 3 使用 `query_industry_format_budget` 或 `query_format_benchmark`。
+     - **若查 預算/金額/分佈** (`query_industry_format_budget`): 此工具內建產業篩選，**請跳過 Step 2**，直接執行 Step 3。
+     - **若查 成效/CTR/排名** (`query_performance_metrics` 或 `query_format_benchmark`): 這些工具需要 Campaign IDs。**必須執行 Step 2** (`query_campaign_basic`) 取得該產業的活動列表，再將 IDs 傳入成效工具。
 
 3. **數據蒐集 (Step 3 - 所有查詢都需要)**:
    - 根據使用者需求，呼叫適當的查詢工具：
@@ -93,6 +107,13 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
      - `query_performance_metrics`: 查詢成效 (必須傳入 `cmp_ids`)
      - `query_targeting_segments`: 查詢受眾
      - `query_ad_formats`: 查詢廣告格式
+
+   - **⚠️ 客戶級別成效查詢 (重要)**:
+     - 如果使用者要求「各格式的客戶排名 (依成效)」、「哪些客戶的 CTR 最高」等查詢:
+       1. **必須同時調用兩個工具**:
+          - `query_performance_metrics`: 獲取 campaign 的成效數據
+          - `query_campaign_basic`: 獲取 campaign 的客戶信息
+       2. Reporter 會自動合併這兩個數據集並按客戶聚合
 
 **核心原則 (鐵律)**:
 - **ID 絕對優先**: 只要你取得了 ID，後續所有查詢 **必須** 使用 ID。
@@ -247,6 +268,57 @@ retriever_agent = create_agent(
     state_schema=ProjectAgentState
 )
 
+def _check_performance_tools_needed(state: ProjectAgentState, result: Dict[str, Any]) -> Dict[str, bool]:
+    """
+    檢查是否需要調用成效相關工具。
+
+    Returns:
+        {
+            "needs_benchmark": bool,  # 是否需要 query_format_benchmark
+            "needs_performance": bool,  # 是否需要 query_performance_metrics
+            "needs_campaign_basic": bool  # 是否需要 query_campaign_basic
+        }
+    """
+    original_query = state.get("routing_context", {}).get("original_query", "").lower()
+
+    # 檢查是否包含格式相關關鍵字
+    format_keywords = ["格式", "format", "banner", "影音", "廣告形式"]
+    has_format = any(kw in original_query for kw in format_keywords)
+
+    # 檢查是否包含成效指標關鍵字
+    performance_keywords = ["ctr", "vtr", "er", "點擊率", "觀看率", "互動率", "成效", "排名", "平均"]
+    has_performance = any(kw in original_query for kw in performance_keywords)
+
+    # 檢查是否包含客戶相關關鍵字
+    client_keywords = ["客戶", "client", "廣告主", "品牌"]
+    has_client = any(kw in original_query for kw in client_keywords)
+
+    # 檢查已調用的工具
+    messages = result.get("messages", [])
+    data_store = result.get("data_store", {})
+
+    has_benchmark = "query_format_benchmark" in data_store
+    has_performance = "query_performance_metrics" in data_store
+    has_campaign_basic = "query_campaign_basic" in data_store
+
+    needs = {
+        "needs_benchmark": False,
+        "needs_performance": False,
+        "needs_campaign_basic": False
+    }
+
+    # 場景判斷
+    if has_format and has_performance:
+        if has_client:
+            # 場景: 客戶級別成效查詢 (需要 performance + campaign_basic)
+            needs["needs_performance"] = not has_performance
+            needs["needs_campaign_basic"] = not has_campaign_basic
+        else:
+            # 場景: 格式成效查詢 (需要 benchmark)
+            needs["needs_benchmark"] = not has_benchmark
+
+    return needs
+
 def data_retriever_v2_node(state: ProjectAgentState) -> Dict[str, Any]:
     """
     Wrapper for the retriever_agent to be used as a node in analyst_graph.
@@ -307,14 +379,91 @@ def data_retriever_v2_node(state: ProjectAgentState) -> Dict[str, Any]:
     final_logs = result.get("debug_logs", [])
     new_logs = final_logs[initial_logs_count:]
     
+    # [NEW] Post-execution validation: Check if performance tools should be called
+    needs = _check_performance_tools_needed(state, result)
+
+    # Get date range from routing_context
+    routing_context = state.get("routing_context", {})
+    start_date = routing_context.get("start_date", "2021-01-01")
+    end_date = routing_context.get("end_date", datetime.now().strftime("%Y-%m-%d"))
+
+    # Initialize data_store if needed
+    if "data_store" not in result:
+        result["data_store"] = {}
+
+    # Auto-invoke missing tools
+    if needs.get("needs_benchmark"):
+        print("⚠️ [RetrieverValidator] Detected missing query_format_benchmark call. Auto-invoking...")
+        try:
+            # Extract campaign_ids from data_store (if available)
+            campaign_data = result.get("data_store", {}).get("query_campaign_basic", [])
+            cmp_ids = [row.get('campaign_id') for row in campaign_data if row.get('campaign_id')] if campaign_data else None
+
+            invoke_params = {
+                "start_date": start_date,
+                "end_date": end_date
+            }
+            if cmp_ids:
+                invoke_params["cmp_ids"] = cmp_ids
+                print(f"⚠️ [RetrieverValidator] Auto-invoking benchmark with {len(cmp_ids)} campaign IDs")
+            else:
+                print(f"⚠️ [RetrieverValidator] Auto-invoking benchmark for 全站查詢")
+
+            benchmark_result = query_format_benchmark.invoke(invoke_params)
+
+            if benchmark_result.get("status") == "success" and benchmark_result.get("data"):
+                result["data_store"]["query_format_benchmark"] = benchmark_result.get("data", [])
+                print(f"✅ [RetrieverValidator] Auto-invoked query_format_benchmark, got {len(benchmark_result.get('data', []))} rows")
+        except Exception as e:
+            print(f"⚠️ [RetrieverValidator] Auto-invoke benchmark failed: {e}")
+
+    if needs.get("needs_performance") or needs.get("needs_campaign_basic"):
+        print("⚠️ [RetrieverValidator] Detected client-level performance query. Auto-invoking required tools...")
+
+        # For client-level performance queries, we need ALL campaigns
+        if needs.get("needs_campaign_basic"):
+            print("⚠️ [RetrieverValidator] Auto-invoking query_campaign_basic for 全站客戶")
+            try:
+                # Query all campaigns (no filter)
+                campaign_result = query_campaign_basic.invoke({
+                    "start_date": start_date,
+                    "end_date": end_date
+                })
+                if campaign_result.get("status") == "success" and campaign_result.get("data"):
+                    result["data_store"]["query_campaign_basic"] = campaign_result.get("data", [])
+                    print(f"✅ [RetrieverValidator] Auto-invoked query_campaign_basic, got {len(campaign_result.get('data', []))} campaigns")
+            except Exception as e:
+                print(f"⚠️ [RetrieverValidator] Auto-invoke campaign_basic failed: {e}")
+
+        if needs.get("needs_performance"):
+            campaign_data = result.get("data_store", {}).get("query_campaign_basic", [])
+            cmp_ids = [row.get('campaign_id') for row in campaign_data if row.get('campaign_id')]
+
+            if cmp_ids:
+                print(f"⚠️ [RetrieverValidator] Auto-invoking query_performance_metrics with {len(cmp_ids)} campaign IDs")
+                try:
+                    performance_result = query_performance_metrics.invoke({
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "cmp_ids": cmp_ids,
+                        "dimension": "format"
+                    })
+                    if performance_result.get("status") == "success" and performance_result.get("data"):
+                        result["data_store"]["query_performance_metrics"] = performance_result.get("data", [])
+                        print(f"✅ [RetrieverValidator] Auto-invoked query_performance_metrics, got {len(performance_result.get('data', []))} rows")
+                except Exception as e:
+                    print(f"⚠️ [RetrieverValidator] Auto-invoke performance_metrics failed: {e}")
+            else:
+                print(f"⚠️ [RetrieverValidator] Cannot invoke query_performance_metrics: no campaign IDs available")
+
     # Construct output update
     output = {
         "messages": new_messages,
         "debug_logs": new_logs,
-        # data_store and resolved_entities are typically overwritten or merged by logic, 
+        # data_store and resolved_entities are typically overwritten or merged by logic,
         # but since they don't have reducers in AgentState (or might not), passing full object is safer/required
         "data_store": result.get("data_store"),
         "resolved_entities": result.get("resolved_entities")
     }
-    
+
     return output

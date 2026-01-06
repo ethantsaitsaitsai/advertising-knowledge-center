@@ -218,13 +218,22 @@ def resolve_entity(
     candidates = []
 
     with db._engine.connect() as connection:
+        # First Pass: With target_types filter
         for config in SEARCH_CONFIGS:
-            # 如果指定了 target_types 且當前 config 不在其中，則跳過
             if target_types and config["type"] not in target_types:
                 continue
-
             results = _search_table(connection, config, keyword)
             candidates.extend(results)
+
+        # Fallback Pass: If no results and target_types was set, try ALL types
+        if not candidates and target_types:
+            print(f"⚠️ [EntityResolver] No results found for '{keyword}' with types={target_types}. Retrying with ALL types...")
+            for config in SEARCH_CONFIGS:
+                # Skip if we already checked it (optimization)
+                if config["type"] in target_types:
+                    continue
+                results = _search_table(connection, config, keyword)
+                candidates.extend(results)
 
     # 去重：避免同一個 ID 被多次搜出 (例如 brand 和 client 可能來自同一表)
     unique_candidates = []
@@ -350,10 +359,14 @@ def resolve_entity(
 
             if rag_results:
                 print(f"🧠 [EntityResolver] RAG found {len(rag_results)} results")
+                # Extract top 3 names for the prompt
+                top_names = [r['value'] for r in rag_results[:3]]
+                names_str = ", ".join(f"'{n}'" for n in top_names)
+                
                 return {
                     "status": "rag_results",
                     "data": rag_results,
-                    "message": f"🔍 RAG found {len(rag_results)} candidates. ⚠️ These are FUZZY matches without IDs. You MUST pick the most relevant name (e.g. '{rag_results[0]['value']}') and call `resolve_entity` again with that exact name to get the ID.",
+                    "message": f"⚠️ AMBIGUOUS ENTITY: Found {len(rag_results)} candidates but NO EXACT MATCH. You CANNOT proceed with these results. You MUST pick one of the following names and call `resolve_entity` again with THAT EXACT NAME: {names_str}. ⛔ DO NOT use the original keyword '{keyword}' again.",
                     "source": "rag"
                 }
         except Exception as e:

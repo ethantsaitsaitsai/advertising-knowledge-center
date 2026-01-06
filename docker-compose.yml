@@ -14,9 +14,9 @@ services:
       resources:
         limits:
           cpus: '0.50'        # 限制最多使用 50% CPU
-          memory: 512M        # 硬限制 512MB RAM
+          memory: 384M        # 硬限制 384MB RAM
         reservations:
-          memory: 256M        # 保證至少有 256MB
+          memory: 128M        # 保證至少有 128MB
     restart: always
 
   frontend:
@@ -34,5 +34,7 @@ services:
       resources:
         limits:
           cpus: '0.50'
-          memory: 512M
+          memory: 384M
+        reservations:
+          memory: 128M
     restart: always

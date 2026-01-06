@@ -266,6 +266,38 @@ def pandas_processor(
             if top_n:
                 result_df = result_df.head(top_n)
 
+        elif operation == 'groupby_top_n':
+            # [NEW] Group-wise Top N: 每個組內取 top N
+            # 適用場景: 「各格式的 top5 客戶」
+            # 參數:
+            #   - groupby_col: 分組欄位 (e.g., "format_name")
+            #   - sort_col: 排序欄位 (e.g., "ctr DESC")
+            #   - top_n: 每組取前 N 筆
+
+            if not groupby_col or not sort_col or not top_n:
+                return {
+                    "status": "error",
+                    "markdown": "❌ Error: groupby_top_n 需要 groupby_col, sort_col, top_n。",
+                    "data": [],
+                    "count": 0
+                }
+
+            groupby_cols_list = [col.strip() for col in groupby_col.split(',')]
+
+            # Parse sort_col (e.g., "ctr DESC" → col="ctr", ascending=False)
+            parts = sort_col.strip().split()
+            actual_sort_col = parts[0]
+            sort_ascending = False if len(parts) > 1 and parts[1].upper() == 'DESC' else True
+
+            # Use pandas groupby + head for group-wise top N
+            result_df = (
+                result_df.sort_values(by=actual_sort_col, ascending=sort_ascending)
+                .groupby(groupby_cols_list, as_index=False)
+                .head(top_n)
+            )
+
+            print(f"DEBUG [PandasProcessor] Applied groupby_top_n: grouped by {groupby_cols_list}, sorted by {actual_sort_col}, took top {top_n} per group")
+
         elif operation == 'add_percentage_column':
             # 新增：計算佔比欄位
             # 參數：sum_col (必要，要計算佔比的欄位), new_col (可選，新欄位名稱，預設為 "percentage")
@@ -313,11 +345,13 @@ def pandas_processor(
             print(f"DEBUG [PandasProcessor] Added percentage column '{percentage_col}' based on '{value_col}' (Total: {total:,.0f})")
 
         # 通用排序和 Top N (for non-groupby_sum operations)
-        if sort_col and operation not in ['groupby_sum', 'top_n', 'add_percentage_column']:
+        print(f"DEBUG [PandasProcessor] Before general sort: operation={operation}, sort_col={sort_col}")
+        if sort_col and operation not in ['groupby_sum', 'top_n', 'add_percentage_column', 'groupby_top_n']:
+            print(f"DEBUG [PandasProcessor] Executing general sort with sort_col={sort_col}")
             result_df = result_df.sort_values(by=sort_col, ascending=ascending)
 
         # [FIX] Don't apply top_n here for groupby_sum - will apply after delayed sorting
-        if top_n and operation not in ['groupby_sum', 'top_n', 'add_percentage_column']:
+        if top_n and operation not in ['groupby_sum', 'top_n', 'add_percentage_column', 'groupby_top_n']:
             result_df = result_df.head(top_n)
 
         # --- [NEW] Automatic Rate Recalculation (自動重算成效指標) ---
@@ -344,21 +378,33 @@ def pandas_processor(
                 if f"{base_name}_x" in result_df.columns: return f"{base_name}_x"
             return None
 
-        col_imps = find_col(["effective_impressions", "有效曝光"])
+        # [FIX] Added 'total_impressions' and 'total_q100' to support ClickHouse/Benchmark data
+        col_imps = find_col(["effective_impressions", "total_impressions", "有效曝光"])
         col_clicks = find_col(["total_clicks", "總點擊"])
-        col_q100 = find_col(["total_q100_views", "完整觀看數"])
+        col_q100 = find_col(["total_q100_views", "total_q100", "完整觀看數"])
         col_eng = find_col(["total_engagements", "總互動"])
 
         if col_imps:
             # CTR
             if col_clicks:
                 result_df['ctr'] = result_df.apply(lambda row: safe_div(row[col_clicks], row[col_imps]), axis=1)
+                # [FIX] Alias to common names to satisfy Planner/Sort expectations
+                if 'avg_ctr' not in result_df.columns: result_df['avg_ctr'] = result_df['ctr']
+                if 'Ctr' not in result_df.columns: result_df['Ctr'] = result_df['ctr']
+
             # VTR
             if col_q100:
                 result_df['vtr'] = result_df.apply(lambda row: safe_div(row[col_q100], row[col_imps]), axis=1)
+                # [FIX] Alias
+                if 'avg_vtr' not in result_df.columns: result_df['avg_vtr'] = result_df['vtr']
+                if 'Vtr' not in result_df.columns: result_df['Vtr'] = result_df['vtr']
+
             # ER
             if col_eng:
                 result_df['er'] = result_df.apply(lambda row: safe_div(row[col_eng], row[col_imps]), axis=1)
+                # [FIX] Alias
+                if 'avg_er' not in result_df.columns: result_df['avg_er'] = result_df['er']
+                if 'Er' not in result_df.columns: result_df['Er'] = result_df['er']
 
         # --- [NEW] Apply Delayed Sorting for groupby_sum (After CTR/VTR/ER Calculation) ---
         # Parse sort_col to extract column name and direction (e.g., "ctr DESC" → col="ctr", asc=False)

@@ -94,18 +94,22 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
 
                     if isinstance(result, dict) and "data" in result:
                         data = result.get("data")
-                        if data and isinstance(data, list):
+                        # [FIX] Allow empty lists to be stored so we know the tool was called but returned nothing
+                        if isinstance(data, list):
                             if tool_name not in data_store:
                                 data_store[tool_name] = []
                             
-                            # Deduplicate
-                            existing_data_str = {json.dumps(row, sort_keys=True, default=str) for row in data_store[tool_name]}
-                            for row in data:
-                                row_str = json.dumps(row, sort_keys=True, default=str)
-                                if row_str not in existing_data_str:
-                                    data_store[tool_name].append(row)
-                                    existing_data_str.add(row_str)
-                            print(f"DEBUG [Reporter] Reconstructed {len(data)} rows for {tool_name}")
+                            # Deduplicate (only if not empty)
+                            if data:
+                                existing_data_str = {json.dumps(row, sort_keys=True, default=str) for row in data_store[tool_name]}
+                                for row in data:
+                                    row_str = json.dumps(row, sort_keys=True, default=str)
+                                    if row_str not in existing_data_str:
+                                        data_store[tool_name].append(row)
+                                        existing_data_str.add(row_str)
+                                print(f"DEBUG [Reporter] Reconstructed {len(data)} rows for {tool_name}")
+                            else:
+                                print(f"DEBUG [Reporter] Reconstructed 0 rows (Empty) for {tool_name}")
                 except Exception as e:
                     print(f"DEBUG [Reporter] Error processing {tool_name}: {e}")
 
@@ -119,6 +123,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         }
 
     print(f"DEBUG [Reporter] Auto-Drive Mode Activated. Processing {len(data_store)} datasets...")
+    print(f"DEBUG [Reporter] Data Store Keys: {list(data_store.keys())}") # [DEBUG] Print keys
 
     # --- Pre-processing: Aggregate Investment Budget ---
     # Fix for Many-to-Many explosion: Group investment by Campaign + Format before merging
@@ -152,11 +157,44 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     # --- Auto-Drive Pipeline ---
     current_data = None
 
+    # [NEW] Special Case: Client-Level Performance Aggregation
+    # When both performance_metrics and campaign_basic exist, check if user wants client-level breakdown
+    if "query_performance_metrics" in data_store and "query_campaign_basic" in data_store:
+        client_keywords = ["客戶", "client", "廣告主", "品牌"]
+        is_client_query = any(kw in original_query.lower() for kw in client_keywords)
+
+        if is_client_query:
+            print("DEBUG [Reporter] Detected client-level performance query. Performing cross-DB aggregation...")
+
+            # Merge performance_metrics with campaign_basic on campaign_id
+            perf_data = data_store["query_performance_metrics"]
+            campaign_data = data_store["query_campaign_basic"]
+
+            # Use pandas_processor to merge
+            merged_result = pandas_processor.invoke({
+                "data": perf_data,
+                "merge_data": campaign_data,
+                "merge_on": "campaign_id",
+                "operation": "merge",
+                "merge_how": "left"
+            })
+
+            if merged_result.get("status") == "success":
+                current_data = merged_result.get("data")
+                print(f"DEBUG [Reporter] Cross-DB merge successful: {len(current_data)} rows")
+                print(f"DEBUG [Reporter] Merged Cols: {list(current_data[0].keys())[:10]}")
+
+                # Override anchor selection - use merged data directly
+                data_store["_client_performance_merged"] = current_data
+
     # 1. Determine Anchor Table (主表)
-    # Priority: Execution > Investment > Industry Format > Format Benchmark > Performance > Campaign > Others (but NEVER resolve_entity)
+    # Priority: Client Performance Merged > Execution > Investment > Industry Format > Format Benchmark > Performance > Campaign > Others
     # Note: resolve_entity should NEVER be used as anchor - it's only for ID lookup
 
-    if "query_execution_budget" in data_store:
+    if "_client_performance_merged" in data_store:
+        current_data = data_store["_client_performance_merged"]
+        print("DEBUG [Reporter] Anchor: Client Performance (Merged)")
+    elif "query_execution_budget" in data_store:
         current_data = data_store["query_execution_budget"]
         print("DEBUG [Reporter] Anchor: Execution Budget")
     elif "query_investment_budget" in data_store:
@@ -411,6 +449,19 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
 
         ⚠️ **注意**: `sort_col` 必須使用**原始英文欄位名**（如 "ctr"、"execution_amount"），並在欄位名後加上 " DESC" 表示降序（例如 "execution_amount DESC"）
 
+        - **⚠️ 特殊情況: 每組內排名 (Group-wise Top N)**:
+          - **關鍵字**: 「各XX的 Top Y」「每個XX的前Y」
+            - 例如：「各格式的 top5 客戶」→ 使用 `use_groupby_top_n=true`
+            - 例如：「每個代理商的前3大客戶」→ 使用 `use_groupby_top_n=true`
+          - **判斷邏輯**:
+            - 查詢包含**兩個維度** (如「格式」+「客戶」)
+            - 要求在**第一維度內**對**第二維度**排名
+          - **處理方式**:
+            - 設定 `use_groupby_top_n=true`
+            - `groupby_cols` 只包含第一維度 (如 ["format_name"])
+            - `limit` 設為每組要取的數量
+            - 系統會自動使用特殊的 groupby_top_n 操作
+
         **5. 時間維度聚合 (Time Period Aggregation)**:
         如果使用者查詢包含以下時間聚合關鍵字，請設定 `time_aggregation`：
         - **關鍵字**: 「每月」「按月」「月報」「每季」「按季」「季報」「每年」「按年」「年報」
@@ -544,9 +595,9 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 # We must ensure raw metrics are present in the aggregation.
                 rate_metrics = ["ctr", "vtr", "er"]
                 raw_metrics_map = {
-                    "ctr": ["effective_impressions", "total_clicks"],
-                    "vtr": ["total_q100_views", "effective_impressions"], # Simplified VTR calc
-                    "er": ["total_engagements", "effective_impressions"]
+                    "ctr": ["effective_impressions", "total_impressions", "total_clicks"],
+                    "vtr": ["total_q100_views", "total_q100", "effective_impressions", "total_impressions"], # Simplified VTR calc
+                    "er": ["total_engagements", "effective_impressions", "total_impressions"]
                 }
                 
                 # Check if any rate metric is in display_columns (mapped to Chinese) or sum_cols (English)
@@ -711,19 +762,66 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                         # Aggregation failed
                         final_result = aggregated_result
                 else:
-                    # No percentage needed - standard flow with rename
-                    final_result = pandas_processor.invoke({
-                        "data": current_data,
-                        "operation": "groupby_sum",
-                        "rename_map": plan.get("rename_map", {}),
-                        "groupby_col": ",".join(groupby_cols_en),
-                        "sum_col": ",".join(sum_cols_en),
-                        "concat_col": concat_col_en,
-                        "select_columns": plan.get("display_columns", []),
-                        "sort_col": plan.get("sort_col"),
-                        "ascending": False,
-                        "top_n": top_n
-                    })
+                    # [NEW] Check if this is a group-wise top N scenario
+                    use_groupby_top_n = plan.get("use_groupby_top_n", False)
+
+                    if use_groupby_top_n:
+                        print(f"DEBUG [Reporter] Detected group-wise top N query. Using special aggregation...")
+
+                        # Step 1: Aggregate first (按 format + client 聚合)
+                        all_groupby_cols = groupby_cols_en.copy()
+                        # Need to include the second dimension (client) in groupby
+                        # Extract from display_columns: find client-like columns
+                        client_col_candidates = ["client_name", "advertiser_name", "brand", "company"]
+                        client_col = None
+                        for col in client_col_candidates:
+                            if col in available_cols:
+                                client_col = col
+                                break
+
+                        if client_col and client_col not in all_groupby_cols:
+                            all_groupby_cols.append(client_col)
+
+                        print(f"DEBUG [Reporter] Group-wise aggregation columns: {all_groupby_cols}")
+
+                        aggregated_result = pandas_processor.invoke({
+                            "data": current_data,
+                            "operation": "groupby_sum",
+                            "groupby_col": ",".join(all_groupby_cols),
+                            "sum_col": ",".join(sum_cols_en),
+                            "concat_col": concat_col_en,
+                            "sort_col": plan.get("sort_col"),
+                            "ascending": False,
+                            "top_n": 0  # No limit yet
+                        })
+
+                        if aggregated_result.get("status") == "success":
+                            # Step 2: Apply groupby_top_n
+                            final_result = pandas_processor.invoke({
+                                "data": aggregated_result.get("data", []),
+                                "operation": "groupby_top_n",
+                                "rename_map": plan.get("rename_map", {}),
+                                "groupby_col": ",".join(groupby_cols_en),  # Only the first dimension
+                                "sort_col": plan.get("sort_col"),
+                                "top_n": top_n,
+                                "select_columns": plan.get("display_columns", [])
+                            })
+                        else:
+                            final_result = aggregated_result
+                    else:
+                        # No percentage, no group-wise top N - standard flow with rename
+                        final_result = pandas_processor.invoke({
+                            "data": current_data,
+                            "operation": "groupby_sum",
+                            "rename_map": plan.get("rename_map", {}),
+                            "groupby_col": ",".join(groupby_cols_en),
+                            "sum_col": ",".join(sum_cols_en),
+                            "concat_col": concat_col_en,
+                            "select_columns": plan.get("display_columns", []),
+                            "sort_col": plan.get("sort_col"),
+                            "ascending": False,
+                            "top_n": top_n
+                        })
 
             else:
                 raise ValueError("No valid JSON found in LLM response")
