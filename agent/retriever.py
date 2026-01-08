@@ -22,7 +22,7 @@ from tools.campaign_template_tool import (
     execute_sql_template,
     query_industry_format_budget
 )
-from tools.performance_tools import query_performance_metrics, query_format_benchmark
+from tools.performance_tools import query_unified_performance, query_format_benchmark
 import json
 from datetime import datetime
 
@@ -37,7 +37,7 @@ RETRIEVER_TOOLS = [
     query_ad_formats,
     execute_sql_template,
     query_industry_format_budget,
-    query_performance_metrics,
+    query_unified_performance,
     query_format_benchmark
 ]
 
@@ -105,7 +105,7 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
    - 根據使用者需求，呼叫適當的查詢工具：
      - `query_execution_budget`: 查詢「認列金額」或「執行金額」
      - `query_investment_budget`: 查詢「預算」或「進單金額」
-     - `query_performance_metrics`: 查詢成效 (必須傳入 `cmp_ids`)
+     - `query_unified_performance`: 查詢成效 (使用 `cmpids` 或 `plaids`)
      - `query_targeting_segments`: 查詢受眾
      - `query_ad_formats`: **查詢廣告格式 (⚠️ 當使用者問到「格式」時，這是必須呼叫的工具)**
    - **匯總查詢時的參數設定**：
@@ -123,7 +123,7 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
 - **ID 絕對優先**: 只要你取得了 `client_id` (例如 1453)，後續所有查詢 **必須** 使用 `client_ids=[1453]`。禁止再使用 `client_names`。
 - **防止鬼打牆**: 如果系統提示「已確認實體資訊」，**請不要** 再次呼叫 `resolve_entity`，直接進入 Step 2。
 - **成效查詢規範**:
-  - 查詢成效 (`query_performance_metrics`) 時，**必須** 傳入 `cmp_ids`。
+  - 查詢成效 (`query_unified_performance`) 時，**必須** 設定 `group_by` 參數 (例如 `['campaign_name', 'cmpid', 'ad_format_type']`)。
   - **重要**: 查詢歷史活動成效時，請務必設定寬鬆的時間範圍 (例如 `start_date='2021-01-01'`)，以免因預設時間範圍 (最近 3 個月) 而導致歷史數據遺失。
 
 **結束條件**:
@@ -275,7 +275,7 @@ def data_retriever_node(state: AgentState) -> Dict[str, Any]:
                                     else:  # client, brand, agency
                                         param_name = "client_ids"
 
-                                    guide_msg = f"✅ 已成功解析實體: {', '.join(guidance)}。\n👉 下一步 (Step 2): 請立刻呼叫 `query_campaign_basic`，並使用參數 `{param_name}={json.dumps(entity_ids)}`。\n📋 接下來 (Step 3): 取得活動列表後，請根據使用者查詢需求，呼叫 `query_ad_formats` (查詢格式) 和 `query_performance_metrics` (查詢成效數據)。"
+                                    guide_msg = f"✅ 已成功解析實體: {', '.join(guidance)}。\n👉 下一步 (Step 2): 請立刻呼叫 `query_campaign_basic`，並使用參數 `{param_name}={json.dumps(entity_ids)}`。\n📋 接下來 (Step 3): 取得活動列表後，請根據使用者查詢需求，呼叫 `query_ad_formats` (查詢格式) 和 `query_unified_performance` (查詢成效數據)。"
                                     messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
                                 else:
                                     resolved_entities.append(entity)
@@ -297,7 +297,7 @@ def data_retriever_node(state: AgentState) -> Dict[str, Any]:
                                     else:  # client, brand, agency
                                         param_name = "client_ids"
 
-                                    guide_msg = f"✅ 已成功解析實體: {e_name} (ID: {e_id})。\n👉 下一步 (Step 2): 請立刻呼叫 `query_campaign_basic`，並使用參數 `{param_name}=[{e_id}]`。\n📋 接下來 (Step 3): 取得活動列表後，請根據使用者查詢需求，呼叫 `query_ad_formats` (查詢格式) 和 `query_performance_metrics` (查詢成效數據)。"
+                                    guide_msg = f"✅ 已成功解析實體: {e_name} (ID: {e_id})。\n👉 下一步 (Step 2): 請立刻呼叫 `query_campaign_basic`，並使用參數 `{param_name}=[{e_id}]`。\n📋 接下來 (Step 3): 取得活動列表後，請根據使用者查詢需求，呼叫 `query_ad_formats` (查詢格式) 和 `query_unified_performance` (查詢成效數據)。"
                                     messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
 
                             # ===== Handle RAG Results =====
@@ -343,7 +343,7 @@ def data_retriever_node(state: AgentState) -> Dict[str, Any]:
 
                                         if entity_type in ["industry", "sub_industry"]:
                                             # 產業類型：先嘗試獲取精確 ID，如果失敗則直接查詢數據
-                                            guide_msg = f"🔍 RAG 找到相關產業: {entity_value} (類型: {entity_type}, 分數: {top_result.get('score'):.2f})。\n\n👉 **CRITICAL - 請立即執行以下步驟**：\n\n**Step 1**: 嘗試取得精確 ID（單次嘗試）\n```\nresolve_entity(keyword='{entity_value}', target_types=['{entity_type}'])\n```\n\n**Step 2**: 無論 Step 1 成功與否，立即查詢活動數據\n```\nquery_campaign_basic()  # 使用 Step 1 取得的 industry_ids 或 sub_industry_ids\n```\n\n**Step 3**: 從 Step 2 結果提取 campaign_ids，然後**依照使用者查詢需求**立即呼叫：\n\n⚠️ **必須根據使用者查詢關鍵字決定要呼叫哪些工具**：\n\n- 如果提到「格式」「廣告格式」「format」 → 必須呼叫：\n```\nquery_ad_formats(campaign_ids=[...])\n```\n\n- 如果提到「預算」「投資金額」「investment」 → 必須呼叫：\n```\nquery_investment_budget(campaign_ids=[...])\n```\n\n- 如果提到「認列金額」「執行金額」「execution」 → 必須呼叫：\n```\nquery_execution_budget(campaign_ids=[...])\n```\n\n- 如果提到「成效」「CTR」「VTR」「ER」「點擊率」「觀看率」「performance」 → 必須呼叫：\n```\nquery_performance_metrics(campaign_ids=[...])\n```\n\n- 如果提到「受眾」「數據鎖定」「targeting」「segment」 → 必須呼叫：\n```\nquery_targeting_segments(campaign_ids=[...])\n```\n\n🚨 **範例**：\n如果使用者問「汽車產業成效最好的格式，以及他使用了什麼數據鎖定」，你必須呼叫：\n1. `query_ad_formats` (因為提到「格式」)\n2. `query_performance_metrics` (因為提到「成效」)\n3. `query_targeting_segments` (因為提到「數據鎖定」)\n\n🚨 **禁止事項**：\n- 不要重複呼叫 `resolve_entity` 超過 2 次\n- 不要使用除 '{entity_value}' 以外的其他關鍵字\n- 不要漏掉使用者查詢中明確提到的數據類型"
+                                            guide_msg = f"🔍 RAG 找到相關產業: {entity_value} (類型: {entity_type}, 分數: {top_result.get('score'):.2f})。\n\n👉 **CRITICAL - 請立即執行以下步驟**：\n\n**Step 1**: 嘗試取得精確 ID（單次嘗試）\n```\nresolve_entity(keyword='{entity_value}', target_types=['{entity_type}'])\n```\n\n**Step 2**: 無論 Step 1 成功與否，立即查詢活動數據\n```\nquery_campaign_basic()  # 使用 Step 1 取得的 industry_ids 或 sub_industry_ids\n```\n\n**Step 3**: 從 Step 2 結果提取 campaign_ids，然後**依照使用者查詢需求**立即呼叫：\n\n⚠️ **必須根據使用者查詢關鍵字決定要呼叫哪些工具**：\n\n- 如果提到「格式」「廣告格式」「format」 → 必須呼叫：\n```\nquery_ad_formats(campaign_ids=[...])\n```\n\n- 如果提到「預算」「投資金額」「investment」 → 必須呼叫：\n```\nquery_investment_budget(campaign_ids=[...])\n```\n\n- 如果提到「認列金額」「執行金額」「execution」 → 必須呼叫：\n```\nquery_execution_budget(campaign_ids=[...])\n```\n\n- 如果提到「成效」「CTR」「VTR」「ER」「點擊率」「觀看率」「performance」 → 必須呼叫：\n```\nquery_unified_performance(cmpids=[...], group_by=['campaign_name', 'cmpid'])\n```\n\n- 如果提到「受眾」「數據鎖定」「targeting」「segment」 → 必須呼叫：\n```\nquery_targeting_segments(campaign_ids=[...])\n```\n\n🚨 **範例**：\n如果使用者問「汽車產業成效最好的格式，以及他使用了什麼數據鎖定」，你必須呼叫：\n1. `query_ad_formats` (因為提到「格式」)\n2. `query_unified_performance` (因為提到「成效」)\n3. `query_targeting_segments` (因為提到「數據鎖定」)\n\n🚨 **禁止事項**：\n- 不要重複呼叫 `resolve_entity` 超過 2 次\n- 不要使用除 '{entity_value}' 以外的其他關鍵字\n- 不要漏掉使用者查詢中明確提到的數據類型"
                                             messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
                                         else:
                                             # 其他類型（client, brand, agency）：需要精確 ID
@@ -367,7 +367,7 @@ def data_retriever_node(state: AgentState) -> Dict[str, Any]:
                 if tool_name == "query_campaign_basic" and isinstance(result, dict) and result.get("data"):
                     campaign_ids = [row.get('campaign_id') for row in result.get("data", []) if row.get('campaign_id')]
                     if campaign_ids:
-                        guide_msg = f"\n\n✅ 已取得 {len(campaign_ids)} 個活動的基本資料。\n👉 下一步 (Step 3): 請根據使用者查詢需求，呼叫以下工具：\n- `query_ad_formats(campaign_ids={json.dumps(campaign_ids[:10])})` - 查詢廣告格式\n- `query_performance_metrics(cmp_ids={json.dumps(campaign_ids[:10])})` - 查詢成效數據"
+                        guide_msg = f"\n\n✅ 已取得 {len(campaign_ids)} 個活動的基本資料。\n👉 下一步 (Step 3): 請根據使用者查詢需求，呼叫以下工具：\n- `query_ad_formats(campaign_ids={json.dumps(campaign_ids[:10])})` - 查詢廣告格式\n- `query_unified_performance(cmpids={json.dumps(campaign_ids[:10])}, group_by=['campaign_name', 'cmpid'])` - 查詢成效數據"
                         content = json.dumps(result, ensure_ascii=False, default=str) + guide_msg
                     else:
                         content = json.dumps(result, ensure_ascii=False, default=str)

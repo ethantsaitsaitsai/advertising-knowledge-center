@@ -312,6 +312,48 @@ def query_ad_formats(
     return _render_and_execute_mysql("ad_formats.sql", context)
 
 @tool
+def query_media_placements(
+    campaign_ids: Optional[List[int]] = None,
+    client_ids: Optional[List[int]] = None,
+    agency_ids: Optional[List[int]] = None,
+    industry_ids: Optional[List[int]] = None,
+    sub_industry_ids: Optional[List[int]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 1000
+) -> Dict[str, Any]:
+    """
+    查詢投放媒體與版位明細 (Media Placements) 及執行預算。
+    此工具回傳的 placement_id (plaid) 是連接 MySQL 與 ClickHouse 成效數據的關鍵 Key。
+    
+    【核心應用】
+    1. 查詢特定 Campaign 的版位: 提供 `campaign_ids`。
+    2. 查詢特定客戶在某期間的「所有投放版位 ID (plaid)」: 提供 `client_ids` + `start_date` + `end_date`。
+       👉 這是查詢「客戶層級」成效數據的標準前置步驟 (用來獲取 plaids)。
+    
+    Args:
+        campaign_ids: Campaign IDs
+        client_ids: Client IDs (用於跨活動查詢版位)
+        agency_ids: Agency IDs
+        industry_ids: 產業 IDs
+        sub_industry_ids: 子產業 IDs
+        start_date: 開始日期 (YYYY-MM-DD)
+        end_date: 結束日期 (YYYY-MM-DD)
+        limit: 限制筆數 (Default 1000)
+    """
+    context = {
+        "campaign_ids": campaign_ids,
+        "client_ids": client_ids,
+        "agency_ids": agency_ids,
+        "industry_ids": industry_ids,
+        "sub_industry_ids": sub_industry_ids,
+        "start_date": start_date,
+        "end_date": end_date,
+        "limit": limit
+    }
+    return _render_and_execute_mysql("media_placements.sql", context)
+
+@tool
 def execute_sql_template(
     template_name: str,
     campaign_ids: Optional[List[int]] = None,

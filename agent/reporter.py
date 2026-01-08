@@ -28,7 +28,7 @@ REPORTER_SYSTEM_PROMPT = """你是 AKC 智能助手的資料報告專家 (Data R
 {data_summary}
 
 **操作指南**:
-1. **分析數據源**: 查看有哪些數據可用 (例如 `query_investment_budget` 有金額, `query_performance_metrics` 有成效)。
+1. **分析數據源**: 查看有哪些數據可用 (例如 `query_investment_budget` 有金額, `query_unified_performance` 有成效)。
 2. **決定主表 (Anchor)**: 選擇涵蓋面最廣的表作為主表 (通常是 Investment 或 Format 表)。
 3. **執行合併 (Merge)**:
    - 使用 `pandas_processor(operation="merge", ...)`。
@@ -116,10 +116,15 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     original_query = state.get("routing_context", {}).get("original_query", "")
     execution_logs = state.get("debug_logs", [])
 
-    if not data_store:
+    # [STRICT FIX] Verify that at least one tool returned ACTUAL data rows
+    has_actual_data = any(len(rows) > 0 for rows in data_store.values() if isinstance(rows, list))
+    
+    if not data_store or not has_actual_data:
+        msg = "抱歉，我在資料庫中沒有找到與「悠遊卡」相關的成效或預算數據。" if "悠遊卡" in original_query else "抱歉，我沒有找到相關數據。"
         return {
-            "final_response": "抱歉，我沒有找到相關數據。",
-            "messages": [AIMessage(content="抱歉，我沒有找到相關數據。")]
+            "final_response": msg,
+            "messages": [AIMessage(content=msg)],
+            "debug_logs": execution_logs
         }
 
     print(f"DEBUG [Reporter] Auto-Drive Mode Activated. Processing {len(data_store)} datasets...")
@@ -158,23 +163,28 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     current_data = None
 
     # [NEW] Special Case: Client-Level Performance Aggregation
-    # When both performance_metrics and campaign_basic exist, check if user wants client-level breakdown
-    if "query_performance_metrics" in data_store and "query_campaign_basic" in data_store:
+    # When both unified_performance and campaign_basic exist, check if user wants client-level breakdown
+    if "query_unified_performance" in data_store and "query_campaign_basic" in data_store:
         client_keywords = ["客戶", "client", "廣告主", "品牌"]
         is_client_query = any(kw in original_query.lower() for kw in client_keywords)
 
         if is_client_query:
             print("DEBUG [Reporter] Detected client-level performance query. Performing cross-DB aggregation...")
 
-            # Merge performance_metrics with campaign_basic on campaign_id
-            perf_data = data_store["query_performance_metrics"]
+            # Merge unified_performance with campaign_basic on cmpid/campaign_id
+            perf_data = data_store["query_unified_performance"]
             campaign_data = data_store["query_campaign_basic"]
+            
+            # Ensure join key exists
+            for row in campaign_data:
+                if "campaign_id" in row and "cmpid" not in row:
+                    row["cmpid"] = row["campaign_id"]
 
             # Use pandas_processor to merge
             merged_result = pandas_processor.invoke({
                 "data": perf_data,
                 "merge_data": campaign_data,
-                "merge_on": "campaign_id",
+                "merge_on": "cmpid",
                 "operation": "merge",
                 "merge_how": "left"
             })
@@ -182,8 +192,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             if merged_result.get("status") == "success":
                 current_data = merged_result.get("data")
                 print(f"DEBUG [Reporter] Cross-DB merge successful: {len(current_data)} rows")
-                print(f"DEBUG [Reporter] Merged Cols: {list(current_data[0].keys())[:10]}")
-
+                
                 # Override anchor selection - use merged data directly
                 data_store["_client_performance_merged"] = current_data
 
@@ -203,12 +212,12 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
     elif "query_industry_format_budget" in data_store: # [NEW] High Priority for Industry Queries
         current_data = data_store["query_industry_format_budget"]
         print("DEBUG [Reporter] Anchor: Industry Format Budget")
+    elif "query_unified_performance" in data_store: # [NEW] High Priority for Unified Performance
+        current_data = data_store["query_unified_performance"]
+        print("DEBUG [Reporter] Anchor: Unified Performance (ClickHouse)")
     elif "query_format_benchmark" in data_store: # [NEW] High Priority for Format Benchmarks
         current_data = data_store["query_format_benchmark"]
         print("DEBUG [Reporter] Anchor: Format Benchmark")
-    elif "query_performance_metrics" in data_store:
-        current_data = data_store["query_performance_metrics"]
-        print("DEBUG [Reporter] Anchor: Performance Metrics")
     elif "query_campaign_basic" in data_store:
         current_data = data_store["query_campaign_basic"]
         print("DEBUG [Reporter] Anchor: Campaign Basic")
@@ -249,65 +258,157 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
 
     # 2. Process Segments (Flatten)
     if "query_targeting_segments" in data_store:
-        print("DEBUG [Reporter] Processing Segments (Groupby Concat)...")
-        res = pandas_processor.invoke({
-            "data": data_store["query_targeting_segments"],
-            "operation": "groupby_concat",
-            "groupby_col": "campaign_id",
-            "concat_col": "segment_name",
-            "new_col": "targeting_segments"
-        })
-        if res.get("status") == "success":
-            # Merge flattened segments into current_data
-            current_data = pandas_processor.invoke({
-                "data": current_data,
-                "merge_data": res.get("data"),
-                "merge_on": "campaign_id",
-                "operation": "merge",
-                "merge_how": "left"
-            }).get("data")
+        # [FIX] Check if merge key exists in anchor before attempting merge
+        # Targeting segments can be linked by campaign_id OR placement_id.
+        has_campaign_id = current_data and "campaign_id" in current_data[0]
+        has_plaid = current_data and "plaid" in current_data[0]
+        
+        if has_campaign_id or has_plaid:
+            print("DEBUG [Reporter] Processing Segments (Groupby Concat)...")
+            
+            # Determine merge key for Segments side
+            # query_targeting_segments usually has both campaign_id and placement_id
+            
+            # Case A: Merge by Campaign ID
+            if has_campaign_id:
+                print("DEBUG [Reporter] Merging Segments by Campaign ID...")
+                res = pandas_processor.invoke({
+                    "data": data_store["query_targeting_segments"],
+                    "operation": "groupby_concat",
+                    "groupby_col": "campaign_id",
+                    "concat_col": "segment_name",
+                    "new_col": "targeting_segments"
+                })
+                if res.get("status") == "success":
+                    current_data = pandas_processor.invoke({
+                        "data": current_data,
+                        "merge_data": res.get("data"),
+                        "merge_on": "campaign_id",
+                        "operation": "merge",
+                        "merge_how": "left"
+                    }).get("data")
+            
+            # Case B: Merge by Placement ID (plaid)
+            # Only if Campaign ID merge didn't happen or we want granular placement targeting
+            elif has_plaid:
+                print("DEBUG [Reporter] Merging Segments by Placement ID (plaid)...")
+                
+                # We need to map 'placement_id' in targeting data to 'plaid'
+                segments_data = data_store["query_targeting_segments"]
+                for row in segments_data:
+                    if "placement_id" in row:
+                        row["plaid"] = row["placement_id"]
+                
+                # Aggregate segments by plaid
+                res = pandas_processor.invoke({
+                    "data": segments_data,
+                    "operation": "groupby_concat",
+                    "groupby_col": "plaid",
+                    "concat_col": "segment_name",
+                    "new_col": "targeting_segments"
+                })
+                
+                if res.get("status") == "success":
+                    current_data = pandas_processor.invoke({
+                        "data": current_data,
+                        "merge_data": res.get("data"),
+                        "merge_on": "plaid",
+                        "operation": "merge",
+                        "merge_how": "left"
+                    }).get("data")
+
             if current_data:
                 print(f"DEBUG [Reporter] After Segments Merge Cols: {list(current_data[0].keys())[:10]}")
+        else:
+            print("DEBUG [Reporter] Skipping Segments Merge: Neither 'campaign_id' nor 'plaid' found in anchor table.")
 
-    # 3. Merge Performance (if not anchor)
-    if "query_performance_metrics" in data_store and current_data != data_store["query_performance_metrics"]:
-        print("DEBUG [Reporter] Merging Performance Metrics...")
-        perf_data = data_store["query_performance_metrics"]
+    # [NEW] Hybrid Merge Strategy (Unified Performance + Media Placements)
+    # This connects ClickHouse Performance (plaid) with MySQL Budget (placement_id)
+    if "query_unified_performance" in data_store and "query_media_placements" in data_store:
+        print("DEBUG [Reporter] Executing Hybrid Merge (Performance + Budget)...")
+        perf_data = data_store["query_unified_performance"]
+        budget_data = data_store["query_media_placements"]
         
-        # --- Dual-Path ID Strategy ---
-        # 1. Rename ClickHouse ID to align with Execution ID
-        if perf_data:
-            # Create a copy or modify in place? Modifying list of dicts is safe here.
-            for row in perf_data:
-                if "format_type_id" in row:
-                    row["format_type_id_exec"] = row.pop("format_type_id")
+        # Strategy: Rename 'placement_id' in budget_data to 'plaid' BEFORE merge
+        # This is required because pandas_processor merge_on expects a single key (or same key name)
+        for row in budget_data:
+            if "placement_id" in row:
+                row["plaid"] = row["placement_id"] # Create alias
         
-        # 2. Try Match with Execution ID
-        primary_key = "campaign_id, format_type_id_exec"
-        
-        # Check if anchor has this key (it should, after Ad Format merge)
-        # Wait! Ad Formats merge happens AFTER Performance merge in current code flow?
-        # CRITICAL: We must merge Ad Formats FIRST to get the 'format_type_id_exec'
-        pass # Placeholder to indicate logic shift needed
-
-    # [REORDER] Merge Ad Formats FIRST (Step 3 -> Step 4)
-    if "query_ad_formats" in data_store:
-        print("DEBUG [Reporter] Merging Ad Formats (Priority)...")
-        # Use simple Campaign ID merge first to enrich the table with IDs
+        # Now merge on 'plaid'
         res = pandas_processor.invoke({
-            "data": current_data,
-            "merge_data": data_store["query_ad_formats"],
-            "merge_on": "campaign_id", 
+            "data": perf_data if current_data is None else current_data, # Use current_data if already anchored
+            "merge_data": budget_data,
+            "merge_on": "plaid",
             "operation": "merge",
             "merge_how": "left"
         })
+        
         if res.get("status") == "success":
             current_data = res.get("data")
-            print("DEBUG [Reporter] Ad Formats merged. Now we have dual IDs.")
+            print("DEBUG [Reporter] Hybrid Merge Successful. Joined Budget to Performance.")
+            
+    # [NEW] Hybrid Merge Strategy (Unified Performance + Campaign Basic)
+    # This connects ClickHouse Performance (cmpid) with MySQL Basic Info (campaign_id)
+    # Useful when Group By is 'campaign_name' or 'cmpid'
+    if "query_unified_performance" in data_store and "query_campaign_basic" in data_store:
+        # Only if we haven't merged media_placements (which already brings in campaign info usually)
+        if "query_media_placements" not in data_store:
+            # [FIX] Check if anchor has 'cmpid' before merging
+            if current_data and "cmpid" in current_data[0]:
+                print("DEBUG [Reporter] Executing Hybrid Merge (Performance + Campaign Basic)...")
+                basic_data = data_store["query_campaign_basic"]
+                
+                # Alias MySQL 'campaign_id' to ClickHouse 'cmpid'
+                for row in basic_data:
+                    if "campaign_id" in row:
+                        row["cmpid"] = row["campaign_id"]
+                
+                res = pandas_processor.invoke({
+                    "data": current_data,
+                    "merge_data": basic_data,
+                    "merge_on": "cmpid",
+                    "operation": "merge",
+                    "merge_how": "left"
+                })
+                
+                if res.get("status") == "success":
+                    current_data = res.get("data")
+                    print("DEBUG [Reporter] Hybrid Merge (Campaign Level) Successful.")
+            else:
+                print("DEBUG [Reporter] Skipping Campaign Basic Merge: 'cmpid' not found in anchor table.")
+
+    # [REORDER] Merge Ad Formats FIRST (Step 3 -> Step 4)
+    if "query_ad_formats" in data_store:
+        # [FIX] Check if merge key 'campaign_id' exists in anchor
+        if current_data and "campaign_id" in current_data[0]:
+            print("DEBUG [Reporter] Merging Ad Formats (Priority)...")
+            # Use simple Campaign ID merge first to enrich the table with IDs
+            res = pandas_processor.invoke({
+                "data": current_data,
+                "merge_data": data_store["query_ad_formats"],
+                "merge_on": "campaign_id", 
+                "operation": "merge",
+                "merge_how": "left"
+            })
+            if res.get("status") == "success":
+                current_data = res.get("data")
+                print("DEBUG [Reporter] Ad Formats merged. Now we have dual IDs.")
+        else:
+            print("DEBUG [Reporter] Skipping Ad Formats Merge: 'campaign_id' not found in anchor table.")
 
     # [REORDER] Merge Performance SECOND (Step 4 -> Step 3)
-    if "query_performance_metrics" in data_store and current_data != data_store["query_performance_metrics"]:
-        print("DEBUG [Reporter] Merging Performance Metrics (Dual-Path)...")
+    if "query_unified_performance" in data_store and current_data != data_store["query_unified_performance"]:
+        print("DEBUG [Reporter] Merging Unified Performance (Dual-Path)...")
+        perf_data = data_store["query_unified_performance"]
+        
+        # 1. Align IDs
+        if perf_data:
+            for row in perf_data:
+                if "ad_format_type_id" in row:
+                    row["format_type_id_exec"] = row["ad_format_type_id"] # Unified uses ad_format_type_id
+                if "cmpid" in row:
+                    row["campaign_id"] = row["cmpid"]
         
         # Check match rate with Execution ID
         def get_match_rate(left_data, right_data, on_keys):
@@ -337,7 +438,9 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             for row in current_data:
                 row["_norm_fmt"] = normalize_format(row.get("format_name", ""))
             for row in perf_data:
-                row["_norm_fmt"] = normalize_format(row.get("format_name", "")) # ClickHouse usually has name
+                # Unified performance usually has 'ad_format_type' as name
+                fmt_name = row.get("ad_format_type") or row.get("format_name", "")
+                row["_norm_fmt"] = normalize_format(fmt_name)
                 
             name_match_rate = get_match_rate(current_data, perf_data, ["campaign_id", "_norm_fmt"])
             print(f"DEBUG [Reporter] Strategy B (Name Match) Rate: {name_match_rate:.2%}")
@@ -351,7 +454,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                      "data": perf_data,
                      "operation": "groupby_sum",
                      "groupby_col": "campaign_id",
-                     "sum_col": "effective_impressions, total_clicks, total_q100_views, total_engagements",
+                     "sum_col": "effective_impressions, clicks, total_q100_views, total_engagements", # Updated for Unified cols
                      "sort_col": "campaign_id"
                  })
                  if agg_res.get("status") == "success":
@@ -511,7 +614,8 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         - **rename_map**: 原始欄位 -> 標準中文名稱（用於最終顯示）。
         - **display_columns**: 最終要顯示的欄位列表（使用中文名稱）。
           - **規則**: 顯示主鍵 + 使用者明確要求的欄位 + 概念展開的欄位。
-          - **禁止**: 嚴禁出現「客戶名稱」「代理商」「活動編號」等內部欄位，除非使用者明確詢問。
+          - **禁止**: 嚴禁出現「客戶名稱」「代理商」「活動編號」「cmpid」「plaid」「format_type_id」等內部欄位，除非使用者明確詢問。
+          - **嚴格過濾**: 只有在使用者明確要求（或概念展開需要）時才顯示「廣告格式」。如果使用者問「成效」，通常只需要「活動名稱」搭配成效指標即可。
         - **groupby_cols**: 根據上述聚合邏輯設定 (英文名)。
         - **concat_col**: 根據上述聚合邏輯設定 (英文名)。
         - **sum_cols**: 用於加總的指標欄位 (英文名)。

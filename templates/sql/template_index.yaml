@@ -247,6 +247,61 @@ templates:
     dependencies: []
     notes: ClickHouse 聚合資料，無 Campaign 維度
 
+  unified_performance:
+    file: unified_performance.sql
+    description: 核心成效查詢 (ClickHouse View)，支援產品線、產業、格式等多維度分析 (ID Driven)
+    keywords:
+      - 成效
+      - 產品線
+      - 點擊
+      - CTR
+      - 產業成效
+      - 格式成效
+    merge_key: N/A
+    returns:
+      - dimensions (dynamic)
+      - clicks
+      - effective_impressions
+      - ctr
+    required_params:
+      - start_date
+      - end_date
+    optional_params:
+      - client_ids
+      - product_line_ids
+      - ad_format_type_ids
+      - one_categories
+      - one_sub_categories
+      - plaids
+      - cmpids
+    priority: 1
+    dependencies: []
+    notes: 高效能查詢，使用 ID 進行精準過濾。
+
+  unified_dimensions:
+    file: unified_dimensions.sql
+    description: 維度探索查詢 (ClickHouse View)，查詢有哪些產品線、格式、版位 (不含成效)
+    keywords:
+      - 有哪些
+      - 產品線清單
+      - 格式清單
+      - 版位清單
+      - 媒體清單
+    merge_key: N/A
+    returns:
+      - dimensions (dynamic)
+    required_params:
+      - start_date
+      - end_date
+      - dimensions
+    optional_params:
+      - client_ids
+      - product_line_ids
+      - one_categories
+    priority: 1
+    dependencies: []
+    notes: 用於「List」類型的問題，速度快且支援產品線。
+
 # 使用範例組合 (Use Case Combinations)
 use_cases:
   basic_overview:
@@ -255,12 +310,23 @@ use_cases:
       - campaign_basic
       - budget_details
 
+  dimension_discovery:
+    description: 維度探索 (有哪些產品線/格式)
+    templates:
+      - unified_dimensions
+
+  product_line_performance:
+    description: 產品線成效分析
+    templates:
+      - unified_performance
+
   format_analysis:
     description: 格式分析（格式 + 投資金額）
     templates:
       - campaign_basic
       - ad_formats
       - budget_details
+      - unified_performance # 加入成效
 
   targeting_analysis:
     description: 數據鎖定分析
@@ -283,15 +349,18 @@ use_cases:
       - targeting_segments
       - media_placements
       - budget_details
+      - unified_performance
 
   industry_analysis:
     description: 產業/市場分析 (預算佔比與格式基準)
     templates:
       - industry_format_budget
-      - format_benchmark
+      - unified_performance
 
 # Agent 選擇邏輯建議
 selection_rules:
+  - rule: 如果查詢包含「成效」、「點擊」、「CTR」、「產品線」
+    action: 優先選擇 unified_performance
   - rule: 如果查詢包含「格式」關鍵字
     action: 選擇 ad_formats
   - rule: 如果查詢包含「數據鎖定」、「受眾」、「TA」
@@ -307,13 +376,21 @@ selection_rules:
 
 # 範例查詢對應
 example_queries:
+  - query: "Nike 的跑鞋產品線成效如何？"
+    selected_templates:
+      - unified_performance
+    reasoning: |
+      - "產品線" + "成效" → unified_performance (group_by=['product_line'])
+
   - query: "悠遊卡投遞的格式、成效、數據鎖定，格式投資金額"
     selected_templates:
       - campaign_basic
       - ad_formats
       - targeting_segments
       - budget_details
+      - unified_performance
     reasoning: |
+      - "成效" → unified_performance
       - "格式" → ad_formats
       - "數據鎖定" → targeting_segments
       - "投資金額" → budget_details

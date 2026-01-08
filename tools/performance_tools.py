@@ -51,74 +51,6 @@ def _get_cmp_ids_from_mysql(client_names: List[str], start_date: str, end_date: 
         return []
 
 @tool
-def query_performance_metrics(
-    start_date: str,
-    end_date: str,
-    cmp_ids: List[int],
-    dimension: str = 'format'
-) -> Dict[str, Any]:
-    """
-    查詢 ClickHouse 成效數據 (Impressions, Clicks, CTR, VTR, ER)。
-
-    Args:
-        start_date: 開始日期 (YYYY-MM-DD)
-        end_date: 結束日期 (YYYY-MM-DD)
-        cmp_ids: 指定 Campaign IDs 列表 (必要，請先透過 query_campaign_basic 取得)
-        dimension: 分析維度 ('campaign', 'format', 'daily')
-    """
-    
-    if not cmp_ids:
-        return {
-            "status": "success",
-            "data": [],
-            "count": 0,
-            "message": "No campaign IDs provided."
-        }
-
-    # 1. Render ClickHouse SQL
-    try:
-        template = env.get_template("performance_metrics.sql")
-        # Prepare context
-        context = {
-            "start_date": start_date,
-            "end_date": end_date,
-            "dimension": dimension,
-            "cmp_ids": cmp_ids,
-        }
-        rendered_sql = template.render(**context)
-    except Exception as e:
-        return {"status": "error", "message": f"Template Rendering Error: {e}"}
-
-    # 3. Execute in ClickHouse
-    try:
-        ch_client = get_clickhouse_db()
-
-        # Jinja2 template already rendered all variables, no parameter binding needed
-        # Execute directly with rendered SQL
-        result = ch_client.query(rendered_sql)
-        
-        # Format Results
-        columns = result.column_names
-        rows = [dict(zip(columns, row)) for row in result.result_rows]
-        
-        return {
-            "status": "success",
-            "data": rows,
-            "count": len(rows),
-            "generated_sql": rendered_sql,
-            "columns": columns
-        }
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "status": "error",
-            "message": f"ClickHouse Query Error: {e}",
-            "generated_sql": rendered_sql
-        }
-
-@tool
 def query_format_benchmark(
     start_date: str,
     end_date: str,
@@ -174,5 +106,177 @@ def query_format_benchmark(
         return {
             "status": "error",
             "message": f"ClickHouse Benchmark Query Error: {e}",
+            "generated_sql": rendered_sql
+        }
+
+@tool
+def query_unified_performance(
+    start_date: str,
+    end_date: str,
+    group_by: List[str],
+    plaids: Optional[List[int]] = None,
+    cmpids: Optional[List[int]] = None,
+    product_line_ids: Optional[List[int]] = None,
+    ad_format_type_ids: Optional[List[int]] = None,
+    one_categories: Optional[List[str]] = None,
+    one_sub_categories: Optional[List[str]] = None,
+    limit: int = 100
+) -> Dict[str, Any]:
+    """
+    【核心成效查詢工具】從 ClickHouse 查詢成效數據，使用 ID 進行精準過濾。
+    
+    ⚠️ 重要: 此工具不再接受 client_ids。若要查特定客戶成效，必須先呼叫 `query_media_placements` 取得 plaids。
+    
+    Args:
+        start_date: 開始日期 (YYYY-MM-DD)
+        end_date: 結束日期 (YYYY-MM-DD)
+        group_by: 分析維度，支援：
+                 ['client_company', 'product_line', 'one_category', 'one_sub_category',
+                  'ad_format_type', 'campaign_name', 'client_id', 'product_line_id', 
+                  'ad_format_type_id', 'plaid', 'cmpid']
+        plaids: Placement IDs (強烈建議使用此欄位過濾)
+        cmpids: Campaign IDs (ClickHouse cmpid)
+        product_line_ids: Product Line IDs
+        ad_format_type_ids: Ad Format Type IDs
+        one_categories: 產業類別 (String)
+        one_sub_categories: 子產業類別 (String)
+    """
+    
+    # 安全性驗證
+    ALLOWED_DIMS = {
+        'client_company', 'product_line', 'one_category', 'one_sub_category',
+        'ad_format_type', 'campaign_name', 'client_id', 'product_line_id',
+        'ad_format_type_id', 'plaid', 'cmpid', 'ad_type', 'day_local'
+    }
+    
+    valid_dims = [d for d in group_by if d in ALLOWED_DIMS]
+    if not valid_dims:
+        valid_dims = ['client_company'] 
+        
+    try:
+        template = env.get_template("unified_performance.sql")
+        context = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "dimensions": valid_dims,
+            "plaids": plaids,
+            "cmpids": cmpids,
+            "product_line_ids": product_line_ids,
+            "ad_format_type_ids": ad_format_type_ids,
+            "one_categories": one_categories,
+            "one_sub_categories": one_sub_categories,
+            "limit": limit
+        }
+        rendered_sql = template.render(**context)
+    except Exception as e:
+        return {"status": "error", "message": f"Template Rendering Error: {e}"}
+
+    try:
+        ch_client = get_clickhouse_db()
+        result = ch_client.query(rendered_sql)
+        
+        columns = result.column_names
+        rows = [dict(zip(columns, row)) for row in result.result_rows]
+        
+        return {
+            "status": "success",
+            "data": rows,
+            "count": len(rows),
+            "generated_sql": rendered_sql,
+            "columns": columns
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Unified Performance Query Error: {e}",
+            "generated_sql": rendered_sql
+        }
+
+@tool
+def query_unified_dimensions(
+    start_date: str,
+    end_date: str,
+    dimensions: List[str],
+    plaids: Optional[List[int]] = None,
+    cmpids: Optional[List[int]] = None,
+    client_ids: Optional[List[int]] = None,
+    product_line_ids: Optional[List[int]] = None,
+    ad_format_type_ids: Optional[List[int]] = None,
+    one_categories: Optional[List[str]] = None,
+    one_sub_categories: Optional[List[str]] = None,
+    limit: int = 100
+) -> Dict[str, Any]:
+    """
+    【維度探索工具】查詢有哪些產品線、格式、版位或分類 (不含成效數據)。
+    適用於：
+    1. "Nike 有哪些產品線？"
+    2. "汽車產業投了哪些格式？"
+    3. "列出所有使用過的版位"
+    
+    Args:
+        start_date: 開始日期 (YYYY-MM-DD)
+        end_date: 結束日期 (YYYY-MM-DD)
+        dimensions: 欲查詢的維度欄位，支援：
+                   ['client_company', 'product_line', 'one_category', 'one_sub_category',
+                    'ad_format_type', 'campaign_name', 'publisher', 'placement_name',
+                    'client_id', 'product_line_id', 'ad_format_type_id']
+        (其他過濾參數同 unified_performance)
+    """
+    
+    # 安全性驗證
+    ALLOWED_DIMS = {
+        'client_company', 'product_line', 'one_category', 'one_sub_category',
+        'ad_format_type', 'campaign_name', 'publisher', 'placement_name',
+        'client_id', 'product_line_id', 'ad_format_type_id', 'plaid', 'cmpid', 
+        'ad_type', 'ad_format_type'
+    }
+    
+    valid_dims = [d for d in dimensions if d in ALLOWED_DIMS]
+    if not valid_dims:
+        return {"status": "error", "message": "No valid dimensions provided."}
+        
+    try:
+        template = env.get_template("unified_dimensions.sql")
+        context = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "dimensions": valid_dims,
+            "plaids": plaids,
+            "cmpids": cmpids,
+            "client_ids": client_ids,
+            "product_line_ids": product_line_ids,
+            "ad_format_type_ids": ad_format_type_ids,
+            "one_categories": one_categories,
+            "one_sub_categories": one_sub_categories,
+            "limit": limit
+        }
+        rendered_sql = template.render(**context)
+    except Exception as e:
+        return {"status": "error", "message": f"Template Rendering Error: {e}"}
+
+    try:
+        ch_client = get_clickhouse_db()
+        result = ch_client.query(rendered_sql)
+        
+        columns = result.column_names
+        rows = [dict(zip(columns, row)) for row in result.result_rows]
+        
+        return {
+            "status": "success",
+            "data": rows,
+            "count": len(rows),
+            "generated_sql": rendered_sql,
+            "columns": columns
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"Unified Dimensions Query Error: {e}",
             "generated_sql": rendered_sql
         }

@@ -3,6 +3,7 @@ AKC Framework 3.0 - Data Analyst Agent (V2)
 Implemented using langchain.agents.create_agent
 """
 import json
+import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -22,9 +23,23 @@ from tools.campaign_template_tool import (
     query_targeting_segments,
     query_ad_formats,
     execute_sql_template,
-    query_industry_format_budget
+    query_industry_format_budget,
+    query_media_placements
 )
-from tools.performance_tools import query_performance_metrics, query_format_benchmark
+from tools.performance_tools import (
+    query_format_benchmark,
+    query_unified_performance,
+    query_unified_dimensions
+)
+
+# Setup logging
+logger = logging.getLogger("akc.analyst")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 # Tools for Retrieval
 RETRIEVER_TOOLS = [
@@ -37,103 +52,111 @@ RETRIEVER_TOOLS = [
     query_ad_formats,
     execute_sql_template,
     query_industry_format_budget,
-    query_performance_metrics,
-    query_format_benchmark
+    query_media_placements,
+    query_format_benchmark,
+    query_unified_performance,
+    query_unified_dimensions
 ]
 
 RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data Retriever)。
 
 **當前日期**: {current_date}
 
-**系統指定查詢範圍**:
-- **開始日期 (Start Date)**: {start_date}
-- **結束日期 (End Date)**: {end_date}
+**系統指定查詢範圍 (Strict Constraints)**:
+- **開始日期**: {start_date}
+- **結束日期**: {end_date}
+- **強制執行**: 即使使用者的問題中看起來有日期 (例如 "2023年")，若上方指定了日期範圍，**請務必使用系統指定日期**。
 
-**你的任務流程 (SOP)**:
-
-**⚠️ 關鍵判斷：何時使用「統計與基準工具」？**
-若使用者的問題屬於「全站/產業層級」的「佔比」或「排名」分析，**請優先使用以下高效工具**，並跳過後續的實體解析與活動查詢步驟：
-
-1. **多維度預算佔比 (`query_industry_format_budget`)**:
-   - 適用：「某產業的格式分佈」、「某格式的產業分佈」、「某格式的客戶分佈」。
-   - **核心參數 `dimension` (決定分析視角)**:
-     - 查「產業預算」或「投放哪些格式」→ 推薦使用 `dimension='sub_industry'` (子類) 以獲得更細緻的分析 (若無特定需求也可選 `dimension='industry'` 大類)。
-     - 查「客戶預算」或「誰投了這個格式」→ `dimension='client'`
-     - 查「代理商預算」→ `dimension='agency'`
-   - **核心參數 `primary_view` (決定主體與第一欄)**:
-     - `'dimension'` (預設): 以「產業/客戶」為主體。第一欄顯示產業，適用於「某產業投了什麼」。
-     - `'format'`: 以「格式」為主體。第一欄顯示格式，適用於「某格式投到了哪裡」或「所有格式的表現」。
-   - **過濾參數**:
-     - 若指定特定格式 (如「Banner」)，請設 `format_ids` (需先透過 `resolve_entity` 取得格式 ID)。
-
-2. **全站格式成效 (`query_format_benchmark`)**:
-   - **適用場景** (這是專門用於格式成效排名的工具):
-     - 「所有格式的 CTR 排名」
-     - 「汽車產業所有格式的 VTR 平均」
-     - 「某個格式在全站的成效表現」
-   - **使用規則**:
-     - ⚠️ **關鍵判斷**: 如果使用者查詢同時包含「格式」和「成效指標 (CTR/VTR/ER/點擊率/觀看率)」,**必須優先考慮使用此工具**
-     - **參數說明**:
-       - `cmp_ids` (可選): 如果要查詢特定產業/客戶的格式成效,請傳入 campaign_ids (需先透過 `query_campaign_basic` 取得)
-       - `format_ids` (可選): 如果要查詢特定格式的成效,請傳入 format_ids (需先透過 `resolve_entity` 取得)
-       - 如果兩者都不傳,則返回「全站所有格式」的成效基準
-   - **執行順序** (針對產業查詢):
-     1. 使用 `resolve_entity` 解析產業名稱 → 取得產業 ID
-     2. 使用 `query_campaign_basic` 取得該產業的所有活動 → 取得 campaign_ids 列表
-     3. 使用 `query_format_benchmark(cmp_ids=[...])` 查詢該產業的格式成效
+**核心任務**: 根據使用者需求，選擇正確的資料源 (MySQL 或 ClickHouse) 獲取數據。
 
 ---
 
-**一般查詢流程 (針對特定實體/Campaign)**:
+### 🚦 雙軌分流策略 (Dual-Track Strategy)
 
-**⚠️ 關鍵判斷：何時需要實體解析？**
-在執行 Step 1 之前，請先判斷使用者查詢的類型：
+**原則：成效與探索走 ClickHouse (快)，錢與設定走 MySQL (準)。**
 
-- **需要實體解析的查詢** (使用 `resolve_entity`):
-  - 使用者提到**具體的名稱**，例如："悠遊卡的預算"、"美妝產業的活動"。
+#### 1. 成效與維度探索 (Performance & Discovery) → 🚀 使用 ClickHouse
+當查詢涉及：**點擊、曝光、CTR、產品線 (Product Line)、格式清單、版位清單**。
+- **工具**:
+  - `query_unified_performance`: **(主要工具)** 查成效 (Impressions, Clicks, CTR)。
+  - `query_unified_dimensions`: 查清單 (有哪些產品線？有哪些格式？)。
+- **優勢**: 速度快，支援產品線維度。
 
-- **不需要實體解析的查詢** (直接進入 Step 3):
-  - 使用者要求**整體排名/匯總/統計**，例如："代理商 YTD 認列金額"、"前十大客戶的投資"。
+#### 2. 金額與設定 (Budget & Setup) → 💰 使用 MySQL
+當查詢涉及：**預算、金額 (Cost/Investment)、受眾 (Targeting)、合約狀態**。
+- **工具**:
+  - `query_budget_details`: 查活動總預算。
+  - `query_industry_format_budget`: 查產業/客戶的預算佔比 (Share)。
+  - `query_targeting_segments`: 查受眾設定。
+  - `query_investment_budget`: 查詳細進單金額。
+- **限制**: 不支援產品線維度。
 
-1. **實體解析 (Step 1 - 僅在需要時執行)**:
-   - **只有在使用者提到具體名稱時**，才使用 `resolve_entity` 將名稱轉換為 ID。
-   - **⚠️ RAG 結果處理**: 若 `resolve_entity` 回傳 `rag_results` (模糊搜尋)，這些結果**不含 ID**。你**必須**選擇最相關的一個名稱，**再次呼叫** `resolve_entity` 以取得精確 ID (`exact_match`)。
+#### 3. 混合需求 (Hybrid) → 🔗 雙邊查詢 + Pandas 合併
+當使用者同時問「成效」與「預算」時 (例如：各產品線的 CPC？)。
+- **執行步驟**:
+  1. 呼叫 `query_unified_performance` 取得成效 (含 `plaid` 或 `cmpid`)。
+  2. 呼叫 `query_media_placements` (或相關工具) 取得預算 (含 `placement_id` 或 `campaign_id`)。
+  3. **(關鍵)**: 停止工具呼叫，讓 Reporter 使用 Pandas 將兩份數據依據 ID (`plaid` = `placement_id`) 合併計算。
 
-2. **獲取活動 (Step 2 - 僅在 Step 1 執行後)**:
-   - **情況 A: 實體是「客戶 (Client)」或「品牌 (Brand)」**:
-     - **取得 ID 後，立刻** 使用 `query_campaign_basic` 取得該客戶的所有活動列表。
-   - **情況 B: 實體是「產業 (Industry/Sub-industry)」**:
-     - **若查 預算/金額/分佈** (`query_industry_format_budget`): 此工具內建產業篩選，**請跳過 Step 2**，直接執行 Step 3。
-     - **若查 成效/CTR/排名** (`query_performance_metrics` 或 `query_format_benchmark`): 這些工具需要 Campaign IDs。**必須執行 Step 2** (`query_campaign_basic`) 取得該產業的活動列表，再將 IDs 傳入成效工具。
+---
 
-3. **數據蒐集 (Step 3 - 所有查詢都需要)**:
-   - 根據使用者需求，呼叫適當的查詢工具：
-     - `query_execution_budget`: 查詢「認列金額」或「執行金額」
-     - `query_investment_budget`: 查詢「預算」或「進單金額」
-     - `query_performance_metrics`: 查詢成效 (必須傳入 `cmp_ids`)
-     - `query_targeting_segments`: 查詢受眾
-     - `query_ad_formats`: 查詢廣告格式
+### 🛠️ 工具選擇指南 (SOP)
 
-   - **⚠️ 客戶級別成效查詢 (重要)**:
-     - 如果使用者要求「各格式的客戶排名 (依成效)」、「哪些客戶的 CTR 最高」等查詢:
-       1. **必須同時調用兩個工具**:
-          - `query_performance_metrics`: 獲取 campaign 的成效數據
-          - `query_campaign_basic`: 獲取 campaign 的客戶信息
-       2. Reporter 會自動合併這兩個數據集並按客戶聚合
+**情境 A: 「全站」或「產業」層級分析**
 
-**核心原則 (鐵律)**:
-- **ID 絕對優先**: 只要你取得了 ID，後續所有查詢 **必須** 使用 ID。
-- **成效查詢規範**: 必須傳入 `cmp_ids`。**請優先使用系統指定的查詢範圍 ({start_date} ~ {end_date})**。只有在查無資料時，才考慮放寬時間範圍。
+1. **問「預算佔比」或「金額排名」**:
+   - ⚡️ **直接使用** `query_industry_format_budget(dimension='industry'|'client')`。
+   - 不要查 Campaign List，也不要查 ClickHouse。
+
+2. **問「成效 (CTR/VTR)」或「產品線表現」**:
+   - ⚡️ **直接使用** `query_unified_performance(group_by=['product_line']...)`。
+   - 若需特定產業，傳入 `one_categories=['Automotive']` (需先確認正確名稱或 ID)。
+
+3. **問「有哪些...」 (探索清單)**:
+   - ⚡️ **直接使用** `query_unified_dimensions(dimensions=['product_line'])`。
+
+**情境 B: 「特定客戶/實體」分析 (例如: Nike)**
+
+1. **Step 1: 實體解析 (必須)**
+   - 使用 `resolve_entity(keyword='Nike')` 取得 `client_id`。
+
+2. **Step 2: 取得 Campaign IDs (關鍵)**
+   - ⚠️ **ClickHouse 字典可能會有延遲或缺漏，請務必先從 MySQL 獲取精確 ID。**
+   - **優先使用** `query_campaign_basic(client_ids=[id], start_date=..., end_date=...)`。
+   - 這會回傳該客戶在指定期間內的所有 `campaign_id`。
+
+3. **Step 3: 根據需求分流**
+   - **查成效/格式/產品線**:
+     - `query_unified_performance(cmpids=[...], group_by=['ad_format_type', 'product_line'])`。
+     - **注意**: 請將 Step 2 拿到的 `campaign_id` 列表傳入 `cmpids` 參數。這是最標準的做法。
+   
+   - **查細部版位 (Deep Dive) 或 數據鎖定成效**:
+     - 若用戶問到「版位表現」或「數據鎖定成效」(Targeting Performance)：
+       1. 呼叫 `query_media_placements(campaign_ids=[...])` 取得 `plaids` 與 `placement_id`。
+       2. 呼叫 `query_unified_performance`：
+          - **必須包含** `group_by=['ad_format_type', 'plaid']` (關鍵：保留 plaid 以便與 Targeting 對接)。
+          - 傳入 `plaids=[...]` 進行過濾。
+       3. 呼叫 `query_targeting_segments(campaign_ids=[...])`。
+
+   - **查預算/花費**:
+     - `query_investment_budget(client_ids=[id])` (看進單) 或 `query_execution_budget` (看執行)。
+   - **查受眾/設定**:
+     - 直接 `query_targeting_segments(campaign_ids=[...])`。
+
+**情境 C: 混合計算 (例如: Nike 的產品線 CPC)**
+   1. `query_campaign_basic` (拿 cmpids)
+   2. `query_unified_performance(cmpids=[...])` (拿 Clicks)
+   3. `query_investment_budget(client_ids=[id])` (拿 Budget)
+   4. **結束工具呼叫**。 (Reporter 會處理 `Budget / Clicks`)
+
+---
+
+**⚠️ ID 使用鐵律**:
+- ClickHouse 工具的 ID 參數為: `client_ids`, `product_line_ids`, `plaids` (對應 MySQL placement_id), `cmpids` (對應 MySQL campaign_id)。
+- 只要 `resolve_entity` 拿到 ID，就必須優先傳入 ID 參數，不要傳 Name。
 
 **結束條件**:
-- 當你收集完所有必要的數據，請停止呼叫工具，並簡單回覆：「數據收集完畢，轉交報告者處理。」
-- ⚠️ **禁止提早結束**: 絕對不能在只呼叫 `resolve_entity` 後就停止。
-- **處理多重匹配 (Smart Merge 策略)**:
-  - **情境 A (Campaign 自動合併)**: 若 `resolve_entity` 回傳 `needs_confirmation` 且候選項目皆為 **Campaign (活動)**：
-    - 若使用者查詢的是**一段時間** (如「過去一年」、「本季」、「這三個月」) 的數據，這代表使用者想彙整這些分月或分波段執行的活動。
-    - **請自動全選** 所有相關的 Campaign IDs，並直接繼續呼叫 `query_performance_metrics` 以獲取彙整後的數據，**不要停止**。
-  - **情境 B (其他實體需確認)**: 若候選項目包含 **Client (客戶), Agency (代理商) 或 Brand (品牌)** 且名稱模糊無法確定唯一：
-    - **必須立刻停止**，回傳選項清單請求使用者確認。
+-當必要的「成效面」與「金額面」數據都拿到後，請停止。
 """
 
 @dynamic_prompt
@@ -175,6 +198,7 @@ def retriever_tool_middleware(request: Any, handler):
     1. Data storage in state['data_store']
     2. Custom guidance for Entity Resolution and Campaign queries
     3. Debug logging
+    4. Force Date Override
     """
     tool_call = request.tool_call
     tool_name = tool_call["name"]
@@ -189,6 +213,22 @@ def retriever_tool_middleware(request: Any, handler):
     if "resolved_entities" not in state or state["resolved_entities"] is None:
         state["resolved_entities"] = []
 
+    # [NEW] Force Date Override
+    if state.get("routing_context"):
+        logger.info(f"Routing Context: {state.get('routing_context')}")
+        system_start = state["routing_context"].get("start_date")
+        system_end = state["routing_context"].get("end_date")
+        
+        if system_start and "start_date" in args:
+            if args["start_date"] != system_start:
+                logger.warning(f"Force overriding start_date: {args['start_date']} -> {system_start}")
+                args["start_date"] = system_start
+                
+        if system_end and "end_date" in args:
+            if args["end_date"] != system_end:
+                logger.warning(f"Force overriding end_date: {args['end_date']} -> {system_end}")
+                args["end_date"] = system_end
+
     try:
         # Execute tool
         result = handler(request)
@@ -202,23 +242,15 @@ def retriever_tool_middleware(request: Any, handler):
             except:
                 try:
                     import ast
-                    # Handle Decimal inside string representation
-                    # e.g. "{'amt': Decimal('10.5')}" -> "{'amt': 10.5}"
-                    # Simple regex replace might be safer than eval with context
                     import re
-                    # Replace Decimal('123.45') with 123.45
                     cleaned = re.sub(r"Decimal\('([^']+)'\)", r"\1", content)
-                    # Replace datetime.date(2023, 1, 1) with '2023-01-01'
                     cleaned = re.sub(r"datetime\.date\((\d+), (\d+), (\d+)\)", r"'\1-\2-\3'", cleaned)
-                    # Replace datetime.datetime(2023, 1, 1, 12, 0) with '2023-01-01T12:00:00'
-                    # Handle optional time components (simple greedy match might be risky, stick to basic pattern)
                     cleaned = re.sub(r"datetime\.datetime\((\d+), (\d+), (\d+),? ?(\d+)?,? ?(\d+)?,? ?(\d+)?\)", 
-                                     lambda m: f"'{m.group(1)}-{m.group(2)}-{m.group(3)}'", cleaned) # Simplify to date for now or improve regex
+                                     lambda m: "'" + m.group(1) + "-" + m.group(2) + "-" + m.group(3) + "'", cleaned)
                     
                     raw_result = ast.literal_eval(cleaned)
                 except Exception as parse_e:
-                    print(f"DEBUG [RetrieverMiddleware] Failed to parse content for {tool_name}: {parse_e}")
-                    print(f"DEBUG [RetrieverMiddleware] Content preview: {content[:200]}...")
+                    logger.debug(f"Failed to parse content for {tool_name}: {parse_e}")
         elif isinstance(result, dict):
             raw_result = result
             
@@ -231,17 +263,21 @@ def retriever_tool_middleware(request: Any, handler):
                         state["data_store"][tool_name] = []
 
                     # Deduplicate
-                    existing_data_str = {json.dumps(row, sort_keys=True, default=str) for row in state["data_store"][tool_name]}
-                    new_rows = []
-                    for row in data:
-                        row_str = json.dumps(row, sort_keys=True, default=str)
-                        if row_str not in existing_data_str:
-                            new_rows.append(row)
-                            existing_data_str.add(row_str)
+                    try:
+                        existing_data_str = {json.dumps(row, sort_keys=True, default=str) for row in state["data_store"][tool_name]}
+                        new_rows = []
+                        for row in data:
+                            row_str = json.dumps(row, sort_keys=True, default=str)
+                            if row_str not in existing_data_str:
+                                new_rows.append(row)
+                                existing_data_str.add(row_str)
 
-                    if new_rows:
-                        state["data_store"][tool_name].extend(new_rows)
-                        print(f"DEBUG [RetrieverMiddleware] Stored {len(new_rows)} rows in data_store")
+                        if new_rows:
+                            state["data_store"][tool_name].extend(new_rows)
+                            logger.info(f"Stored {len(new_rows)} rows in data_store for {tool_name}")
+                    except Exception as e:
+                        logger.error(f"Deduplication failed: {e}")
+                        state["data_store"][tool_name].extend(data)
             
             # 2. Handle Entity Resolution specifically for state update
             if tool_name == "resolve_entity":
@@ -252,10 +288,9 @@ def retriever_tool_middleware(request: Any, handler):
                         state["resolved_entities"].extend(entity)
                     else:
                         state["resolved_entities"].append(entity)
-                print(f"DEBUG [RetrieverMiddleware] Updated resolved_entities: {len(state['resolved_entities'])}")
+                logger.info(f"Updated resolved_entities: {len(state['resolved_entities'])}")
 
             # 3. Add guidance and convert to valid JSON
-            # Use a custom encoder/default function to handle Decimals/Dates safely
             def json_default(obj):
                 import decimal
                 import datetime
@@ -267,18 +302,16 @@ def retriever_tool_middleware(request: Any, handler):
 
             content = json.dumps(raw_result, ensure_ascii=False, default=json_default)
             
-            # Add guidance for query_campaign_basic
             if tool_name == "query_campaign_basic" and raw_result.get("data"):
                 campaign_ids = [row.get('campaign_id') for row in raw_result.get("data", []) if row.get('campaign_id')]
                 if campaign_ids:
                     content += f"\n\n✅ 已取得 {len(campaign_ids)} 個活動的基本資料。\n👉 下一步: 請查詢成效/預算等數據。"
             
-            # 4. Return as ToolMessage to ensure JSON format
             return ToolMessage(tool_call_id=tool_call["id"], content=content)
 
         return result
     except Exception as e:
-        print(f"ERROR [RetrieverMiddleware] {e}")
+        logger.error(f"Tool error: {e}")
         return ToolMessage(tool_call_id=tool_call["id"], content=json.dumps({"error": str(e)}))
 
 # Create the agent
@@ -290,66 +323,39 @@ retriever_agent = create_agent(
 )
 
 def _check_performance_tools_needed(state: ProjectAgentState, result: Dict[str, Any]) -> Dict[str, bool]:
-    """
-    檢查是否需要調用成效相關工具。
-
-    Returns:
-        {
-            "needs_benchmark": bool,  # 是否需要 query_format_benchmark
-            "needs_performance": bool,  # 是否需要 query_performance_metrics
-            "needs_campaign_basic": bool  # 是否需要 query_campaign_basic
-        }
-    """
     original_query = state.get("routing_context", {}).get("original_query", "").lower()
-
-    # 檢查是否包含格式相關關鍵字
     format_keywords = ["格式", "format", "banner", "影音", "廣告形式"]
     has_format = any(kw in original_query for kw in format_keywords)
-
-    # 檢查是否包含成效指標關鍵字
     performance_keywords = ["ctr", "vtr", "er", "點擊率", "觀看率", "互動率", "成效", "排名", "平均"]
     has_performance = any(kw in original_query for kw in performance_keywords)
-
-    # 檢查是否包含客戶相關關鍵字
     client_keywords = ["客戶", "client", "廣告主", "品牌"]
     has_client = any(kw in original_query for kw in client_keywords)
-
-    # 檢查已調用的工具
-    messages = result.get("messages", [])
     data_store = result.get("data_store", {})
-
     has_benchmark = "query_format_benchmark" in data_store
-    has_performance = "query_performance_metrics" in data_store
+    has_performance_tool = "query_unified_performance" in data_store
     has_campaign_basic = "query_campaign_basic" in data_store
-
     needs = {
         "needs_benchmark": False,
         "needs_performance": False,
         "needs_campaign_basic": False
     }
-
-    # 場景判斷
     if has_format and has_performance:
         if has_client:
-            # 場景: 客戶級別成效查詢 (需要 performance + campaign_basic)
-            needs["needs_performance"] = not has_performance
+            needs["needs_performance"] = not has_performance_tool
             needs["needs_campaign_basic"] = not has_campaign_basic
         else:
-            # 場景: 格式成效查詢 (需要 benchmark)
             needs["needs_benchmark"] = not has_benchmark
-
     return needs
 
 def data_retriever_v2_node(state: ProjectAgentState) -> Dict[str, Any]:
-    """
-    Wrapper for the retriever_agent to be used as a node in analyst_graph.
-    """
-    # Calculate starting counts to determine new items
     initial_messages_count = len(state.get("messages", []))
     initial_logs_count = len(state.get("debug_logs", []))
     
-    # [NEW] Sanitize messages: Convert dicts to Objects locally
-    # This prevents LangChain from choking on dicts without dirtying the global state with duplicates
+    # --- [CRITICAL FIX] Reset data_store for new turn ---
+    # To prevent hallucinations from previous query results, we start with a fresh store.
+    # Note: We keep resolved_entities as they might be useful for follow-up questions.
+    state["data_store"] = {}
+    
     sanitized_messages = []
     for msg in state.get("messages", []):
         if isinstance(msg, dict):
@@ -362,15 +368,11 @@ def data_retriever_v2_node(state: ProjectAgentState) -> Dict[str, Any]:
             elif msg_type == "system":
                 sanitized_messages.append(SystemMessage(content=content))
             elif msg_type == "tool":
-                # Handle tool messages from dict if needed
                 tool_call_id = msg.get("tool_call_id", "unknown")
                 sanitized_messages.append(ToolMessage(content=content, tool_call_id=tool_call_id))
             else:
-                # Fallback for unknown dict types
                 sanitized_messages.append(HumanMessage(content=str(msg)))
         elif isinstance(msg, BaseMessage):
-            # Check for generic BaseMessage and convert to HumanMessage if it's not a specific type
-            # Google GenAI strictly requires specific message types
             if msg.type == "human":
                 sanitized_messages.append(HumanMessage(content=msg.content))
             elif msg.type == "ai":
@@ -378,113 +380,75 @@ def data_retriever_v2_node(state: ProjectAgentState) -> Dict[str, Any]:
             elif msg.type == "system":
                 sanitized_messages.append(SystemMessage(content=msg.content))
             elif msg.type == "tool":
-                sanitized_messages.append(msg) # ToolMessage is usually fine
+                sanitized_messages.append(msg)
             else:
-                # If it's a generic BaseMessage without a clear type, treat as HumanMessage
                 sanitized_messages.append(HumanMessage(content=msg.content))
         else:
-            # Fallback for any other object
             sanitized_messages.append(HumanMessage(content=str(msg)))
-            
-    # Create a local state copy with sanitized messages
     local_state = state.copy()
     local_state["messages"] = sanitized_messages
-
-    # Run the agent with sanitized state
     result = retriever_agent.invoke(local_state)
-    
-    # Extract only new items to avoid duplication with operator.add
     final_messages = result.get("messages", [])
-    new_messages = final_messages[len(sanitized_messages):] # Diff based on sanitized input length
-    
+    new_messages = final_messages[len(sanitized_messages):]
     final_logs = result.get("debug_logs", [])
     new_logs = final_logs[initial_logs_count:]
-    
-    # [NEW] Post-execution validation: Check if performance tools should be called
     needs = _check_performance_tools_needed(state, result)
-
-    # Get date range from routing_context
     routing_context = state.get("routing_context", {})
     start_date = routing_context.get("start_date", "2021-01-01")
     end_date = routing_context.get("end_date", datetime.now().strftime("%Y-%m-%d"))
-
-    # Initialize data_store if needed
     if "data_store" not in result:
         result["data_store"] = {}
-
-    # Auto-invoke missing tools
     if needs.get("needs_benchmark"):
-        print("⚠️ [RetrieverValidator] Detected missing query_format_benchmark call. Auto-invoking...")
+        logger.warning("Detected missing query_format_benchmark call. Auto-invoking...")
         try:
-            # Extract campaign_ids from data_store (if available)
             campaign_data = result.get("data_store", {}).get("query_campaign_basic", [])
             cmp_ids = [row.get('campaign_id') for row in campaign_data if row.get('campaign_id')] if campaign_data else None
-
-            invoke_params = {
-                "start_date": start_date,
-                "end_date": end_date
-            }
+            invoke_params = {"start_date": start_date, "end_date": end_date}
             if cmp_ids:
                 invoke_params["cmp_ids"] = cmp_ids
-                print(f"⚠️ [RetrieverValidator] Auto-invoking benchmark with {len(cmp_ids)} campaign IDs")
+                logger.warning(f"Auto-invoking benchmark with {len(cmp_ids)} campaign IDs")
             else:
-                print(f"⚠️ [RetrieverValidator] Auto-invoking benchmark for 全站查詢")
-
+                logger.warning("Auto-invoking benchmark for 全站查詢")
             benchmark_result = query_format_benchmark.invoke(invoke_params)
-
             if benchmark_result.get("status") == "success" and benchmark_result.get("data"):
                 result["data_store"]["query_format_benchmark"] = benchmark_result.get("data", [])
-                print(f"✅ [RetrieverValidator] Auto-invoked query_format_benchmark, got {len(benchmark_result.get('data', []))} rows")
+                logger.info(f"Auto-invoked query_format_benchmark, got {len(benchmark_result.get('data', []))} rows")
         except Exception as e:
-            print(f"⚠️ [RetrieverValidator] Auto-invoke benchmark failed: {e}")
-
+            logger.warning(f"Auto-invoke benchmark failed: {e}")
     if needs.get("needs_performance") or needs.get("needs_campaign_basic"):
-        print("⚠️ [RetrieverValidator] Detected client-level performance query. Auto-invoking required tools...")
-
-        # For client-level performance queries, we need ALL campaigns
+        logger.warning("Detected client-level performance query. Auto-invoking required tools...")
         if needs.get("needs_campaign_basic"):
-            print("⚠️ [RetrieverValidator] Auto-invoking query_campaign_basic for 全站客戶")
+            logger.warning("Auto-invoking query_campaign_basic for 全站客戶")
             try:
-                # Query all campaigns (no filter)
-                campaign_result = query_campaign_basic.invoke({
-                    "start_date": start_date,
-                    "end_date": end_date
-                })
+                campaign_result = query_campaign_basic.invoke({"start_date": start_date, "end_date": end_date})
                 if campaign_result.get("status") == "success" and campaign_result.get("data"):
                     result["data_store"]["query_campaign_basic"] = campaign_result.get("data", [])
-                    print(f"✅ [RetrieverValidator] Auto-invoked query_campaign_basic, got {len(campaign_result.get('data', []))} campaigns")
+                    logger.info(f"Auto-invoked query_campaign_basic, got {len(campaign_result.get('data', []))} campaigns")
             except Exception as e:
-                print(f"⚠️ [RetrieverValidator] Auto-invoke campaign_basic failed: {e}")
-
+                logger.warning(f"Auto-invoke campaign_basic failed: {e}")
         if needs.get("needs_performance"):
             campaign_data = result.get("data_store", {}).get("query_campaign_basic", [])
             cmp_ids = [row.get('campaign_id') for row in campaign_data if row.get('campaign_id')]
-
             if cmp_ids:
-                print(f"⚠️ [RetrieverValidator] Auto-invoking query_performance_metrics with {len(cmp_ids)} campaign IDs")
+                logger.warning(f"Auto-invoking query_unified_performance with {len(cmp_ids)} campaign IDs")
                 try:
-                    performance_result = query_performance_metrics.invoke({
+                    performance_result = query_unified_performance.invoke({
                         "start_date": start_date,
                         "end_date": end_date,
-                        "cmp_ids": cmp_ids,
-                        "dimension": "format"
+                        "cmpids": cmp_ids,
+                        "group_by": ["ad_format_type"]
                     })
                     if performance_result.get("status") == "success" and performance_result.get("data"):
-                        result["data_store"]["query_performance_metrics"] = performance_result.get("data", [])
-                        print(f"✅ [RetrieverValidator] Auto-invoked query_performance_metrics, got {len(performance_result.get('data', []))} rows")
+                        result["data_store"]["query_unified_performance"] = performance_result.get("data", [])
+                        logger.info(f"Auto-invoked query_unified_performance, got {len(performance_result.get('data', []))} rows")
                 except Exception as e:
-                    print(f"⚠️ [RetrieverValidator] Auto-invoke performance_metrics failed: {e}")
+                    logger.warning(f"Auto-invoke unified_performance failed: {e}")
             else:
-                print(f"⚠️ [RetrieverValidator] Cannot invoke query_performance_metrics: no campaign IDs available")
-
-    # Construct output update
+                logger.warning("Cannot invoke query_unified_performance: no campaign IDs available")
     output = {
         "messages": new_messages,
         "debug_logs": new_logs,
-        # data_store and resolved_entities are typically overwritten or merged by logic,
-        # but since they don't have reducers in AgentState (or might not), passing full object is safer/required
         "data_store": result.get("data_store"),
         "resolved_entities": result.get("resolved_entities")
     }
-
     return output

@@ -380,7 +380,7 @@ def pandas_processor(
 
         # [FIX] Added 'total_impressions' and 'total_q100' to support ClickHouse/Benchmark data
         col_imps = find_col(["effective_impressions", "total_impressions", "有效曝光"])
-        col_clicks = find_col(["total_clicks", "總點擊"])
+        col_clicks = find_col(["total_clicks", "clicks", "總點擊"])
         col_q100 = find_col(["total_q100_views", "total_q100", "完整觀看數"])
         col_eng = find_col(["total_engagements", "總互動"])
 
@@ -468,9 +468,9 @@ def pandas_processor(
             col_lower = col.lower()
             # 針對比率/百分比欄位保留小數點
             if any(x in col_lower for x in ['ctr', 'vtr', 'er', 'rate', 'ratio', 'percent']):
-                display_df[col] = display_df[col].apply(lambda x: f"{x:,.2f}")
+                display_df[col] = display_df[col].apply(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else str(x))
             else:
-                display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
+                display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else str(x))
             
         # 欄位名稱映射 (Column Mapping) - 只在沒有 explicit rename_map 時執行
         # 如果 LLM 已經提供了 rename_map，就不需要自動翻譯
