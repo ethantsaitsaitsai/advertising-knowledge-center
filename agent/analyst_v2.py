@@ -437,8 +437,8 @@ def data_retriever_v2_node(state: ProjectAgentState) -> Dict[str, Any]:
     output = {
         "messages": new_messages,
         "debug_logs": new_logs,
-        "data_store": result.get("data_store"),
-        "resolved_entities": result.get("resolved_entities"),
+        "data_store": result.get("data_store") or {},
+        "resolved_entities": result.get("resolved_entities") or [],
         "ambiguity_status": ambiguity_status # [FIX] Use local variable
     }
     return output
@@ -448,7 +448,7 @@ def quality_check_node(state: ProjectAgentState) -> Dict[str, Any]:
     Check if the Analyst has fetched all necessary data before proceeding to Reporter.
     Also acts as a Gatekeeper for Entity Resolution Ambiguity.
     """
-    data_store = state.get("data_store", {})
+    data_store = state.get("data_store") or {}
     original_query = state.get("routing_context", {}).get("original_query", "").lower()
     retry_count = state.get("retry_count", 0)
     
@@ -502,10 +502,17 @@ def quality_check_node(state: ProjectAgentState) -> Dict[str, Any]:
     has_budget_data = "query_investment_budget" in data_store or "query_execution_budget" in data_store
     has_performance_data = "query_unified_performance" in data_store
     
+    resolved_entities = state.get("resolved_entities") or []
+    has_resolved = len(resolved_entities) > 0
+    
     feedback = None
     
+    # Check 0: Resolved entities but forgot id_finder
+    if has_resolved and not has_ids:
+        feedback = "❌ 品質檢查未通過：你已經解析了實體，但尚未呼叫 `id_finder`。請務必先使用 `id_finder` 取得該實體在指定期間內的所有關聯 IDs (Plaids/Campaigns)，然後才能查詢數據。"
+
     # Check 1: Found IDs but no Budget (when budget needed)
-    if has_ids and needs_budget and not has_budget_data:
+    elif has_ids and needs_budget and not has_budget_data:
         feedback = "❌ 品質檢查未通過：你已經找到了 ID (id_finder)，但使用者詢問「預算/金額」，而你尚未呼叫 `query_investment_budget`。請立即呼叫該工具來獲取金額數據。"
         
     # Check 2: Found IDs but no Performance (when performance needed)
