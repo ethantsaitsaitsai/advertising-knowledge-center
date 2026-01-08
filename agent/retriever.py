@@ -13,12 +13,11 @@ from config.llm import llm
 from agent.state import AgentState
 from tools.entity_resolver import resolve_entity
 from tools.campaign_template_tool import (
+    id_finder,
     query_campaign_basic,
-    query_budget_details,
     query_investment_budget,
     query_execution_budget,
     query_targeting_segments,
-    query_ad_formats,
     execute_sql_template,
     query_industry_format_budget
 )
@@ -29,12 +28,11 @@ from datetime import datetime
 # Tools for Retrieval ONLY (No Pandas)
 RETRIEVER_TOOLS = [
     resolve_entity,
+    id_finder,
     query_campaign_basic,
-    query_budget_details,
     query_investment_budget,
     query_execution_budget,
     query_targeting_segments,
-    query_ad_formats,
     execute_sql_template,
     query_industry_format_budget,
     query_unified_performance,
@@ -46,88 +44,41 @@ llm_with_tools = llm.bind_tools(RETRIEVER_TOOLS)
 
 RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data Retriever)。
 
-**你的任務流程 (SOP)**:
+**你的核心任務**:
+負責從資料庫中檢索原始數據。你**不負責**計算、合併或畫表，這些是 Reporter 的工作。你的目標是精準地找出相關的「ID」，並利用這些 ID 撈取詳細屬性。
 
-**⚠️ 關鍵判斷：何時使用「統計與基準工具」？**
-若使用者的問題屬於「全站/產業層級」的「佔比」或「排名」分析，**請優先使用以下高效工具**，並跳過後續的實體解析與活動查詢步驟：
+**標準作業流程 (SOP)**:
 
-1. **多維度預算佔比 (`query_industry_format_budget`)**:
-   - 適用：「某產業的格式分佈」、「某格式的產業分佈」、「某格式的客戶分佈」。
-   - **核心參數 `dimension` (決定分析視角)**:
-     - 查「產業預算」或「投放哪些格式」→ 推薦使用 `dimension='sub_industry'` (子類) 以獲得更細緻的分析 (若無特定需求也可選 `dimension='industry'` 大類)。
-     - 查「客戶預算」或「誰投了這個格式」→ `dimension='client'`
-     - 查「代理商預算」→ `dimension='agency'`
-   - **核心參數 `primary_view` (決定主體與第一欄)**:
-     - `'dimension'` (預設): 以「產業/客戶」為主體。第一欄顯示產業，適用於「某產業投了什麼」。
-     - `'format'`: 以「格式」為主體。第一欄顯示格式，適用於「某格式投到了哪裡」或「所有格式的表現」。
-     - **判斷準則**:
-       - 問「**所有格式**投放到的產業」→ 這是格式分析，設 `'format'`。
-       - 問「**各產業**使用的格式」→ 這是產業分析，設 `'dimension'`。
-   - **過濾參數**:
-     - 若指定特定格式 (如「Banner」)，請設 `format_ids` (需先透過 `resolve_entity` 取得格式 ID)。
-   - **範例**:
-     - "半年內所有格式投放的產業" (格式為主) → `query_industry_format_budget(dimension='sub_industry', primary_view='format', ...)`
-     - "汽車產業投了哪些格式" (產業為主) → `query_industry_format_budget(dimension='industry', primary_view='dimension', industry_ids=[...])`
+**Step 1: 探索與定位 (Discovery)**
+-當使用者提到特定的客戶、產業、格式或時間範圍時，**首先**呼叫 `id_finder`。
+- `id_finder` 是你的核心導航器，它會回傳符合條件的所有 `cue_list_id` (合約), `campaign_id` (活動), 和 `plaid` (版位)。
+- **注意**: 若使用者給的是「名稱」(如 "悠遊卡")，請先用 `resolve_entity` 轉成 ID，再傳給 `id_finder`。
 
-2. **全站格式成效 (`query_format_benchmark`)**:
-   - 適用：「所有格式的 CTR 排名」、「產業的平均 VTR」。
-   - 範例: "半年內所有格式的 CTR 排名" → `query_format_benchmark(start_date=..., end_date=...)`
+**Step 2: 數據撈取 (Data Fetching)**
+- 取得 ID 後，根據使用者需求呼叫對應的詳細工具 (可平行呼叫)：
+  - **想看預算/進單金額/格式配置** → 呼叫 `query_investment_budget(cue_list_ids=[...])`
+  - **想看執行金額/實際花費** → 呼叫 `query_execution_budget(plaids=[...])`
+  - **想看成效 (CTR/VTR/ER)** → 呼叫 `query_unified_performance(plaids=[...], group_by=['ad_format_type'])`
+  - **想看受眾/數據鎖定** → 呼叫 `query_targeting_segments(plaids=[...])`
+  - **想看活動詳細資訊 (名稱/日期)** → 呼叫 `query_campaign_basic(campaign_ids=[...])`
 
----
+**特殊場景**:
+- **產業/大盤統計** (如 "汽車產業的格式佔比")：
+  - 不需要查 ID，直接使用 `query_industry_format_budget(dimension='industry', ...)`。
+  - **警告**: 請勿將此工具用於查詢特定客戶的明細，它只適合看大趨勢。
 
-**一般查詢流程 (針對特定實體/Campaign)**:
-
-**⚠️ 關鍵判斷：何時需要實體解析？**
-在執行 Step 1 之前，請先判斷使用者查詢的類型：
-
-- **需要實體解析的查詢** (使用 `resolve_entity`):
-  - 使用者提到**具體的名稱**，例如：
-    - "悠遊卡的預算" (具體客戶名)
-    - "台灣虎航的代理商" (具體客戶名)
-    - "美妝產業的活動" (具體產業名)
-    - "Outstream 格式的分佈" (具體格式名)
-
-- **不需要實體解析的查詢** (直接進入 Step 3):
-  - 使用者要求**整體排名/匯總/統計**，例如：
-    - "代理商 YTD 認列金額" → 這是要所有代理商的金額，**不需要** `resolve_entity`
-    - "前十大客戶的投資" → 這是要排名，**不需要** `resolve_entity`
-    - "各產業的成效比較" → 這是要匯總，**不需要** `resolve_entity`
-  - 關鍵字識別：「所有」「各」「前X」「Top X」「排名」「匯總」「統計」
-
-1. **實體解析 (Step 1 - 僅在需要時執行)**:
-   - **只有在使用者提到具體名稱時**，才使用 `resolve_entity` 將名稱 (如 "悠遊卡") 轉換為 ID。
-   - **如果是匯總/排名查詢**，請跳過此步驟，直接進入 Step 3。
-
-2. **獲取活動 (Step 2 - 僅在 Step 1 執行後)**:
-   - **取得 ID 後，立刻** 使用 `query_campaign_basic(client_ids=[ID])` 取得該客戶的所有活動列表。
-
-3. **數據蒐集 (Step 3 - 所有查詢都需要)**:
-   - 根據使用者需求，呼叫適當的查詢工具：
-     - `query_execution_budget`: 查詢「認列金額」或「執行金額」
-     - `query_investment_budget`: 查詢「預算」或「進單金額」
-     - `query_unified_performance`: 查詢成效 (使用 `cmpids` 或 `plaids`)
-     - `query_targeting_segments`: 查詢受眾
-     - `query_ad_formats`: **查詢廣告格式 (⚠️ 當使用者問到「格式」時，這是必須呼叫的工具)**
-   - **匯總查詢時的參數設定**：
-     - 如果是「代理商」相關查詢，使用 `query_execution_budget` (有 agency_name 欄位)
-     - 如果是「產業」相關查詢，使用 `industry_ids` 或 `sub_industry_ids` 參數
-     - 如果是「客戶」相關查詢，可以不帶任何過濾條件，讓 Reporter 做聚合
-     - **⚠️ 重要 - LIMIT 設定策略**：
-       - 當用戶要求「前N名」時，SQL 查詢的 `limit` 應設為 **N × 50**（例如：前20名 → limit=1000）
-       - 原因：SQL 返回的是明細記錄，需要足夠的記錄才能聚合出N個分組
-       - 一般匯總查詢：設定 `limit=5000`，確保獲取完整數據
+**工具參數指南**:
+- `id_finder`: 必須提供 `start_date` 與 `end_date`。
+- `query_unified_performance`: 建議使用 `plaids` 進行精準過濾。`group_by` 參數依需求設定 (如 `['campaign_name', 'ad_format_type']`)。
+- `query_investment_budget`: **必須** 使用 `cue_list_ids`。
+- `query_execution_budget`: **必須** 使用 `plaids`。
 
 **當前日期**: {current_date}
 
 **核心原則 (鐵律)**:
-- **ID 絕對優先**: 只要你取得了 `client_id` (例如 1453)，後續所有查詢 **必須** 使用 `client_ids=[1453]`。禁止再使用 `client_names`。
-- **防止鬼打牆**: 如果系統提示「已確認實體資訊」，**請不要** 再次呼叫 `resolve_entity`，直接進入 Step 2。
-- **成效查詢規範**:
-  - 查詢成效 (`query_unified_performance`) 時，**必須** 設定 `group_by` 參數 (例如 `['campaign_name', 'cmpid', 'ad_format_type']`)。
-  - **重要**: 查詢歷史活動成效時，請務必設定寬鬆的時間範圍 (例如 `start_date='2021-01-01'`)，以免因預設時間範圍 (最近 3 個月) 而導致歷史數據遺失。
-
-**結束條件**:
-- 當你收集完所有必要的數據 (預算、成效、格式等)，請停止呼叫工具，並簡單回覆：「數據收集完畢，轉交報告者處理。」
+- **ID 為王**: 拿到 ID 後，後續查詢一律使用 ID (List[int])，嚴禁使用名稱。
+- **避免濫用**: 不要對同一個 ID 重複呼叫相同的工具。
+- **精準回應**: 當你收集完所有必要數據後，請回覆：「數據收集完畢，轉交報告者處理。」
 """
 
 def data_retriever_node(state: AgentState) -> Dict[str, Any]:
@@ -228,132 +179,17 @@ def data_retriever_node(state: AgentState) -> Dict[str, Any]:
                         # Handle Entity Resolution specifically
                         if tool_name == "resolve_entity":
                             status = result.get("status")
-
-                            # ===== Handle Needs Confirmation =====
-                            if status == "needs_confirmation":
-                                candidates = result.get("data", [])
-                                if candidates:
-                                    # Auto-select the first candidate to avoid blocking the flow
-                                    # In production, this would be where user selection happens
-                                    selected = candidates[0]
-                                    print(f"⚠️ [Retriever] Found {len(candidates)} candidates, auto-selecting: {selected.get('name')}")
-
-                                    # Convert to merged_match format so the flow continues
-                                    result = {
-                                        "status": "merged_match",
-                                        "data": candidates,  # Return all candidates for potential future use
-                                        "message": f"⚠️ Auto-selected: {selected.get('name')} from {len(candidates)} candidates",
-                                        "source": "auto_selection"
-                                    }
-                                    # Update status variable so the next elif will match
-                                    status = "merged_match"
-
-                            # ===== Handle Exact Match / Merged Match =====
                             if status in ["exact_match", "merged_match"]:
                                 entity = result.get("data")
                                 if isinstance(entity, list):
                                     resolved_entities.extend(entity)
-                                    # Create entity-type-aware guidance for multiple entities
-                                    guidance = []
-                                    entity_ids = []
-                                    entity_types = set()
-                                    for e in entity:
-                                        guidance.append(f"{e.get('name')} (ID: {e.get('id')})")
-                                        entity_ids.append(e.get('id'))
-                                        entity_types.add(e.get('type'))
-
-                                    # Determine appropriate parameter based on entity type
-                                    if "industry" in entity_types:
-                                        param_name = "industry_ids"
-                                    elif "sub_industry" in entity_types:
-                                        param_name = "sub_industry_ids"
-                                    elif "campaign" in entity_types:
-                                        # Skip Step 2, already have campaign IDs
-                                        guide_msg = f"✅ 已成功解析實體: {', '.join(guidance)}。\n👉 下一步 (Step 3): 已取得 campaign IDs，請直接查詢成效/預算/格式等數據，使用參數 `campaign_ids={json.dumps(entity_ids)}`。"
-                                        messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
-                                        continue
-                                    else:  # client, brand, agency
-                                        param_name = "client_ids"
-
-                                    guide_msg = f"✅ 已成功解析實體: {', '.join(guidance)}。\n👉 下一步 (Step 2): 請立刻呼叫 `query_campaign_basic`，並使用參數 `{param_name}={json.dumps(entity_ids)}`。\n📋 接下來 (Step 3): 取得活動列表後，請根據使用者查詢需求，呼叫 `query_ad_formats` (查詢格式) 和 `query_unified_performance` (查詢成效數據)。"
-                                    messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
                                 else:
                                     resolved_entities.append(entity)
-                                    # Create entity-type-aware guidance for single entity
-                                    e_id = entity.get('id')
-                                    e_name = entity.get('name')
-                                    e_type = entity.get('type')
-
-                                    # Determine appropriate parameter based on entity type
-                                    if e_type == "industry":
-                                        param_name = "industry_ids"
-                                    elif e_type == "sub_industry":
-                                        param_name = "sub_industry_ids"
-                                    elif e_type == "campaign":
-                                        # Skip Step 2, already have campaign ID
-                                        guide_msg = f"✅ 已成功解析實體: {e_name} (ID: {e_id})。\n👉 下一步 (Step 3): 已取得 campaign ID，請直接查詢成效/預算/格式等數據，使用參數 `campaign_ids=[{e_id}]`。"
-                                        messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
-                                        continue
-                                    else:  # client, brand, agency
-                                        param_name = "client_ids"
-
-                                    guide_msg = f"✅ 已成功解析實體: {e_name} (ID: {e_id})。\n👉 下一步 (Step 2): 請立刻呼叫 `query_campaign_basic`，並使用參數 `{param_name}=[{e_id}]`。\n📋 接下來 (Step 3): 取得活動列表後，請根據使用者查詢需求，呼叫 `query_ad_formats` (查詢格式) 和 `query_unified_performance` (查詢成效數據)。"
-                                    messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
-
-                            # ===== Handle RAG Results =====
-                            elif status == "rag_results":
-                                rag_data = result.get("data", [])
-                                if rag_data and isinstance(rag_data, list):
-                                    # RAG 返回的是 {value, source, table, filter_type, score} 格式
-                                    # 選擇最高分的結果並直接使用名稱查詢
-
-                                    # 從 filter_type 映射到實體類型和參數名稱
-                                    filter_type_map = {
-                                        "sub_industries": ("sub_industry", "sub_industry_ids"),
-                                        "industries": ("industry", "industry_ids"),
-                                        "advertisers": ("client", "client_ids"),
-                                        "brands": ("brand", "client_ids"),
-                                        "agencies": ("agency", "client_ids"),
-                                        "campaigns": ("campaign", "campaign_ids")
-                                    }
-
-                                    # 智能選擇結果：優先選擇 industry/sub_industry 類型
-                                    # 原因：產業查詢通常更符合使用者意圖，且可以直接進入數據查詢階段
-                                    priority_types = ['industries', 'sub_industries']
-                                    priority_results = [r for r in rag_data if r.get('filter_type') in priority_types]
-
-                                    if priority_results:
-                                        # 從優先類型中選擇最高分
-                                        top_result = max(priority_results, key=lambda x: x.get('score', 0))
-                                        print(f"DEBUG [Retriever] Smart RAG selection: Prioritized {top_result.get('filter_type')} type")
-                                    else:
-                                        # 沒有優先類型，回退到全局最高分
-                                        top_result = max(rag_data, key=lambda x: x.get('score', 0))
-                                        print(f"DEBUG [Retriever] Smart RAG selection: Fallback to highest score")
-
-                                    filter_type = top_result.get('filter_type')
-
-                                    if filter_type in filter_type_map:
-                                        entity_type, param_name = filter_type_map[filter_type]
-                                        entity_value = top_result.get('value')
-
-                                        # 改進的 RAG 引導策略：
-                                        # 1. 如果是 industry/sub_industry，可以直接使用名稱查詢（不需要 ID）
-                                        # 2. 否則，引導 LLM 再次調用 resolve_entity
-
-                                        if entity_type in ["industry", "sub_industry"]:
-                                            # 產業類型：先嘗試獲取精確 ID，如果失敗則直接查詢數據
-                                            guide_msg = f"🔍 RAG 找到相關產業: {entity_value} (類型: {entity_type}, 分數: {top_result.get('score'):.2f})。\n\n👉 **CRITICAL - 請立即執行以下步驟**：\n\n**Step 1**: 嘗試取得精確 ID（單次嘗試）\n```\nresolve_entity(keyword='{entity_value}', target_types=['{entity_type}'])\n```\n\n**Step 2**: 無論 Step 1 成功與否，立即查詢活動數據\n```\nquery_campaign_basic()  # 使用 Step 1 取得的 industry_ids 或 sub_industry_ids\n```\n\n**Step 3**: 從 Step 2 結果提取 campaign_ids，然後**依照使用者查詢需求**立即呼叫：\n\n⚠️ **必須根據使用者查詢關鍵字決定要呼叫哪些工具**：\n\n- 如果提到「格式」「廣告格式」「format」 → 必須呼叫：\n```\nquery_ad_formats(campaign_ids=[...])\n```\n\n- 如果提到「預算」「投資金額」「investment」 → 必須呼叫：\n```\nquery_investment_budget(campaign_ids=[...])\n```\n\n- 如果提到「認列金額」「執行金額」「execution」 → 必須呼叫：\n```\nquery_execution_budget(campaign_ids=[...])\n```\n\n- 如果提到「成效」「CTR」「VTR」「ER」「點擊率」「觀看率」「performance」 → 必須呼叫：\n```\nquery_unified_performance(cmpids=[...], group_by=['campaign_name', 'cmpid'])\n```\n\n- 如果提到「受眾」「數據鎖定」「targeting」「segment」 → 必須呼叫：\n```\nquery_targeting_segments(campaign_ids=[...])\n```\n\n🚨 **範例**：\n如果使用者問「汽車產業成效最好的格式，以及他使用了什麼數據鎖定」，你必須呼叫：\n1. `query_ad_formats` (因為提到「格式」)\n2. `query_unified_performance` (因為提到「成效」)\n3. `query_targeting_segments` (因為提到「數據鎖定」)\n\n🚨 **禁止事項**：\n- 不要重複呼叫 `resolve_entity` 超過 2 次\n- 不要使用除 '{entity_value}' 以外的其他關鍵字\n- 不要漏掉使用者查詢中明確提到的數據類型"
-                                            messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
-                                        else:
-                                            # 其他類型（client, brand, agency）：需要精確 ID
-                                            guide_msg = f"🔍 RAG 找到相關實體: {entity_value} (類型: {entity_type}, 分數: {top_result.get('score'):.2f})。\n👉 下一步: 請再次呼叫 `resolve_entity`，使用參數 `keyword='{entity_value}'` 和 `target_types=['{entity_type}']` 來取得精確的 ID。"
-                                            messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
-                                    else:
-                                        # 無法識別的 filter_type，返回所有結果讓 LLM 判斷
-                                        candidates_summary = "\n".join([f"- {r.get('value')} ({r.get('filter_type')}, 分數: {r.get('score'):.2f})" for r in rag_data[:5]])
-                                        guide_msg = f"🔍 RAG 找到 {len(rag_data)} 個相關結果：\n{candidates_summary}\n\n👉 請根據使用者的查詢需求，選擇最相關的實體，並使用 `resolve_entity` 取得精確 ID。"
-                                        messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
+                                
+                                # Guide: Use id_finder after resolution
+                                guide_msg = f"✅ 已解析實體。下一步: 請呼叫 `id_finder`，傳入 `client_ids` (或其他對應 ID) 以及查詢的時間範圍 `start_date`, `end_date`。"
+                                messages.append(ToolMessage(tool_call_id=tool_call["id"], content=guide_msg))
+                                continue
 
                 # Log
                 execution_logs.append({
@@ -363,11 +199,20 @@ def data_retriever_node(state: AgentState) -> Dict[str, Any]:
                     "row_count": len(result.get("data", [])) if isinstance(result, dict) else 0
                 })
 
-                # [NEW] Add guidance for query_campaign_basic results
-                if tool_name == "query_campaign_basic" and isinstance(result, dict) and result.get("data"):
-                    campaign_ids = [row.get('campaign_id') for row in result.get("data", []) if row.get('campaign_id')]
-                    if campaign_ids:
-                        guide_msg = f"\n\n✅ 已取得 {len(campaign_ids)} 個活動的基本資料。\n👉 下一步 (Step 3): 請根據使用者查詢需求，呼叫以下工具：\n- `query_ad_formats(campaign_ids={json.dumps(campaign_ids[:10])})` - 查詢廣告格式\n- `query_unified_performance(cmpids={json.dumps(campaign_ids[:10])}, group_by=['campaign_name', 'cmpid'])` - 查詢成效數據"
+                # [NEW] Add guidance for id_finder results
+                if tool_name == "id_finder" and isinstance(result, dict) and result.get("data"):
+                    rows = result.get("data", [])
+                    # Extract ID lists
+                    cue_list_ids = list(set(r['cue_list_id'] for r in rows if r.get('cue_list_id')))
+                    campaign_ids = list(set(r['campaign_id'] for r in rows if r.get('campaign_id')))
+                    plaids = list(set(r['plaid'] for r in rows if r.get('plaid')))
+                    
+                    if plaids:
+                        guide_msg = f"\n\n✅ 已找到相關 IDs (共 {len(rows)} 筆)。\n👉 下一步: 請根據需求平行呼叫以下工具：\n"
+                        guide_msg += f"- `query_investment_budget(cue_list_ids={json.dumps(cue_list_ids[:20])})` (查預算)\n"
+                        guide_msg += f"- `query_execution_budget(plaids={json.dumps(plaids[:20])})` (查執行金額)\n"
+                        guide_msg += f"- `query_unified_performance(plaids={json.dumps(plaids[:20])}, group_by=['campaign_name'])` (查成效)\n"
+                        guide_msg += f"- `query_targeting_segments(plaids={json.dumps(plaids[:20])})` (查受眾)\n"
                         content = json.dumps(result, ensure_ascii=False, default=str) + guide_msg
                     else:
                         content = json.dumps(result, ensure_ascii=False, default=str)

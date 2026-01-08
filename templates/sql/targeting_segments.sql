@@ -1,16 +1,14 @@
 {#
   Template: targeting_segments.sql
-  Description: 數據鎖定 / 受眾標籤設定
-  Returns: campaign_id, segment_name, segment_category
-  Merge Key: campaign_id
+  Description: 數據鎖定 / 受眾標籤設定 (基於版位)
+  Returns: plaid, segment_name, segment_category
   Parameters:
-    - campaign_ids: List[int] (required) - 指定 campaign IDs
+    - plaids: List[int] (required) - 指定 Pre-Campaign IDs
 #}
 
 SELECT
-    pre.one_campaign_id AS campaign_id,
-    pre.id AS placement_id,
-    -- 受眾標籤描述（根據你的範例使用 description）
+    pre.id AS plaid,
+    -- 受眾標籤描述
     ts.description AS segment_name,
     ts.name AS segment_code,
     -- 受眾分類
@@ -23,11 +21,13 @@ WHERE ctp.source_id = pre.id
     AND ctp.selection_id = ts.id
     AND ctp.selection_type = 'TargetSegment'
 
-    {% if campaign_ids %}
-    AND pre.one_campaign_id IN ({{ campaign_ids|join(',') }})
+    {% if plaids %}
+    AND pre.id IN ({{ plaids|join(',') }})
+    {% else %}
+    AND 1=0
     {% endif %}
 
     AND pre.trash = 0
 
-ORDER BY pre.one_campaign_id, ts.description
-LIMIT 100
+ORDER BY pre.id, ts.description
+LIMIT 5000
