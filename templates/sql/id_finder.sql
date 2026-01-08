@@ -17,8 +17,8 @@
 SELECT DISTINCT
     cl.id AS cue_list_id,
     oc.id AS campaign_id,
-    pc.id AS plaid,
-    
+    pc.id AS plaid
+
     -- 輔助資訊 (Optional, for debugging or lightweight grouping)
     -- cl.campaign_name AS contract_name,
     -- oc.name AS campaign_name,
@@ -34,8 +34,8 @@ WHERE 1=1
     AND oc.status != 'deleted'
     
     -- 時間範圍 (Required) - 用 Pre-Campaign 的走期最準確
-    AND pc.end_date >= '{{ start_date }}'
-    AND pc.start_date <= '{{ end_date }}'
+    AND STR_TO_DATE(pc.end_date, '%Y/%m/%d') >= '{{ start_date }}'
+    AND STR_TO_DATE(pc.start_date, '%Y/%m/%d') <= '{{ end_date }}'
 
     -- ID Filters
     {% if client_ids %}

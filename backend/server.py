@@ -34,4 +34,4 @@ if __name__ == "__main__":
     # 這裡的 host 和 port 可以透過環境變數控制，以適應 Docker 環境
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", 8000))
-    uvicorn.run(fastapi_app, host=host, port=port)
+    uvicorn.run("backend.server:fastapi_app", host=host, port=port, reload=True)

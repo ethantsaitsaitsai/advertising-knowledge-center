@@ -401,8 +401,52 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 requested_cols_en = []
                 for col_cn in plan.get("display_columns", []):
                     requested_cols_en.append(reverse_map.get(col_cn, col_cn))
-                sort_col_raw = plan.get("sort_col", "").split(" ")[0]
-                if sort_col_raw: requested_cols_en.append(sort_col_raw)
+                
+                # --- Robust Sort Logic & Default Fallback ---
+                sort_col_val = plan.get("sort_col")
+                
+                # If LLM didn't provide a sort, pick a smart default based on business rules
+                if not sort_col_val:
+                    # Priorities: Rate Metrics > Money > Volume
+                    priority_metrics = ["ctr", "vtr", "er", "investment_amount", "execution_amount", "clicks", "effective_impressions"]
+                    for metric in priority_metrics:
+                        if metric in available_cols:
+                            sort_col_val = f"{metric} DESC"
+                            print(f"DEBUG [Reporter] Auto-assigned default sort: {sort_col_val}")
+                            break
+                
+                # Safe split (fixes NoneType error)
+                sort_col_raw = sort_col_val.split(" ")[0] if sort_col_val else ""
+                
+                # Ensure sort column is included in selection if valid
+                if sort_col_raw and sort_col_raw not in requested_cols_en:
+                     requested_cols_en.append(sort_col_raw)
+                
+                # Update plan for downstream use
+                plan["sort_col"] = sort_col_val
+
+                # --- State-Driven Column Inclusion ---
+                # If specific tools were called and returned data, we force those columns to be shown.
+                # This ensures that if the Analyst decided to fetch data, the Reporter MUST show it,
+                # even if the LLM Planning step accidentally missed it.
+                if "query_targeting_segments" in data_store and data_store["query_targeting_segments"]:
+                    col_en = "targeting_segments"
+                    col_cn = "受眾標籤"
+                    
+                    if col_en in available_cols and col_cn not in plan.get("display_columns", []):
+                        print(f"DEBUG [Reporter] State-driven: Forcing inclusion of '{col_cn}' because segments data exists.")
+                        # Insert at second position (after Primary Key)
+                        plan["display_columns"].insert(1, col_cn)
+                        
+                        # Sync requested_cols_en for metric injection logic below
+                        if col_en not in requested_cols_en:
+                            requested_cols_en.append(col_en)
+                        
+                        # Ensure it's in concat_col for the pandas aggregation
+                        if not concat_col_en:
+                            concat_col_en = col_en
+                        elif col_en not in concat_col_en:
+                            concat_col_en += f",{col_en}"
 
                 for rate in rate_metrics:
                     if any(rate in col.lower() for col in requested_cols_en):

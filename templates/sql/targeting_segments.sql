@@ -8,6 +8,7 @@
 
 SELECT
     pre.id AS plaid,
+    pre.one_campaign_id AS campaign_id,
     -- 受眾標籤描述
     ts.description AS segment_name,
     ts.name AS segment_code,
