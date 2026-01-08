@@ -42,5 +42,13 @@ class AgentState(BaseAgentState, total=False):
     # Stores raw datasets from SQL queries. Key: "dataset_name" (or tool name), Value: List of records
     data_store: Optional[Dict[str, List[Dict[str, Any]]]]
 
+    # Quality Check & Retry Logic
+    retry_count: Optional[int]
+    quality_check_feedback: Optional[str]
+    
+    # Entity Ambiguity Tracking (Human-in-the-loop)
+    # Stores the raw result of resolve_entity when status is 'rag_results' or 'needs_confirmation'
+    ambiguity_status: Optional[Dict[str, Any]]
+
     # Error handling
     error_message: Optional[str]

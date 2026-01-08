@@ -10,6 +10,7 @@
 
 SELECT
     pc.id AS plaid,
+    COALESCE(aft.title, aft.name, 'Unknown Format') AS format_name,
     
     -- 執行金額（認列金額）
     pc.budget AS execution_amount,
@@ -21,6 +22,7 @@ SELECT
     pc.end_date AS execution_end_date
 
 FROM pre_campaign pc
+LEFT JOIN ad_format_types aft ON pc.ad_format_type_id = aft.id
 
 WHERE 1=1
     -- 執行金額定義：執行中或已結案

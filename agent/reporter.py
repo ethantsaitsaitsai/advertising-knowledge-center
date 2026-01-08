@@ -344,16 +344,21 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
           - 原因：比率指標已經包含了成效資訊，顯示原始數據會造成表格冗餘
         - 但如果只有原始指標（有效曝光、總點擊）而沒有比率，則必須顯示原始指標
 
-        **3. 欄位排序規則 (Column Ordering)**:
+        **3. 佔比計算規則 (Percentage Calculation)**:
+        - 如果使用者查詢包含「**佔比**」、「**比例**」、「**分佈**」、「**Share**」：
+          - 必須在 `percentage_config` 中指定要計算佔比的欄位（通常是投資金額）。
+          - 格式: `{{"column": "investment_amount", "new_col": "投資金額佔比%"}}`
+
+        **4. 欄位排序規則 (Column Ordering)**:
         請按照以下順序排列 `display_columns`：
         1. **主鍵** (Primary Key): 通常是「廣告格式」或「活動名稱」
         2. **文字型欄位** (Text Fields): 如「受眾標籤」「活動名稱」等描述性欄位
-        3. **數值型欄位** (Numeric Fields): 如「投資金額」「點擊率 (CTR%)」等數字指標
+        3. **數值型欄位** (Numeric Fields): 如「投資金額」「投資金額佔比%」「點擊率 (CTR%)」等數字指標
 
-        **4. 輸出要求**:
+        **5. 輸出要求**:
         - **rename_map**: 原始欄位 -> 標準中文名稱（用於最終顯示）。
         - **display_columns**: 最終要顯示的欄位列表（使用中文名稱）。
-          - **規則**: 顯示主鍵 + 使用者明確要求的欄位 + 概念展開的欄位。
+          - **規則**: 顯示主鍵 + 使用者明確要求的欄位 + 概念展開的欄位 + **佔比欄位**(若有)。
           - **禁止**: 嚴禁出現「客戶名稱」「代理商」「活動編號」「cmpid」「plaid」「format_type_id」「cue_list_id」等內部欄位，除非使用者明確詢問。
           - **嚴格過濾**: 只有在使用者明確要求（或概念展開需要）時才顯示「廣告格式」。
         - **groupby_cols**: 用於去重的維度欄位 (英文名)。
@@ -362,7 +367,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         - **sort_col**: 排序欄位 (如 "ctr DESC")。
         - **limit**: 限制顯示筆數（整數）。如果使用者要「前X」則設為 X，否則設為 0。
         - **time_aggregation**: 時間聚合配置。
-        - **percentage_config**: 佔比計算配置。
+        - **percentage_config**: 佔比計算配置 (例如 `{{"column": "investment_amount", "new_col": "投資金額佔比%"}}`)。
 
         請直接回傳 JSON 格式，不要包含任何 Markdown 標記或文字說明。
         """
@@ -460,6 +465,13 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 concat_col_en = plan.get("concat_col", "")
                 if concat_col_en in reverse_map: concat_col_en = reverse_map[concat_col_en]
                 
+                # Ensure percentage base column is in sum_cols
+                perc_config = plan.get("percentage_config")
+                if perc_config and perc_config.get("column"):
+                    base_col = perc_config.get("column")
+                    if base_col not in sum_cols_en and base_col in available_cols:
+                        sum_cols_en.append(base_col)
+
                 # Execute Final Aggregation
                 final_result = pandas_processor.invoke({
                     "data": current_data,
@@ -470,6 +482,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                     "concat_col": concat_col_en,
                     "select_columns": plan.get("display_columns", []),
                     "sort_col": plan.get("sort_col"),
+                    "percentage_config": perc_config, # [NEW] Pass percentage config
                     "ascending": False,
                     "top_n": plan.get("limit", 0)
                 })

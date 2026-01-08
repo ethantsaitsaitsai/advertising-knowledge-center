@@ -20,13 +20,15 @@ def pandas_processor(
     new_col: Optional[str] = None,
     period: Optional[str] = None,
     select_columns: Optional[List[str]] = None,
-    rename_map: Optional[Dict[str, str]] = None  # [NEW] Explicit rename map
+    rename_map: Optional[Dict[str, str]] = None,  # [NEW] Explicit rename map
+    percentage_config: Optional[Dict[str, str]] = None # [NEW] Percentage calculation config
 ) -> Dict[str, Any]:
     """
     對資料進行 Pandas 處理與分析，並回傳 Markdown 表格。
 
     Args:
         rename_map: (選填) 欄位重命名映射 {old_name: new_name}。在篩選前執行。
+        percentage_config: (選填) 佔比計算配置 {'column': 'target_col', 'new_col': 'output_col'}
     """
     if not data:
         return {
@@ -353,6 +355,37 @@ def pandas_processor(
         # [FIX] Don't apply top_n here for groupby_sum - will apply after delayed sorting
         if top_n and operation not in ['groupby_sum', 'top_n', 'add_percentage_column', 'groupby_top_n']:
             result_df = result_df.head(top_n)
+
+        # --- [NEW] Percentage Calculation (Config-Driven) ---
+        # 如果有傳入 percentage_config，則自動計算佔比
+        if percentage_config:
+            target_col = percentage_config.get("column")
+            perc_new_col = percentage_config.get("new_col", "percentage")
+            
+            # Try to resolve column name (handle renaming/suffixes)
+            actual_col = None
+            candidates = [target_col, f"{target_col}_1", f"{target_col}_x"]
+            # Also check if it was renamed in rename_map
+            if rename_map and target_col in rename_map:
+                candidates.append(rename_map[target_col])
+            
+            for c in candidates:
+                if c in result_df.columns:
+                    actual_col = c
+                    break
+            
+            if actual_col:
+                try:
+                    total_val = result_df[actual_col].sum()
+                    if total_val != 0:
+                        result_df[perc_new_col] = (result_df[actual_col] / total_val * 100).round(2)
+                    else:
+                        result_df[perc_new_col] = 0.0
+                    print(f"DEBUG [PandasProcessor] Calculated percentage for '{actual_col}' -> '{perc_new_col}' (Total: {total_val})")
+                except Exception as e:
+                    print(f"WARN [PandasProcessor] Failed to calculate percentage: {e}")
+            else:
+                print(f"WARN [PandasProcessor] Percentage target column '{target_col}' not found.")
 
         # --- [NEW] Automatic Rate Recalculation (自動重算成效指標) ---
         # 如果 groupby_sum 導致百分比指標遺失，但分子分母存在，則自動算回來

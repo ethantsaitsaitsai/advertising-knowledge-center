@@ -8,7 +8,7 @@ parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from langserve import add_routes
 from agent.graph import app as langgraph_app
 import uvicorn
@@ -20,14 +20,29 @@ fastapi_app = FastAPI(
     description="API for accessing the LangGraph SQL Agent"
 )
 
+def _inject_thread_id(config: dict, request: Request) -> dict:
+    """
+    Middleware to ensure thread_id exists in the config.
+    If the client provided it, it should already be in 'config'.
+    If not, we inject a default one to prevent Checkpointer errors.
+    """
+    configurable = config.get("configurable", {})
+    if "thread_id" not in configurable:
+        print(f"⚠️  WARNING: thread_id missing in request config. Injecting default.")
+        configurable["thread_id"] = "default_thread_id"
+        config["configurable"] = configurable
+    else:
+        print(f"✅ Received thread_id: {configurable['thread_id']}")
+    return config
+
 # 將 LangGraph 註冊為 API 路由
 # 自動生成 /agent/invoke, /agent/stream, /agent/playground 等端點
 add_routes(
     fastapi_app,
     langgraph_app,
     path="/agent",
-    enable_feedback_endpoint=True,  # 啟用反饋端點
-    # debug_mode=True  # 開啟 debug 模式可以顯示更多中間步驟
+    enable_feedback_endpoint=True,
+    per_req_config_modifier=_inject_thread_id # [NEW] Inject config modifier
 )
 
 if __name__ == "__main__":

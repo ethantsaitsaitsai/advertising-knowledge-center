@@ -160,59 +160,6 @@ def query_targeting_segments(
     return _render_and_execute_mysql("targeting_segments.sql", context)
 
 @tool
-def query_industry_format_budget(
-    dimension: str = 'industry',
-    primary_view: str = 'dimension',
-    industry_ids: Optional[List[int]] = None,
-    sub_industry_ids: Optional[List[int]] = None,
-    client_ids: Optional[List[int]] = None,
-    agency_ids: Optional[List[int]] = None,
-    format_ids: Optional[List[int]] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    limit: int = 5000
-) -> Dict[str, Any]:
-    """
-    【產業/統計專用】多維度預算分佈統計。
-    
-    ⚠️ 重要：此工具僅適用於「產業分析」、「大盤統計」或「全站格式分佈」。
-    ❌ 若查詢「特定客戶」或「特定活動」的預算與成效，請改用 `id_finder` + 明細工具。
-    """
-    # 1. 參數清理 (Sanitization)
-    def clean_list(lst):
-        if not lst: return None
-        cleaned = [x for x in lst if x is not None and str(x).strip() != '']
-        return cleaned if cleaned else None
-
-    industry_ids = clean_list(industry_ids)
-    sub_industry_ids = clean_list(sub_industry_ids)
-    client_ids = clean_list(client_ids)
-    agency_ids = clean_list(agency_ids)
-    format_ids = clean_list(format_ids)
-
-    valid_dimensions = ['industry', 'sub_industry', 'client', 'agency']
-    if dimension not in valid_dimensions:
-        return {
-            "status": "error",
-            "message": f"Invalid dimension value: '{dimension}'. Allowed values are: {valid_dimensions}."
-        }
-
-    context = {
-        "dimension": dimension,
-        "split_by_format": True,
-        "primary_view": primary_view,
-        "industry_ids": industry_ids,
-        "sub_industry_ids": sub_industry_ids,
-        "client_ids": client_ids,
-        "agency_ids": agency_ids,
-        "format_ids": format_ids,
-        "start_date": start_date,
-        "end_date": end_date,
-        "limit": limit
-    }
-    return _render_and_execute_mysql("industry_format_budget.sql", context)
-
-@tool
 def execute_sql_template(
     template_name: str,
     campaign_ids: Optional[List[int]] = None,

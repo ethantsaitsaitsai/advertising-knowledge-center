@@ -28,7 +28,8 @@ INTENT_ROUTER_PROMPT = """你是 AKC 智能助手的意圖路由器 (Intent Rout
 **路由選項:**
 1. **DataAnalyst** - 數據分析師 (預設)
    - 查詢數據、報表、排名、統計
-   - 例如：「悠遊卡今年執行金額？」、「前三大格式」、「代理商 YTD 認列金額」
+   - 例如：「悠遊卡今年執行金額？」、「前三大格式」
+   - **重要：** 若使用者是正在回答系統先前的「澄清問題」（例如提供編號、說「全部」、「第一個」），請務必導向 DataAnalyst。
 
 2. **Strategist** - 營銷策略師 (未來功能)
    - 詢問建議、策略、優化方案
@@ -114,62 +115,61 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
     """
     messages = list(state.get("messages", []))
 
-    # Debug logs
-    logger.info(f"Received messages count: {len(messages)}")
-    if messages:
-        logger.info(f"Last message type: {type(messages[-1])}")
-        logger.info(f"Last message: {messages[-1]}")
+    # --- Get Context ---
+    last_user_msg = ""
+    last_ai_msg = ""
+    original_query = ""
 
-    # Get last user message
-    last_user_msg = None
-    prev_user_msg = None
-    user_msg_count = 0
-
+    # Search for messages
     for msg in reversed(messages):
-        # Handle both HumanMessage and dict format (from LangGraph Studio)
-        is_human = False
         content = ""
+        msg_type = ""
         
-        if isinstance(msg, HumanMessage):
-            is_human = True
+        if isinstance(msg, (HumanMessage, AIMessage)):
             content = msg.content
-        elif isinstance(msg, dict) and msg.get("type") == "human":
-            is_human = True
-            content = msg.get("content")
-        elif hasattr(msg, "content") and hasattr(msg, "type") and msg.type == "human":
-            is_human = True
+            msg_type = "human" if isinstance(msg, HumanMessage) else "ai"
+        elif isinstance(msg, dict):
+            content = msg.get("content", "")
+            msg_type = msg.get("type", "")
+        elif hasattr(msg, "content") and hasattr(msg, "type"):
             content = msg.content
+            msg_type = msg.type
+        
+        if not content: continue
 
-        if is_human:
-            # Handle multimodal content
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    elif isinstance(part, str):
-                        text_parts.append(part)
-                content = " ".join(text_parts).strip()
-            
-            user_msg_count += 1
-            if user_msg_count == 1:
+        # [FIX] Filter out synthesized context messages to prevent recursion
+        if "使用者先前問題:" in content or "系統澄清提問:" in content:
+            continue
+
+        if msg_type == "human":
+            if not last_user_msg:
                 last_user_msg = content
-            elif user_msg_count == 2:
-                prev_user_msg = content
+            else:
+                # The one before the last AI msg is usually the original query
+                original_query = content
                 break
+        elif msg_type == "ai":
+            if not last_ai_msg:
+                last_ai_msg = content
 
     if not last_user_msg:
-        logger.warning("No user message found")
-        return {
-            "next": "END",
-            "messages": [AIMessage(content="我沒有收到您的問題，請重新輸入。")]
-        }
+        return {"next": "END", "messages": [AIMessage(content="我沒有收到您的問題。")]}
 
-    # Context Merging Logic
-    final_query_for_analysis = last_user_msg
-    if prev_user_msg and len(last_user_msg) < 50:
-        logger.info("Merging context for analysis")
-        final_query_for_analysis = f"Original Query: {prev_user_msg}\nUser Selection/Clarification: {last_user_msg}"
+    # --- Context Construction ---
+    # If the user's message is short, it's likely a reply to a system question
+    is_context_aware = False
+    if last_ai_msg and ("請問您指的是" in last_ai_msg or "哪個時間段" in last_ai_msg):
+        full_context_query = f"""
+        使用者先前問題: {original_query}
+        系統澄清提問: {last_ai_msg}
+        使用者最新回覆: {last_user_msg}
+        
+        請根據使用者的最新回覆，結合先前的問題背景，判斷其最終查詢意圖。
+        """
+        logger.info("Context-aware routing activated.")
+        is_context_aware = True
+    else:
+        full_context_query = last_user_msg
 
     # Prepare prompt
     now_dt = datetime.now()
@@ -182,10 +182,10 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
         current_year=current_year,
         last_year=last_year
     ))
-    user_msg = HumanMessage(content=final_query_for_analysis)
+    user_msg = HumanMessage(content=full_context_query)
 
     # Invoke LLM
-    logger.info(f"Analyzing: {final_query_for_analysis[:100]}...")
+    logger.info(f"Analyzing: {full_context_query[:200]}...")
     response = llm.invoke([system_msg, user_msg])
 
     # Parse response
@@ -220,8 +220,30 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
 
     # Determine next node
     route = routing_decision.get("route_to", "DataAnalyst")
+    
+    # [FIX] Force DataAnalyst if context-aware, even if LLM says Chitchat
+    if is_context_aware and route == "Chitchat":
+        logger.info("Context-aware override: Chitchat -> DataAnalyst")
+        route = "DataAnalyst"
+
     start_date = routing_decision.get("start_date")
     end_date = routing_decision.get("end_date")
+    analysis_hint = routing_decision.get("analysis_hint")
+
+    # --- Parameter Inheritance (State Memory) ---
+    # If this is a follow-up query (e.g. "All", "The first one"),
+    # we should inherit missing parameters from the previous turn.
+    prev_context = state.get("routing_context", {})
+    if prev_context and route == "DataAnalyst":
+        if not start_date:
+            start_date = prev_context.get("start_date")
+            logger.info(f"Inherited start_date from previous context: {start_date}")
+        if not end_date:
+            end_date = prev_context.get("end_date")
+            logger.info(f"Inherited end_date from previous context: {end_date}")
+        if not analysis_hint:
+            analysis_hint = prev_context.get("analysis_hint")
+            logger.info(f"Inherited analysis_hint from previous context: {analysis_hint}")
 
     if route == "Chitchat":
         return {
@@ -247,7 +269,7 @@ def intent_router_node(state: AgentState) -> Dict[str, Any]:
         "start_date": start_date,
         "end_date": end_date,
         "analysis_hint": routing_decision.get("analysis_hint"),
-        "original_query": final_query_for_analysis
+        "original_query": full_context_query
     }
 
     logger.info(f"Routing to: {route} with dates: {start_date} ~ {end_date}")

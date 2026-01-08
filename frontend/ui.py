@@ -59,12 +59,21 @@ async def start():
     ).send()
 
     # 初始化 session
-    cl.user_session.set("thread_id", None)
+    new_thread_id = str(uuid.uuid4())
+    cl.user_session.set("thread_id", new_thread_id)
+    print(f"DEBUG [UI] Session started with thread_id: {new_thread_id}")
 
 @cl.on_message
 async def main(message: cl.Message):
     """處理用戶訊息"""
     print(f"DEBUG [UI] main() triggered with message: {message.content}")
+
+    # 確保 thread_id 存在
+    thread_id = cl.user_session.get("thread_id")
+    if not thread_id:
+        thread_id = str(uuid.uuid4())
+        cl.user_session.set("thread_id", thread_id)
+        print(f"DEBUG [UI] Generated new thread_id: {thread_id}")
 
     # 狀態管理
     current_status = "🤔 思考中"
@@ -98,10 +107,13 @@ async def main(message: cl.Message):
         },
         "config": {
             "configurable": {
-                "thread_id": cl.user_session.get("thread_id") or "default"
+                "thread_id": thread_id
             }
         }
     }
+    
+    print(f"DEBUG [UI] Sending request to {LANGSERVE_URL}/stream")
+    print(f"DEBUG [UI] Payload: {json.dumps(input_data, ensure_ascii=False)}")
 
     try:
         # 使用 httpx AsyncClient 避免阻塞 Event Loop

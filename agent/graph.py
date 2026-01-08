@@ -5,6 +5,7 @@ Simplified architecture:
 User Input → Intent Router → Data Analyst Subgraph (Retriever -> Reporter) → Output
 """
 from langgraph.graph import StateGraph, END, START
+from langgraph.checkpoint.memory import MemorySaver # [NEW]
 from agent.state import AgentState
 from agent.router import intent_router_node
 from agent.analyst_graph import analyst_graph # [NEW] Import Subgraph
@@ -92,5 +93,8 @@ workflow.add_conditional_edges(
 # Data Analyst Subgraph → END
 workflow.add_edge("DataAnalyst", END)
 
+# Initialize Checkpointer for Memory
+checkpointer = MemorySaver() # [NEW]
+
 # Compile the graph
-app = workflow.compile()
+app = workflow.compile(checkpointer=checkpointer) # [UPDATED]

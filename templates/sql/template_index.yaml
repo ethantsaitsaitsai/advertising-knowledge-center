@@ -2,9 +2,36 @@
 # Agent 可根據意圖關鍵字自動選擇合適的 templates
 
 templates:
+  id_finder:
+    file: id_finder.sql
+    description: 核心 ID 搜尋器。根據時間、客戶、格式等條件，找出所有相關的 IDs (CueList, Campaign, Plaid)。
+    keywords:
+      - 搜尋
+      - 查找
+      - ID
+      - 關聯
+    merge_key: N/A
+    returns:
+      - cue_list_id
+      - campaign_id
+      - plaid
+    required_params:
+      - start_date
+      - end_date
+    optional_params:
+      - client_ids
+      - agency_ids
+      - ad_format_type_ids
+      - industry_ids
+      - sub_industry_ids
+      - product_line_ids
+    priority: 1
+    dependencies: []
+    notes: 這是所有詳細查詢的前置步驟，用於獲取 IDs。
+
   campaign_basic:
     file: campaign_basic.sql
-    description: 活動基本資訊（客戶、活動名稱、日期、預算）
+    description: 活動基本資訊（客戶、活動名稱、日期、Agency）。附帶 Plaid 列表。
     keywords:
       - 基本資訊
       - 活動名稱
@@ -22,38 +49,17 @@ templates:
       - start_date
       - end_date
       - agency_name
-    required_params: []
-    optional_params:
-      - campaign_ids
-      - client_names
-      - start_date
-      - end_date
-    priority: 1  # 通常是必選
-    dependencies: []
-
-  ad_formats:
-    file: ad_formats.sql
-    description: 廣告格式明細（從合約層級）
-    keywords:
-      - 格式
-      - 廣告形式
-      - 平台
-      - Banner
-    merge_key: campaign_id
-    returns:
-      - campaign_id
-      - format_name
-      - format_type_id
+      - plaids
     required_params:
       - campaign_ids
     optional_params: []
     priority: 2
     dependencies:
-      - campaign_basic  # 建議先執行 campaign_basic 取得 campaign_ids
+      - id_finder
 
   targeting_segments:
     file: targeting_segments.sql
-    description: 數據鎖定 / 受眾標籤設定
+    description: 數據鎖定 / 受眾標籤設定 (基於版位)
     keywords:
       - 數據鎖定
       - 受眾
@@ -62,49 +68,19 @@ templates:
       - 目標客群
       - Segment
       - 鎖定條件
-    merge_key: campaign_id
+    merge_key: plaid
     returns:
-      - campaign_id
-      - placement_id
-      - medianame
+      - plaid
       - segment_name
       - segment_code
       - segment_category
-      - data_source
     required_params:
-      - campaign_ids
+      - plaids
     optional_params: []
     priority: 2
     dependencies:
-      - campaign_basic
-    notes: 一個 campaign 可能有多個受眾標籤，merge 後需要 groupby 聚合
-
-  media_placements:
-    file: media_placements.sql
-    description: 投放媒體與版位明細（執行層級）
-    keywords:
-      - 媒體
-      - 版位
-      - Placement
-      - 投放位置
-      - 媒體名稱
-      - 廣告版位
-    merge_key: campaign_id
-    secondary_key: placement_id
-    returns:
-      - campaign_id
-      - placement_detail_id
-      - placement_id
-      - ad_format_name
-      - video_seconds
-      - budget
-    required_params:
-      - campaign_ids
-    optional_params: []
-    priority: 2
-    dependencies:
-      - campaign_basic
-    notes: L4 層級資料，一個 campaign 對應多個 placements
+      - id_finder
+    notes: 基於 Plaid 查詢，最為精準。
 
   investment_budget:
     file: investment_budget.sql
@@ -116,25 +92,18 @@ templates:
       - 委刊預算
       - 合約預算
       - 應收帳款
-    merge_key: campaign_id
+    merge_key: cue_list_id
     returns:
+      - cue_list_id
       - campaign_id
       - format_name
-      - format_type_id
       - investment_amount
-      - client_name
-      - agency_name
-      - investment_start_date
-      - investment_end_date
-    required_params: []
-    optional_params:
-      - campaign_ids
-      - client_names
-      - start_date
-      - end_date
+    required_params:
+      - cue_list_ids
+    optional_params: []
     priority: 2
     dependencies:
-      - campaign_basic
+      - id_finder
     notes: 格式層級明細，來自 cue_list_budgets.budget，過濾 status IN ('converted', 'requested')
 
   execution_budget:
@@ -146,106 +115,20 @@ templates:
       - 營收認列
       - 實際執行
       - 消耗預算
-    merge_key: campaign_id
+    merge_key: plaid
     returns:
-      - campaign_id
-      - execution_id
-      - client_name
-      - agency_name
+      - plaid
       - execution_amount
       - execution_gift
       - execution_start_date
       - execution_end_date
-      - booked_at
-      - closed_at
-    required_params: []
-    optional_params:
-      - campaign_ids
-      - client_names
-      - start_date
-      - end_date
-    priority: 2
-    dependencies:
-      - campaign_basic
-    notes: 執行單層級明細，來自 pre_campaign.budget，過濾 status IN ('oncue', 'close')
-
-  budget_details:
-    file: budget_details.sql
-    description: 預算摘要（整合投資金額與執行金額的總覽）
-    keywords:
-      - 預算摘要
-      - 預算總覽
-      - 投資執行對比
-      - Budget
-    merge_key: campaign_id
-    returns:
-      - campaign_id
-      - contract_total_budget
-      - campaign_budget
-      - total_investment_amount
-      - total_investment_gift
-      - total_execution_amount
-      - total_execution_gift
     required_params:
-      - campaign_ids
+      - plaids
     optional_params: []
     priority: 2
     dependencies:
-      - campaign_basic
-    notes: 包含 L1/L2/L3 三個層級的預算，注意不可直接加總
-    
-  industry_format_budget:
-    file: industry_format_budget.sql
-    description: 產業/客戶層級的格式預算佔比統計
-    keywords:
-      - 產業預算
-      - 格式預算佔比
-      - 產業分析
-      - 格式花費
-    merge_key: dimension_name
-    returns:
-      - dimension_name
-      - format_name
-      - total_budget
-      - campaign_count
-    required_params: []
-    optional_params:
-      - industry_ids
-      - sub_industry_ids
-      - client_ids
-      - start_date
-      - end_date
-    priority: 1
-    dependencies: []
-    notes: 聚合層級資料，非 Campaign 明細
-
-  format_benchmark:
-    file: format_benchmark.sql
-    description: 格式成效基準 (Benchmark) 與排名
-    keywords:
-      - 格式成效
-      - 格式排名
-      - CTR排名
-      - VTR排名
-      - 基準值
-      - Benchmark
-    merge_key: format_name
-    returns:
-      - format_name
-      - format_id
-      - avg_ctr
-      - avg_vtr
-      - avg_er
-      - total_impressions
-    required_params:
-      - start_date
-      - end_date
-    optional_params:
-      - cmp_ids
-      - format_ids
-    priority: 1
-    dependencies: []
-    notes: ClickHouse 聚合資料，無 Campaign 維度
+      - id_finder
+    notes: 執行單層級明細，來自 pre_campaign.budget，過濾 status IN ('oncue', 'close')
 
   unified_performance:
     file: unified_performance.sql
@@ -263,6 +146,8 @@ templates:
       - clicks
       - effective_impressions
       - ctr
+      - cmpid
+      - plaid
     required_params:
       - start_date
       - end_date
@@ -275,7 +160,8 @@ templates:
       - plaids
       - cmpids
     priority: 1
-    dependencies: []
+    dependencies:
+      - id_finder
     notes: 高效能查詢，使用 ID 進行精準過濾。
 
   unified_dimensions:
@@ -304,122 +190,67 @@ templates:
 
 # 使用範例組合 (Use Case Combinations)
 use_cases:
-  basic_overview:
-    description: 活動基本概覽
+  client_analysis:
+    description: 特定客戶分析 (預算、成效、受眾)
     templates:
-      - campaign_basic
-      - budget_details
+      - id_finder
+      - investment_budget
+      - unified_performance
+      - targeting_segments
+
+  industry_analysis:
+    description: 產業/市場分析 (預算佔比)
+    templates:
+      - id_finder
+      - investment_budget
+      - unified_performance
 
   dimension_discovery:
     description: 維度探索 (有哪些產品線/格式)
     templates:
       - unified_dimensions
 
-  product_line_performance:
-    description: 產品線成效分析
-    templates:
-      - unified_performance
-
-  format_analysis:
-    description: 格式分析（格式 + 投資金額）
-    templates:
-      - campaign_basic
-      - ad_formats
-      - budget_details
-      - unified_performance # 加入成效
-
-  targeting_analysis:
-    description: 數據鎖定分析
-    templates:
-      - campaign_basic
-      - targeting_segments
-
-  media_distribution:
-    description: 媒體分布分析
-    templates:
-      - campaign_basic
-      - media_placements
-      - budget_details
-
-  comprehensive_report:
-    description: 完整報告（所有維度）
-    templates:
-      - campaign_basic
-      - ad_formats
-      - targeting_segments
-      - media_placements
-      - budget_details
-      - unified_performance
-
-  industry_analysis:
-    description: 產業/市場分析 (預算佔比與格式基準)
-    templates:
-      - industry_format_budget
-      - unified_performance
-
 # Agent 選擇邏輯建議
 selection_rules:
-  - rule: 如果查詢包含「成效」、「點擊」、「CTR」、「產品線」
-    action: 優先選擇 unified_performance
-  - rule: 如果查詢包含「格式」關鍵字
-    action: 選擇 ad_formats
-  - rule: 如果查詢包含「數據鎖定」、「受眾」、「TA」
-    action: 選擇 targeting_segments
-  - rule: 如果查詢包含「預算」、「投資」、「金額」、「花費」
-    action: 選擇 budget_details
-  - rule: 如果查詢包含「媒體」、「版位」、「Placement」
-    action: 選擇 media_placements
-  - rule: 如果查詢包含「佔比」、「排名」、「基準」、「全產業」、「全站」
-    action: 選擇 industry_format_budget 或 format_benchmark (視指標而定)
-  - rule: 預設情況（無明確關鍵字）
-    action: 至少選擇 campaign_basic
+  - rule: 查詢特定實體 (客戶/活動/產業)
+    action: 優先使用 id_finder 取得 IDs
+  - rule: 查詢包含「成效」、「點擊」、「CTR」
+    action: 使用 unified_performance (傳入 plaids)
+  - rule: 查詢包含「預算」、「進單」
+    action: 使用 investment_budget (傳入 cue_list_ids)
+  - rule: 查詢包含「執行」、「花費」
+    action: 使用 execution_budget (傳入 plaids)
+  - rule: 查詢包含「數據鎖定」、「受眾」
+    action: 使用 targeting_segments (傳入 plaids)
 
 # 範例查詢對應
 example_queries:
   - query: "Nike 的跑鞋產品線成效如何？"
     selected_templates:
+      - id_finder
       - unified_performance
     reasoning: |
-      - "產品線" + "成效" → unified_performance (group_by=['product_line'])
+      - 1. id_finder (取得 IDs)
+      - 2. unified_performance (用 IDs 查成效)
 
   - query: "悠遊卡投遞的格式、成效、數據鎖定，格式投資金額"
     selected_templates:
-      - campaign_basic
-      - ad_formats
-      - targeting_segments
-      - budget_details
+      - id_finder
+      - investment_budget
       - unified_performance
-    reasoning: |
-      - "成效" → unified_performance
-      - "格式" → ad_formats
-      - "數據鎖定" → targeting_segments
-      - "投資金額" → budget_details
-      - campaign_basic 作為基礎
-
-  - query: "悠遊卡投放在哪些媒體，各媒體的預算？"
-    selected_templates:
-      - campaign_basic
-      - media_placements
-    reasoning: |
-      - "媒體" → media_placements
-      - "預算" → media_placements 已包含 budget 欄位
-      - campaign_basic 作為基礎
-
-  - query: "悠遊卡的受眾標籤有哪些？規模多大？"
-    selected_templates:
-      - campaign_basic
       - targeting_segments
     reasoning: |
-      - "受眾標籤" → targeting_segments
+      - 1. id_finder (取得相關 IDs)
+      - 2. investment_budget (用 cue_list_ids 查預算)
+      - 3. unified_performance (用 plaids 查成效)
+      - 4. targeting_segments (用 plaids 查受眾)
 
   - query: "汽車產業的格式預算佔比如何？"
     selected_templates:
-      - industry_format_budget
+      - id_finder
+      - investment_budget
     reasoning: |
-      - "產業" + "預算佔比" → industry_format_budget
+      - 1. resolve_entity (取得產業 ID)
+      - 2. id_finder (取得該產業 ID 的相關 IDs)
+      - 3. investment_budget (查金額)
 
-  - query: "半年內所有格式的 CTR 排名？"
-    selected_templates:
-      - format_benchmark
-    reasoning: |
-      - "格式" + "排名" + "CTR" → format_benchmark

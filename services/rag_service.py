@@ -1,7 +1,7 @@
 import re
 import os
 import traceback
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 from sentence_transformers import SentenceTransformer
@@ -67,14 +67,14 @@ class RagService:
         text = text.strip()
         return text
 
-    def search(self, query: str, top_k: int = 20, score_threshold: float = 0.90, type_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search(self, query: str, top_k: int = 20, score_threshold: float = 0.90, type_filter: Optional[Union[str, List[str]]] = None) -> List[Dict[str, Any]]:
         """
         Search for similar entities in Qdrant with optional type filtering.
         Args:
             query: The search text
             top_k: Max candidates to check (default increased to 20 to capture all potential matches)
             score_threshold: Minimum similarity score (default 0.90 for even higher precision)
-            type_filter: Optional filter for 'type' field
+            type_filter: Optional filter for 'type' field (str or list of str)
         """
         if not self._is_connected or self.client is None:
             print("⚠️ Skipping RAG search due to connection failure.")
@@ -91,15 +91,27 @@ class RagService:
 
             # Construct Filter if type_filter is provided
             query_filter = None
-            if type_filter and type_filter != "all":
-                query_filter = qdrant_models.Filter(
-                    must=[
-                        qdrant_models.FieldCondition(
-                            key="type",
-                            match=qdrant_models.MatchValue(value=type_filter)
-                        )
-                    ]
-                )
+            if type_filter:
+                if isinstance(type_filter, list):
+                    # OR logic (should match any of the types)
+                    query_filter = qdrant_models.Filter(
+                        should=[
+                            qdrant_models.FieldCondition(
+                                key="type",
+                                match=qdrant_models.MatchValue(value=t)
+                            ) for t in type_filter
+                        ]
+                    )
+                elif type_filter != "all":
+                    # AND logic (single type)
+                    query_filter = qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="type",
+                                match=qdrant_models.MatchValue(value=type_filter)
+                            )
+                        ]
+                    )
 
             # Execute Search
             if hasattr(self.client, 'search'):

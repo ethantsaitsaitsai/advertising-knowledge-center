@@ -225,16 +225,6 @@ def resolve_entity(
             results = _search_table(connection, config, keyword)
             candidates.extend(results)
 
-        # Fallback Pass: If no results and target_types was set, try ALL types
-        if not candidates and target_types:
-            print(f"⚠️ [EntityResolver] No results found for '{keyword}' with types={target_types}. Retrying with ALL types...")
-            for config in SEARCH_CONFIGS:
-                # Skip if we already checked it (optimization)
-                if config["type"] in target_types:
-                    continue
-                results = _search_table(connection, config, keyword)
-                candidates.extend(results)
-
     # 去重：避免同一個 ID 被多次搜出 (例如 brand 和 client 可能來自同一表)
     unique_candidates = []
     seen = set()
@@ -351,10 +341,34 @@ def resolve_entity(
         print(f"🧠 [EntityResolver] Phase 2: RAG vector search...")
         try:
             rag_service = RagService()
+            
+            # Map singular types to Qdrant plural types
+            type_mapping = {
+                "client": "advertisers",
+                "agency": "agencies",
+                "brand": "brands",
+                "industry": "industries",
+                "sub_industry": "sub_industries",
+                "campaign": "campaigns"
+            }
+            
+            rag_filter = None
+            if target_types:
+                # Map all target types to their plural forms
+                mapped_types = []
+                for t in target_types:
+                    mapped = type_mapping.get(t, t)
+                    if mapped not in mapped_types:
+                        mapped_types.append(mapped)
+                
+                if mapped_types:
+                    rag_filter = mapped_types if len(mapped_types) > 1 else mapped_types[0]
+
             rag_results = rag_service.search(
                 query=keyword,
                 top_k=10,
-                score_threshold=0.85  # 降低閾值以獲取更多候選結果
+                score_threshold=0.85,  # 降低閾值以獲取更多候選結果
+                type_filter=rag_filter
             )
 
             if rag_results:
