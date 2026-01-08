@@ -383,17 +383,35 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
         # [FIX] Check if merge key 'campaign_id' exists in anchor
         if current_data and "campaign_id" in current_data[0]:
             print("DEBUG [Reporter] Merging Ad Formats (Priority)...")
+            
+            # [FIX] Deduplicate Ad Formats by keys to prevent row multiplication (Investment inflation)
+            # We only need one representative row per campaign+format to get the ID bridge
+            ad_formats_data = data_store["query_ad_formats"]
+            dedup_res = pandas_processor.invoke({
+                "data": ad_formats_data,
+                "operation": "groupby_sum", # Use groupby to pick first ID
+                "groupby_col": ",".join(merge_keys),
+                "sum_col": "format_type_id", # Not really summing, just need to collapse
+                "top_n": 0
+            })
+            
+            if dedup_res.get("status") == "success":
+                merge_source = dedup_res.get("data")
+                print(f"DEBUG [Reporter] Ad Formats deduplicated from {len(ad_formats_data)} to {len(merge_source)} rows.")
+            else:
+                merge_source = ad_formats_data
+
             # Use simple Campaign ID merge first to enrich the table with IDs
             res = pandas_processor.invoke({
                 "data": current_data,
-                "merge_data": data_store["query_ad_formats"],
-                "merge_on": "campaign_id", 
+                "merge_data": merge_source,
+                "merge_on": ",".join(merge_keys), 
                 "operation": "merge",
                 "merge_how": "left"
             })
             if res.get("status") == "success":
                 current_data = res.get("data")
-                print("DEBUG [Reporter] Ad Formats merged. Now we have dual IDs.")
+                print("DEBUG [Reporter] Ad Formats merged safely.")
         else:
             print("DEBUG [Reporter] Skipping Ad Formats Merge: 'campaign_id' not found in anchor table.")
 
@@ -410,7 +428,8 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 if "cmpid" in row:
                     row["campaign_id"] = row["cmpid"]
         
-        # Check match rate with Execution ID
+        # [NEW] Pre-aggregate performance data to match anchor granularity
+        # This prevents row multiplication when Performance has more rows (e.g. daily/placement) than Anchor
         def get_match_rate(left_data, right_data, on_keys):
             try:
                 l_df = pd.DataFrame(left_data)
@@ -447,19 +466,22 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             
             if name_match_rate > 0:
                 final_merge_key = "campaign_id, _norm_fmt"
-            else:
-                 # Final Fallback: Aggregation
-                 print("DEBUG [Reporter] Fallback to Campaign Aggregation")
-                 agg_res = pandas_processor.invoke({
-                     "data": perf_data,
-                     "operation": "groupby_sum",
-                     "groupby_col": "campaign_id",
-                     "sum_col": "effective_impressions, clicks, total_q100_views, total_engagements", # Updated for Unified cols
-                     "sort_col": "campaign_id"
-                 })
-                 if agg_res.get("status") == "success":
-                     perf_data = agg_res.get("data")
-                     final_merge_key = "campaign_id"
+
+        # --- [NEW] Execute Pre-aggregation ---
+        print(f"DEBUG [Reporter] Pre-aggregating performance data by '{final_merge_key}' before merge.")
+        agg_res = pandas_processor.invoke({
+            "data": perf_data,
+            "operation": "groupby_sum",
+            "groupby_col": final_merge_key,
+            "sum_col": "effective_impressions, clicks, total_q100_views, total_engagements",
+            "sort_col": None,
+            "top_n": 0
+        })
+        if agg_res.get("status") == "success":
+            perf_data = agg_res.get("data")
+            print(f"DEBUG [Reporter] Performance data aggregated from {len(data_store['query_unified_performance'])} to {len(perf_data)} rows.")
+        else:
+            print(f"WARN [Reporter] Performance pre-aggregation failed: {agg_res.get('markdown')}")
 
         # Merge
         res = pandas_processor.invoke({
@@ -699,7 +721,7 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
                 # We must ensure raw metrics are present in the aggregation.
                 rate_metrics = ["ctr", "vtr", "er"]
                 raw_metrics_map = {
-                    "ctr": ["effective_impressions", "total_impressions", "total_clicks"],
+                    "ctr": ["effective_impressions", "total_impressions", "total_clicks", "clicks"],
                     "vtr": ["total_q100_views", "total_q100", "effective_impressions", "total_impressions"], # Simplified VTR calc
                     "er": ["total_engagements", "effective_impressions", "total_impressions"]
                 }

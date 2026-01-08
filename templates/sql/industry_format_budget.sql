@@ -51,6 +51,10 @@ SELECT
         aft.id AS format_id,
     {% endif %}
 
+    -- 核心關聯 ID (Internal Use for Merging)
+    oc.id AS campaign_id,
+    COALESCE(pc_id_map.plaid, 0) AS plaid,
+
     -- 統計數據
     SUM(clb.budget) AS total_budget,
     COUNT(DISTINCT oc.id) AS campaign_count
@@ -106,6 +110,15 @@ JOIN cue_list_ad_formats claf ON claf.cue_list_product_line_id = clpl.id
 JOIN ad_format_types aft ON claf.ad_format_type_id = aft.id
 JOIN cue_list_budgets clb ON clb.cue_list_ad_format_id = claf.id
 
+-- [NEW] Join pre_campaign to get plaid (for merging with ClickHouse)
+-- We use a LEFT JOIN to ensure we don't lose budget rows if no placements exist yet
+LEFT JOIN (
+    SELECT one_campaign_id, ad_format_type_id, MIN(id) as plaid
+    FROM pre_campaign
+    WHERE trash = 0
+    GROUP BY one_campaign_id, ad_format_type_id
+) pc_id_map ON pc_id_map.one_campaign_id = oc.id AND pc_id_map.ad_format_type_id = aft.id
+
 WHERE 1=1
     AND cl.status IN ('converted', 'requested')
     AND aft.title NOT LIKE '%已退役%'
@@ -132,9 +145,9 @@ WHERE 1=1
 
 GROUP BY 
     {% if primary_view == 'format' %}
-        format_name, aft.id, dimension_name
+        format_name, aft.id, dimension_name, oc.id, pc_id_map.plaid
     {% else %}
-        dimension_name, format_name, aft.id
+        dimension_name, format_name, aft.id, oc.id, pc_id_map.plaid
     {% endif %}
 
 ORDER BY total_budget DESC
