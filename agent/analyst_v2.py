@@ -89,7 +89,9 @@ RETRIEVER_SYSTEM_PROMPT = """你是 AKC 智能助手的數據檢索專家 (Data 
 1. **問「預算佔比」或「金額排名」**:
    - Step 1: `resolve_entity` 取得 `industry_id` 或 `sub_industry_id`。
    - Step 2: **必須使用** `id_finder(industry_ids=[...])` 取得該期間內的所有相關 IDs。
-   - Step 3: 呼叫 `query_investment_budget` 或 `query_execution_budget` 取得金額。
+   - Step 3: **(絕對不可停止)** 呼叫 `query_investment_budget(cue_list_ids=[...])` 取得金額數據。
+   - Step 4: **(維度補全)** 因為預算表只有 ID，若要看「產業」或「客戶」分佈，請**務必同時呼叫** `query_unified_dimensions(plaids=[...], dimensions=['one_category', 'client_company'])` 以獲取名稱。
+   - **注意**: `id_finder` 只給 ID，沒給金額！拿到 ID 後請務必繼續查詢預算。
 
 2. **問「成效 (CTR/VTR)」或「表現」**:
    - Step 1: `resolve_entity` 取得 ID。
@@ -449,7 +451,8 @@ def quality_check_node(state: ProjectAgentState) -> Dict[str, Any]:
     Also acts as a Gatekeeper for Entity Resolution Ambiguity.
     """
     data_store = state.get("data_store") or {}
-    original_query = state.get("routing_context", {}).get("original_query", "").lower()
+    routing_context = state.get("routing_context") or {}
+    original_query = routing_context.get("original_query", "").lower()
     retry_count = state.get("retry_count", 0)
     
     # --- 1. Ambiguity Interception (Human-in-the-loop) ---

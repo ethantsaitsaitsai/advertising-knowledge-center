@@ -301,6 +301,53 @@ def data_reporter_node(state: AgentState) -> Dict[str, Any]:
             if res.get("status") == "success":
                 current_data = res.get("data")
 
+    # [NEW] Step 2: Dimension Enrichment (Universal)
+    # If we have unified_dimensions (from Step 1 auto-invoke), merge it!
+    # This solves the "Budget table missing Client/Industry name" problem.
+    if "query_unified_dimensions" in data_store and current_data != data_store["query_unified_dimensions"]:
+        print("DEBUG [Reporter] Enriching with Unified Dimensions...")
+        dim_data = data_store["query_unified_dimensions"]
+        
+        # Normalize Keys
+        for row in dim_data:
+            if "cmpid" in row: row["campaign_id"] = row["cmpid"]
+            
+        # Determine Join Key
+        has_plaid = current_data and ("plaid" in current_data[0] or "placement_id" in current_data[0])
+        
+        if has_plaid:
+            # Prefer Plaid merge (most granular)
+            join_key = "plaid" if "plaid" in current_data[0] else "placement_id"
+            # Normalize dim_data key
+            if "plaid" not in dim_data[0]:
+                print("WARN [Reporter] Unified Dimensions missing plaid, falling back to campaign_id")
+                join_key = "campaign_id"
+        else:
+            join_key = "campaign_id"
+            
+        if join_key in dim_data[0] and join_key in current_data[0]:
+            print(f"DEBUG [Reporter] Merging Dimensions on {join_key}...")
+            # Deduplicate dimension data to prevent row explosion
+            # We only want the dimension names, so we take the first row per key
+            
+            # Using pandas_processor merge directly handles simple merges, 
+            # but to be safe against duplicates, let's use pandas_processor to dedup first?
+            # Actually, pandas_processor's 'merge' operation is 'left' join by default which is safe for anchor preservation.
+            # But if dim_data has multiple rows per key (unlikely for dimensions table but possible), it might explode.
+            # Let's rely on processor's smart merge.
+            
+            res = pandas_processor.invoke({
+                "data": current_data,
+                "merge_data": dim_data,
+                "merge_on": join_key,
+                "operation": "merge",
+                "merge_how": "left"
+            })
+            if res.get("status") == "success":
+                current_data = res.get("data")
+        else:
+            print(f"WARN [Reporter] Dimension Merge Failed: Common key '{join_key}' not found.")
+
     # 5. Schema Planning & Output
     if current_data:
         available_cols = list(current_data[0].keys())
