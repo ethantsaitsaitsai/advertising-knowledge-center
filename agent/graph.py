@@ -93,8 +93,7 @@ workflow.add_conditional_edges(
 # Data Analyst Subgraph → END
 workflow.add_edge("DataAnalyst", END)
 
-# Initialize Checkpointer for Memory
-checkpointer = MemorySaver() # [NEW]
-
 # Compile the graph
-app = workflow.compile(checkpointer=checkpointer) # [UPDATED]
+# Note: Checkpointer is handled automatically by LangGraph API/Studio.
+# If running locally in a script, you can compile with a checkpointer there.
+app = workflow.compile()
