@@ -1,15 +1,61 @@
-# Python-generated files
+# Credentials and Config
+.env
+.env.example
+config.py
+config.ini
+bdcd_config.py
+gkey.json
+vertexai_api_key.json
+pass.py
+
+# Python
 __pycache__/
 *.py[oc]
+*.pyo
+*.pyd
+*.so
 build/
 dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
 
-# LLM
+# IDE / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+ui_debug.log
+*.pid
+
+# Testing
+tests/
+test/
+test.py
+test_*.py
+*_test.py
+
+# Temporary Data
+csv/
+*.csv
+response_*.json
+*_R1.json
+
+# LLM / Agent Tools
 docs/
 .gemini
 .claude
@@ -17,12 +63,7 @@ docs/
 .claude-docs
 CLAUDE.md
 GEMINI.md
-
-# specific
 .langgraph_api
-.env
-.DS_Store
-dev.sh
 
-# Tests
-tests/
+# Scripts
+dev.sh
