@@ -1,1 +1,0 @@
-DESCRIBE pre_campaign_detail;
