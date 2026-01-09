@@ -5,11 +5,13 @@
   },
   "env": ".env",
   "image_distro": "wolfi",
-  "allowed_origins": [
-    "*",
-    "http://localhost:3000",
-    "http://localhost:8080",
-    "https://smith.langchain.com",
-    "https://smith.langchain.com/"
-  ]
+  "http": {
+    "cors": {
+      "allowed_origins": [
+        "https://smith.langchain.com",
+        "http://smith.langchain.com",
+        "http://localhost:3000"
+      ]
+    }
+  }
 }
